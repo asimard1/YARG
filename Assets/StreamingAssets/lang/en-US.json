@@ -287,10 +287,17 @@
             "Analyze": "Analyze",
             "PlayWithReplay": "Play With Replay"
         },
+        "Online": {
+            "Name": "Online",
+            "CreateLobby": "Create Lobby",
+            "Filters": "Filters",
+            "JoinByCode": "Join By Code"
+        },
         "Main": {
             "MessageOfTheDay": "<align=center><size=32><b>Welcome to the v0.15 nightlies!</b></size></align>\n\nv0.15 now has support for tremolo/trill lanes, customizable track backgrounds (including transparency), custom vocal characters for venues, advanced player performance tracking, repositionable highways, adds new in game calibration tools, and more! Oh, and the new and improved music library is finally here, including advanced song filters so even the largest library can't keep you from finding what you're looking for! :D\n\n<b>If you have any feedback or find any bugs, please let us know on Discord or GitHub.</b>\n\nHappy YARGin'!",
             "Options": {
                 "Quickplay": "Quickplay",
+                "Online": "Online",
                 "Practice": "Practice",
                 "Profiles": "Profiles",
                 "History": "History",

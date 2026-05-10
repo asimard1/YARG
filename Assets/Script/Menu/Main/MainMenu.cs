@@ -73,6 +73,11 @@ namespace YARG.Menu.Main
             menu.gameObject.SetActive(true);
         }
 
+        public void Online()
+        {
+            MenuManager.Instance.PushMenu(MenuManager.Menu.Online);
+        }
+
         public void Practice()
         {
             var menu = MenuManager.Instance.PushMenu(MenuManager.Menu.MusicLibrary, false);
