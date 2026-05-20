@@ -93,7 +93,7 @@ namespace YARG.Gameplay.HUD
             _replay = GameManager.ReplayData;
         }
 
-        protected override void OnSongStarted()
+        protected override void OnSongReady()
         {
             _pauses = GameManager.ReplayInfo.Pauses;
             YargLogger.LogFormatDebug("Found {0} pauses", _pauses.Length);

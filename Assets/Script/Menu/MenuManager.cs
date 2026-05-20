@@ -18,6 +18,8 @@ namespace YARG.Menu
             ProfileInfo,
             History,
             Online,
+            CreateLobby,
+            LobbyView,
         }
 
         /// <summary>
@@ -27,7 +29,8 @@ namespace YARG.Menu
         private static readonly HashSet<Menu> _allowedLastOpenMenus = new()
         {
             Menu.MusicLibrary,
-            Menu.History
+            Menu.History,
+            Menu.LobbyView,
         };
 
         /// <summary>
@@ -35,10 +38,26 @@ namespace YARG.Menu
         /// </summary>
         private static Menu _lastOpenMenu = Menu.None;
 
+        /// <summary>
+        /// Set from outside the MenuScene to force a specific menu open on the
+        /// next <see cref="Start"/>. Consumed (reset to <see cref="Menu.None"/>)
+        /// once applied. Takes precedence over <see cref="_lastOpenMenu"/>.
+        /// </summary>
+        private static Menu _overrideOpenMenu = Menu.None;
+
         private Dictionary<Menu, MenuObject> _menus;
 
         private readonly Stack<Menu> _openMenus = new();
         private Coroutine _reactivateCoroutine;
+
+        /// <summary>
+        /// Force a specific menu to open the next time the MenuScene's
+        /// <see cref="Start"/> runs. Used by callers outside the MenuScene
+        /// (e.g. <see cref="ScoreScreen.ScoreScreenMenu"/> and the gameplay
+        /// bail-out paths) to deterministically choose the landing menu after
+        /// a scene transition, without relying on the push/pop stack history.
+        /// </summary>
+        public static void SetOverrideOpenMenu(Menu menu) => _overrideOpenMenu = menu;
 
         protected override void SingletonAwake()
         {
@@ -49,6 +68,14 @@ namespace YARG.Menu
 
         private void Start()
         {
+            if (_overrideOpenMenu != Menu.None)
+            {
+                var target = _overrideOpenMenu;
+                _overrideOpenMenu = Menu.None;
+                SetActiveMenuExclusive(target);
+                return;
+            }
+
             // Always push the main menu
             PushMenu(Menu.MainMenu);
 
@@ -73,6 +100,9 @@ namespace YARG.Menu
                 }
             }
         }
+
+        /// <summary>The menu currently on top of the stack, or <see cref="Menu.None"/> if none.</summary>
+        public Menu CurrentMenu => _openMenus.TryPeek(out var top) ? top : Menu.None;
 
         public MenuObject PushMenu(Menu menu, bool setActiveImmediate = true)
         {
@@ -131,6 +161,69 @@ namespace YARG.Menu
             {
                 throw new InvalidOperationException($"Failed to open menu {newMenuEnum}.");
             }
+        }
+
+        /// <summary>
+        /// Pops the current top menu and pushes <paramref name="menu"/> in its place,
+        /// without re-activating the menu below in between. Used for transitions like
+        /// CreateLobby → LobbyView, where Back from LobbyView should skip CreateLobby
+        /// and return to the menu underneath it.
+        /// </summary>
+        public MenuObject ReplaceMenu(Menu menu, bool setActiveImmediate = true)
+        {
+            // Pop the current top from the stack and hide it. Skip the usual
+            // PopMenu side-effect of activating the menu below, since PushMenu
+            // is about to overwrite that slot anyway.
+            if (_openMenus.TryPop(out var currentMenuEnum) &&
+                _menus.TryGetValue(currentMenuEnum, out var currentMenu))
+            {
+                currentMenu.gameObject.SetActive(false);
+            }
+
+            return PushMenu(menu, setActiveImmediate);
+        }
+
+        /// <summary>
+        /// Activates <paramref name="menu"/> and deactivates every other registered
+        /// menu, replacing the top of the stack with this entry. Use in flows where
+        /// transitions are deterministic (online lobby navigation) and history-driven
+        /// pop behavior would cause more problems than it solves.
+        /// </summary>
+        public MenuObject SetActiveMenuExclusive(Menu menu)
+        {
+            if (!_menus.TryGetValue(menu, out var target))
+            {
+                throw new InvalidOperationException($"Failed to open menu {menu}.");
+            }
+
+            foreach (var kv in _menus)
+            {
+                kv.Value.gameObject.SetActive(kv.Key == menu);
+            }
+
+            // Replace the top of the stack with this menu so that any legacy
+            // PopMenu / OnDisable _lastOpenMenu derivation observes a consistent
+            // top. Online flow doesn't rely on the stack, but other consumers do.
+            if (_openMenus.Count > 0) _openMenus.Pop();
+            _openMenus.Push(menu);
+
+            return target;
+        }
+
+        /// <summary>
+        /// Deactivates every registered menu and clears the stack. Use right
+        /// before a scene transition out of the MenuScene to guarantee that no
+        /// menu's <c>OnEnable</c> can fire (and therefore no NavigationScheme
+        /// push can affect persistent UI like the menu MusicPlayer) during the
+        /// async unload window.
+        /// </summary>
+        public void HideAllMenus()
+        {
+            foreach (var kv in _menus)
+            {
+                kv.Value.gameObject.SetActive(false);
+            }
+            _openMenus.Clear();
         }
 
         // Disables the current menu without popping it from the stack

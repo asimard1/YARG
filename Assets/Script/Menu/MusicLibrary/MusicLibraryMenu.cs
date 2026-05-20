@@ -15,6 +15,7 @@ using YARG.Menu.Filters;
 using YARG.Menu.ListMenu;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
+using YARG.Online;
 using YARG.Player;
 using YARG.Playlists;
 using YARG.Scores;
@@ -57,6 +58,39 @@ namespace YARG.Menu.MusicLibrary
         public static MusicLibraryMode LibraryMode;
 
         public static SongEntry CurrentlyPlaying;
+
+        /// <summary>
+        /// When non-null, the music library acts as a song picker: confirming a
+        /// song pops back to the caller and invokes this delegate with the chosen
+        /// hash instead of starting the play flow. Set before pushing the menu;
+        /// cleared by the picker code on confirm and by <see cref="OnDisable"/>
+        /// on the cancel-back path.
+        /// </summary>
+        public static Action<HashWrapper> SongPickedCallback;
+        public static bool PickerMode => SongPickedCallback != null;
+
+#nullable enable
+        /// <summary>
+        /// When non-null, restricts the visible library to songs whose hash is in this set.
+        /// Stacks with <see cref="Filters.FiltersMenu.ActiveFilterPredicate"/>: the allow-list
+        /// is the ceiling, in-menu filters narrow further. Cleared on <see cref="OnDisable"/>.
+        /// Use <see cref="NotifyAllowedSongsChanged"/> to refresh the active menu after mutation.
+        /// </summary>
+        public static HashSet<HashWrapper>? AllowedSongHashes;
+#nullable disable
+
+        private static MusicLibraryMenu _activeInstance;
+
+        /// <summary>
+        /// Refreshes the music library if it is currently open. Safe to call when closed (no-op).
+        /// Call after mutating <see cref="AllowedSongHashes"/>.
+        /// </summary>
+        public static void NotifyAllowedSongsChanged()
+        {
+            if (_activeInstance == null) return;
+            _activeInstance.RefreshForAllowedSongsChange();
+        }
+
         public        MenuState MenuState;
         public        Playlist  SelectedPlaylist;
 
@@ -243,6 +277,8 @@ namespace YARG.Menu.MusicLibrary
 
             // Ensure the sidebar is rendered correctly on first entry
             _sidebar.UpdateSidebar(true);
+
+            _activeInstance = this;
         }
 
         private void SetRefreshIfNeeded()
@@ -614,8 +650,32 @@ namespace YARG.Menu.MusicLibrary
             _previewContext?.Dispose();
             _previewContext = null;
             StemSettings.ApplySettings = true;
+            ExitToCallerMenu(wasPicker: PickerMode);
+        }
+
+        /// <summary>
+        /// Closes this library instance, routing back to the lobby view when
+        /// we were opened as a picker from an active lobby session. The
+        /// online flow never pushed onto the menu stack, so PopMenu would
+        /// land on the wrong screen.
+        /// </summary>
+        /// <param name="wasPicker">
+        /// True if the caller was operating in picker mode at the point of
+        /// the exit decision. Picker callers may have already nulled the
+        /// static <see cref="SongPickedCallback"/> before invoking this, so
+        /// we can't re-read <see cref="PickerMode"/> here.
+        /// </param>
+        private static void ExitToCallerMenu(bool wasPicker)
+        {
+            if (wasPicker && LobbyHubSession.Current?.CurrentLobby != null)
+            {
+                MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);
+                return;
+            }
             MenuManager.Instance.PopMenu();
         }
+
+        internal static void ExitFromPickerConfirm() => ExitToCallerMenu(wasPicker: true);
 
         private bool TrySelectCurrentSongPreferNaturalLocation(SongEntry targetSong)
         {
@@ -781,6 +841,16 @@ namespace YARG.Menu.MusicLibrary
         protected override void OnDisable()
         {
             base.OnDisable();
+
+            // Handles the cancel-back path: picker confirm already nulled this before popping.
+            SongPickedCallback = null;
+
+            // Mirror the cleanup pattern for the allow-list filter: callers don't need to
+            // defensively null it after pop. Order matters — clear the active-instance ref
+            // last so any reentrant Notify in this teardown frame still sees us.
+            AllowedSongHashes = null;
+            _activeInstance = null;
+
             SetSidebarDifficultiesVisible(false);
 
             if (Navigator.Instance == null) return;
@@ -993,6 +1063,29 @@ namespace YARG.Menu.MusicLibrary
             var headerIndex = _sectionHeaderIndices.IndexOf(closestHeader);
             var offset = SelectedIndex - _sectionHeaderIndices[headerIndex];
             return (headerIndex, offset);
+        }
+
+        private void RefreshForAllowedSongsChange()
+        {
+            // Capture BEFORE Refresh — that rebuilds ViewList and may invalidate CurrentSelection.
+            var currentSongHash = (CurrentSelection as SongViewType)?.SongEntry.Hash;
+            var snapshot = CaptureSelectionSnapshot();
+            Refresh();
+
+            // Hash-based ContentStableId match inside RestoreSelectionSnapshot handles the happy
+            // path automatically. When the previously-selected song is gone, we explicitly land
+            // at index 0 instead of clamping to the old index near a different song.
+            bool selectedSongFilteredOut = currentSongHash.HasValue
+                && AllowedSongHashes != null
+                && !AllowedSongHashes.Contains(currentSongHash.Value);
+
+            if (selectedSongFilteredOut && ViewList.Count > 0)
+            {
+                SelectedIndex = 0;
+                return;
+            }
+
+            RestoreSelectionSnapshot(snapshot);
         }
 
         public void RefreshAndReselect(bool selectTopOfList = false, bool preserveSelectedIndex = false)

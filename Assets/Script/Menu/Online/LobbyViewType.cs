@@ -1,4 +1,5 @@
 using YARG.Menu.ListMenu;
+using YARG.Online.Lobbies.Contracts.Enums;
 
 namespace YARG.Menu.Online
 {
@@ -22,23 +23,34 @@ namespace YARG.Menu.Online
 
         public override BackgroundType Background => BackgroundType.Normal;
 
-        // Primary text: the song the lobby is currently on.
         public override string GetPrimaryText(bool selected)
         {
-            return FormatAs(_lobby.SongName, TextType.Bright, selected);
+            return $"{_lobby.HostName} | {_lobby.LobbyName}";
         }
 
-        // Secondary text: host • players (3/4) • type • state [• Private]
         public override string GetSecondaryText(bool selected)
         {
-            string playerCount = $"{_lobby.PlayerCount}/{_lobby.PlayerMax}";
-            string type        = _lobby.Type  == LobbyType.Hardcore  ? "Hardcore" : "Casual";
-            string state       = _lobby.State == LobbyState.Playing  ? "Playing"  : "Song Select";
+            return $"{_lobby.PlayerCount}/{_lobby.PlayerMax} Players";
+        }
 
-            string line = $"{_lobby.HostName}  •  {playerCount}  •  {type}  •  {state}";
-            if (_lobby.IsPrivate) line += "  •  Private";
+        public string GetLobbyTypeText()
+        {
+            return _lobby.GameMode switch
+            {
+                GameMode.Band      => "Band",
+                GameMode.Quickplay => "Quickplay",
+                _                  => _lobby.GameMode.ToString(),
+            };
+        }
 
-            return FormatAs(line, TextType.Secondary, selected);
+        public string GetLobbyStateText()
+        {
+            return _lobby.Status switch
+            {
+                LobbyStatus.GameStarted => "Playing",
+                LobbyStatus.SongSelect  => "Song Select",
+                _                       => _lobby.Status.ToString(),
+            };
         }
 
         public void PrimaryButtonClick()

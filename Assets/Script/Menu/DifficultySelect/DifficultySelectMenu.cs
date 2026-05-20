@@ -25,6 +25,16 @@ namespace YARG.Menu.DifficultySelect
     public class DifficultySelectMenu : MonoBehaviour
     {
         /// <summary>
+        /// When true, the menu is being driven by the online lobby flow:
+        /// hide the song-speed input, suppress sit-out / disconnect buttons,
+        /// and route completion through <see cref="OnLobbyLoadoutsConfirmed"/>
+        /// instead of loading the gameplay scene. Caller is responsible for
+        /// resetting these to <c>false</c> / <c>null</c> when done.
+        /// </summary>
+        public static bool LobbyMode { get; set; }
+        public static Action OnLobbyLoadoutsConfirmed { get; set; }
+
+        /// <summary>
         /// The saved song speed value
         /// </summary>
         private static float _songSpeed = 1f;
@@ -129,6 +139,17 @@ namespace YARG.Menu.DifficultySelect
                     }
                 })
             }, false));
+
+            // In online lobby mode, song speed is fixed at 1x and the input is hidden.
+            if (LobbyMode)
+            {
+                _songSpeed = 1f;
+                if (_speedInput != null) _speedInput.gameObject.SetActive(false);
+            }
+            else
+            {
+                if (_speedInput != null) _speedInput.gameObject.SetActive(true);
+            }
 
             _speedInput.text = $"{Mathf.RoundToInt(_songSpeed * 100f)}%";
             _songTitleText.text = GlobalVariables.State.CurrentSong.Name;
@@ -315,8 +336,9 @@ namespace YARG.Menu.DifficultySelect
                 }
             }
 
+            // Sit-out / disconnect aren't meaningful in the online lobby flow.
             // Only show if there is more than one play, only if there is instruments available
-            if (_possibleInstruments.Count <= 0 || PlayerContainer.Players.Count != 1)
+            if (!LobbyMode && (_possibleInstruments.Count <= 0 || PlayerContainer.Players.Count != 1))
             {
                 // Sit out button
                 CreateItem(LocalizeHeader("SitOut"), _possibleInstruments.Count <= 0, _difficultyItemSmallRedPrefab, () =>
@@ -545,6 +567,15 @@ namespace YARG.Menu.DifficultySelect
                             player.Profile.CopyModifiers(primaryPlayer.Profile);
                         }
                     }
+                }
+
+                // In online lobby mode, song speed is fixed at 1x and we hand control
+                // off to the lobby orchestrator instead of loading the gameplay scene.
+                if (LobbyMode)
+                {
+                    GlobalVariables.State.SongSpeed = 1f;
+                    OnLobbyLoadoutsConfirmed?.Invoke();
+                    return;
                 }
 
                 // This will always work (as it's set up in the input field)

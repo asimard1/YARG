@@ -15,6 +15,7 @@ using YARG.Menu;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.Settings;
+using YARG.Online;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Scores;
@@ -86,6 +87,20 @@ namespace YARG.Gameplay
             remove => _songLoaded -= value;
         }
 
+        private event Action _songReady;
+
+        public event Action SongReady
+        {
+            add
+            {
+                _songReady += value;
+
+                // Invoke now if already ready, this event is only fired once
+                if (IsSongReady) value?.Invoke();
+            }
+            remove => _songReady -= value;
+        }
+
         private event Action _songStarted;
 
         public event Action SongStarted
@@ -102,8 +117,6 @@ namespace YARG.Gameplay
 
         private async void Start()
         {
-            // Displays the loading screen
-            using var context = new LoadingContext();
             var global = GlobalVariables.Instance;
 
             // Disable until everything's loaded
@@ -111,155 +124,253 @@ namespace YARG.Gameplay
 
             YargLogger.LogFormatInfo("Loading song {0} - {1}", Song.Name, Song.Artist);
 
-            if (ReplayInfo != null)
+            // ──────── Phase 1: load + announce ready, all under the loading screen ────────
+            // Firing SongReady inside the using block preserves today's timing — subscriber
+            // setup work (e.g. QuickSettings caching its FailMeter reference) runs while the
+            // loading screen is still visible. Only the cue handshake and the press-play
+            // call move out of the loading context, into StartSong below.
+            using (var context = new LoadingContext())
             {
-                if (!SongContainer.SongsByHash.TryGetValue(GlobalVariables.State.CurrentReplay.SongChecksum, out var songs))
+                if (ReplayInfo != null)
                 {
-                    ToastManager.ToastWarning("Song not present in library");
-                    global.LoadScene(SceneIndex.Menu);
+                    if (!SongContainer.SongsByHash.TryGetValue(GlobalVariables.State.CurrentReplay.SongChecksum, out var songs))
+                    {
+                        ToastManager.ToastWarning("Song not present in library");
+                        BailOutToMenu();
+                        return;
+                    }
+                    Song = songs[0];
+
+                    context.SetLoadingText("Loading replay...");
+                    if (!LoadReplay())
+                    {
+                        ToastManager.ToastError("Failed to load replay!");
+                        BailOutToMenu();
+                        return;
+                    }
+
+                    if (!GlobalVariables.State.PlayingWithReplay)
+                    {
+                        _replayController.gameObject.SetActive(true);
+                    }
+                    else
+                    {
+                        _replayController.gameObject.SetActive(false);
+                        var players = new List<YargPlayer>();
+                        players.AddRange(PlayerContainer.Players);
+                        for (int i = 0; i < YargPlayers.Count; i++)
+                        {
+                             players.Add(YargPlayers[i]);
+                        }
+
+                        YargPlayers = players.ToArray();
+                    }
+
+                    var replayIndex = 0;
+                    foreach (var player in YargPlayers)
+                    {
+                        if (player.IsReplay)
+                        {
+                            player.ReplayIndex = replayIndex;
+                            replayIndex++;
+                        }
+                    }
+                }
+
+                context.Queue(UniTask.RunOnThreadPool(LoadChart), "Loading chart...");
+                context.Queue(UniTask.RunOnThreadPool(LoadAudio), "Loading audio...");
+                await context.Wait();
+
+                if (_loadState == LoadFailureState.Rescan)
+                {
+                    ToastManager.ToastWarning("Chart requires a rescan!", () =>
+                    {
+                        MenuManager.Instance.DisableCurrentMenu();
+                        SettingsMenu.Instance.gameObject.SetActive(true);
+                        SettingsMenu.Instance.SelectTabByName("SongManager");
+                    });
+
+                    BailOutToMenu();
                     return;
                 }
-                Song = songs[0];
 
-                context.SetLoadingText("Loading replay...");
-                if (!LoadReplay())
+                if (_loadState == LoadFailureState.Error)
                 {
-                    ToastManager.ToastError("Failed to load replay!");
-                    global.LoadScene(SceneIndex.Menu);
+                    YargLogger.LogError(_loadFailureMessage);
+                    ToastManager.ToastError(_loadFailureMessage);
+
+                    BailOutToMenu();
                     return;
                 }
 
-                if (!GlobalVariables.State.PlayingWithReplay)
+                FinalizeChart();
+
+                // Initialize song runner up front so any code that reads GameManager.SongTime /
+                // VisualTime during init (e.g. BasePlayer.Update on a screen-size change) sees a
+                // valid runner. For online we use a placeholder startTime and skip the pre-roll;
+                // the real wall-clock-aligned press-play happens in StartSong once the server
+                // cue arrives.
+                _songRunner = new SongRunner(
+                    _mixer,
+                    startTime: 0,
+                    startDelay: IsOnline ? 0 : SONG_START_DELAY,
+                    GlobalVariables.State.SongSpeed,
+                    Song.SongOffsetSeconds);
+
+                // Spawn players
+                CreatePlayers();
+                YargLogger.LogFormatDebug("Calculating star cutoffs for {0} players", _players.Count);
+                EngineManager.StarScoreThresholds = EngineManager.GetStarScoreCutoffs(_players.ConvertAll(p => p.BaseEngine.StarScoreThresholds));
+                YargLogger.LogFormatDebug("Star score thresholds: {0}", string.Join(", ", EngineManager.StarScoreThresholds));
+
+
+                // Set up the crowd stem so it can be restored after muting (if it exists)
+                if (_stemStates.TryGetValue(SongStem.Crowd, out var state))
                 {
-                    _replayController.gameObject.SetActive(true);
+                    state.Total = 1;
+                    state.Audible = 1;
+                }
+
+                if (_loadState == LoadFailureState.Error)
+                {
+                    ToastManager.ToastError(_loadFailureMessage);
+
+                    BailOutToMenu();
+                    return;
+                }
+
+                // Listen for menu inputs
+                Navigator.Instance.NavigationEvent += OnNavigationEvent;
+
+                // Debug info
+                InitializeDebug();
+#if UNITY_EDITOR
+                SetDebugEnabled(true);
+#endif
+
+                // Initialize/destroy practice mode
+                if (IsPractice)
+                {
+                    PracticeManager.DisplayPracticeMenu();
                 }
                 else
                 {
-                    _replayController.gameObject.SetActive(false);
-                    var players = new List<YargPlayer>();
-                    players.AddRange(PlayerContainer.Players);
-                    for (int i = 0; i < YargPlayers.Count; i++)
-                    {
-                         players.Add(YargPlayers[i]);
-                    }
-
-                    YargPlayers = players.ToArray();
+                    Destroy(PracticeManager);
                 }
 
-                var replayIndex = 0;
-                foreach (var player in YargPlayers)
+                _failMeter.Initialize(EngineManager, this);
+
+                if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || IsPractice)
                 {
-                    if (player.IsReplay)
+                    _failMeter.SetActive(false);
+                }
+
+                // This is not an else because we still want to subscribe in case the user disables no fail during the song
+                // We check in the callback to determine whether we should actually run the fail routine
+                if (ReplayInfo == null || GlobalVariables.State.PlayingWithReplay)
+                {
+                    EngineManager.OnSongFailed += OnSongFailed;
+
+                    EngineManager.InitializeHappiness();
+
+                    SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
+                    SettingsManager.Settings.AutoCalibrateAudio.Value = false;
+                    SettingsManager.Settings.AutoCalibrateVideo.Value = false;
+                }
+
+                EngineManager.OnCodaStart += StartCoda;
+                EngineManager.OnCodaEnd += EndCoda;
+
+                // Log constant values
+                YargLogger.LogFormatDebug("Audio calibration: {0}, video calibration: {1}, song offset: {2}",
+                    _songRunner.AudioCalibration, _songRunner.VideoCalibration, _songRunner.SongOffset);
+
+                // All per-client init is done. Audio system is fully prepared (mixer +
+                // stems loaded, SongRunner constructed). Announce ready so subscribers
+                // can do their last setup pass under the loading screen — must NOT do
+                // per-frame gameplay work; that stays gated by SongStarted below.
+                IsSongReady = true;
+                _songReady?.Invoke();
+            }   // ← LoadingContext disposed: loading screen hidden, menu input re-enabled
+
+            // ──────── Phase 2 + 3: announce ready over the wire, wait for cue, then play ────────
+            await StartSong();
+        }
+
+        /// <summary>
+        /// Transition from "ready" to "playing." For online: sync the clock, announce
+        /// PeerReady, wait for the server's GameStartCue, wait for wall-clock alignment
+        /// to <c>SongOriginUtcMs</c>. For solo: a direct fall-through. In either case the
+        /// final steps are a deterministic <see cref="SongRunner.BeginPlayback"/> kick
+        /// followed by flipping <c>IsSongStarted</c> and firing the <c>SongStarted</c>
+        /// event so per-frame gameplay code wakes up.
+        /// </summary>
+        private async UniTask StartSong()
+        {
+            // Online barrier: PeerReady is sent here, after the loading screen is down
+            // and every OnSongReady subscriber has run, so the announcement truly means
+            // "ready to begin audio right now."
+            if (IsOnline)
+            {
+                // Sync the local→server clock offset over UDP before announcing PeerReady.
+                // The cue carries a wall-clock SongOriginUtcMs picked by the server; without
+                // this offset, alignment across peers is bounded by whatever the OS-level
+                // clock skew happens to be (often 100ms+, sometimes seconds). The server
+                // gates the cue on PeerReady, so spending ~400ms here just shifts pre-roll
+                // into our budget — no protocol change needed.
+                if (ServerClockSync.Current != null)
+                {
+                    bool ok = await ServerClockSync.Current.RunSyncBurstAsync(
+                        ct: this.GetCancellationTokenOnDestroy());
+                    if (!ok)
                     {
-                        player.ReplayIndex = replayIndex;
-                        replayIndex++;
+                        YargLogger.LogWarning(
+                            "Server clock sync failed; song start may be misaligned across peers.");
                     }
+                }
+                else
+                {
+                    YargLogger.LogWarning(
+                        "ServerClockSync.Current is null at online song start; falling back to raw " +
+                        "local wall clock.");
+                }
+
+                OnlineSession?.SendPeerReady();
+                await OnlineSession.WaitForStartCueAsync();
+
+                if (OnlineSession.TryGetSongStartOffsetSeconds(out double secondsUntilOrigin))
+                {
+                    if (secondsUntilOrigin > 0)
+                    {
+                        // Hold here until wall-clock reaches the server-picked SongOriginUtcMs.
+                        // All peers wake on the same instant (within local clock skew), then
+                        // fall through to BeginPlayback at SongTime = 0.
+                        YargLogger.LogFormatInfo(
+                            "Online start: waiting {0:0.000}s for SongOriginUtcMs", secondsUntilOrigin);
+                        await UniTask.Delay(
+                            TimeSpan.FromSeconds(secondsUntilOrigin),
+                            DelayType.Realtime,
+                            PlayerLoopTiming.Update,
+                            this.GetCancellationTokenOnDestroy());
+                    }
+                    else
+                    {
+                        YargLogger.LogFormatWarning(
+                            "GameStartCue arrived after SongOriginUtcMs by {0:0.000}s; starting without wait",
+                            -secondsUntilOrigin);
+                    }
+                }
+                else
+                {
+                    YargLogger.LogWarning(
+                        "Online start cue missing SongOriginUtcMs; falling back to local-clock start");
                 }
             }
 
-            context.Queue(UniTask.RunOnThreadPool(LoadChart), "Loading chart...");
-            context.Queue(UniTask.RunOnThreadPool(LoadAudio), "Loading audio...");
-            await context.Wait();
-
-            if (_loadState == LoadFailureState.Rescan)
-            {
-                ToastManager.ToastWarning("Chart requires a rescan!", () =>
-                {
-                    MenuManager.Instance.DisableCurrentMenu();
-                    SettingsMenu.Instance.gameObject.SetActive(true);
-                    SettingsMenu.Instance.SelectTabByName("SongManager");
-                });
-
-                global.LoadScene(SceneIndex.Menu);
-                return;
-            }
-
-            if (_loadState == LoadFailureState.Error)
-            {
-                YargLogger.LogError(_loadFailureMessage);
-                ToastManager.ToastError(_loadFailureMessage);
-
-                global.LoadScene(SceneIndex.Menu);
-                return;
-            }
-
-            FinalizeChart();
-
-            // Initialize song runner
-            _songRunner = new SongRunner(
-                _mixer,
-                startTime: 0,
-                SONG_START_DELAY,
-                GlobalVariables.State.SongSpeed,
-                Song.SongOffsetSeconds);
-
-            // Spawn players
-            CreatePlayers();
-            YargLogger.LogFormatDebug("Calculating star cutoffs for {0} players", _players.Count);
-            EngineManager.StarScoreThresholds = EngineManager.GetStarScoreCutoffs(_players.ConvertAll(p => p.BaseEngine.StarScoreThresholds));
-            YargLogger.LogFormatDebug("Star score thresholds: {0}", string.Join(", ", EngineManager.StarScoreThresholds));
-
-
-            // Set up the crowd stem so it can be restored after muting (if it exists)
-            if (_stemStates.TryGetValue(SongStem.Crowd, out var state))
-            {
-                state.Total = 1;
-                state.Audible = 1;
-            }
-
-            if (_loadState == LoadFailureState.Error)
-            {
-                ToastManager.ToastError(_loadFailureMessage);
-
-                global.LoadScene(SceneIndex.Menu);
-                return;
-            }
-
-            // Listen for menu inputs
-            Navigator.Instance.NavigationEvent += OnNavigationEvent;
-
-            // Debug info
-            InitializeDebug();
-#if UNITY_EDITOR
-            SetDebugEnabled(true);
-#endif
-
-            // Initialize/destroy practice mode
-            if (IsPractice)
-            {
-                PracticeManager.DisplayPracticeMenu();
-            }
-            else
-            {
-                Destroy(PracticeManager);
-            }
-
-            _failMeter.Initialize(EngineManager, this);
-
-            if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || IsPractice)
-            {
-                _failMeter.SetActive(false);
-            }
-
-            // This is not an else because we still want to subscribe in case the user disables no fail during the song
-            // We check in the callback to determine whether we should actually run the fail routine
-            if (ReplayInfo == null || GlobalVariables.State.PlayingWithReplay)
-            {
-                EngineManager.OnSongFailed += OnSongFailed;
-
-                EngineManager.InitializeHappiness();
-
-                SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
-                SettingsManager.Settings.AutoCalibrateAudio.Value = false;
-                SettingsManager.Settings.AutoCalibrateVideo.Value = false;
-            }
-
-            EngineManager.OnCodaStart += StartCoda;
-            EngineManager.OnCodaEnd += EndCoda;
-
-            // Log constant values
-            YargLogger.LogFormatDebug("Audio calibration: {0}, video calibration: {1}, song offset: {2}",
-                _songRunner.AudioCalibration, _songRunner.VideoCalibration, _songRunner.SongOffset);
+            // Deterministic kick — no lazy first-Update behaviour. For online (startDelay=0)
+            // the sync thread calls _mixer.Play() on its next ~1ms tick; for solo
+            // (startDelay=SONG_START_DELAY) it ramps SyncVisualTime from -2 to 0 first.
+            _songRunner.BeginPlayback();
 
             // Loaded, enable updates
             enabled = true;
@@ -397,7 +508,7 @@ namespace YARG.Gameplay
                 {
                     player.IsScoreValid = true;
 
-                    if (!player.IsReplay)
+                    if (!player.IsReplay && !player.IsRemote)
                     {
                         // Reset microphone (resets channel buffers)
                         // We probably wanna do this no matter what, so put it up here

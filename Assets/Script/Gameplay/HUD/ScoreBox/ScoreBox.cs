@@ -118,7 +118,7 @@ namespace YARG.Gameplay.HUD
             _bandComboObject.SetActive(SettingsManager.Settings.BandComboTypeSetting.Value != BandComboType.Off);
         }
 
-        protected override void OnSongStarted()
+        protected override void OnSongReady()
         {
             var timeSpan = TimeSpan.FromSeconds(GameManager.SongLength / GameManager.SongSpeed);
 

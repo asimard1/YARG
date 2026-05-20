@@ -1,4 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using PlasticBand.Haptics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -12,6 +15,7 @@ using YARG.Gameplay.HUD;
 using YARG.Helpers.Extensions;
 using YARG.Helpers.UI;
 using YARG.Input;
+using YARG.Online;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Settings;
@@ -144,7 +148,7 @@ namespace YARG.Gameplay.Player
                 SantrollerHaptics = Player.Bindings.GetDevicesByType<ISantrollerHaptics>();
             }
 
-            if (!Player.IsReplay)
+            if (!Player.IsReplay && !Player.IsRemote)
             {
                 SubscribeToInputEvents();
             }
@@ -234,7 +238,9 @@ namespace YARG.Gameplay.Player
 
         protected override void GameplayDestroy()
         {
-            if (!Player.IsReplay)
+            // Mirror the gating in Start() — UnsubscribeFromInputEvents touches Player.Bindings
+            // which is null for both replay and remote players.
+            if (!Player.IsReplay && !Player.IsRemote)
             {
                 UnsubscribeFromInputEvents();
             }
@@ -251,6 +257,64 @@ namespace YARG.Gameplay.Player
             // Apply input offset
             // Video offset is already accounted for
             time += InputCalibration;
+
+            if (Player.IsRemote)
+            {
+                // Drain the network pipe up to the *delayed* engine clock. Ticking the
+                // remote engine at (time - REMOTE_DELAY_SECONDS) means inputs arrive before
+                // the engine reaches their timestamp, so QueueInput's backward-time clamp
+                // (BaseEngine.cs:339) effectively never fires. Late inputs that exceed the
+                // delay budget would be silently mis-scored by that clamp; size the delay
+                // accordingly.
+                //
+                // The pipe carries GameInput-shaped 16-byte records written directly by
+                // GameClientSession's LiteNetLib poll thread (SPSC, no lock). Layout is
+                // GameInput's explicit-layout (Time@0 / Action@8 / Integer@12, Pack=1),
+                // so MemoryMarshal.Read<GameInput> reconstructs each input as-is.
+                var reader = GameManager.OnlineSession?.GetInputReader(Player);
+                double remoteEngineTime = time - REMOTE_ENGINE_DELAY_SECONDS;
+                int recordSize = Unsafe.SizeOf<GameInput>();
+                if (reader != null && reader.TryRead(out var result))
+                {
+                    var buf = result.Buffer;
+                    var consumed = buf.Start;
+                    Span<byte> tmp = stackalloc byte[16]; // reused across cross-segment iterations
+                    while (buf.Length >= recordSize)
+                    {
+                        GameInput input;
+                        var firstSpan = buf.First.Span;
+                        if (firstSpan.Length >= recordSize)
+                        {
+                            // Fast path: the next 16 bytes are contiguous — read in place.
+                            input = MemoryMarshal.Read<GameInput>(firstSpan);
+                        }
+                        else
+                        {
+                            // Slow path: the record straddles a segment boundary. Walk the
+                            // sliced sub-sequence and gather into the stack buffer.
+                            var chunk = buf.Slice(0, recordSize);
+                            int written = 0;
+                            foreach (var segment in chunk)
+                            {
+                                segment.Span.CopyTo(tmp.Slice(written));
+                                written += segment.Length;
+                            }
+                            input = MemoryMarshal.Read<GameInput>(tmp);
+                        }
+                        if (input.Time > remoteEngineTime) break;
+                        BaseEngine.QueueInput(ref input);
+                        OnInputQueued(input);
+                        buf = buf.Slice(recordSize);
+                        consumed = buf.Start;
+                    }
+                    // Mark unread tail as examined so TryRead returns false next frame
+                    // unless new bytes have arrived — avoids spinning on a partial record.
+                    reader.AdvanceTo(consumed, buf.End);
+                }
+
+                BaseEngine.Update(remoteEngineTime);
+                return;
+            }
 
             if (Player.IsReplay && GameManager.ReplayInfo != null)
             {
@@ -273,6 +337,12 @@ namespace YARG.Gameplay.Player
 
             BaseEngine.Update(time);
         }
+
+        // Wall-clock delay (in song-time seconds) applied to remote engines. Pulled forward
+        // from the local song clock so network-delivered inputs slot in before the engine
+        // reaches their timestamp. 120 ms covers typical home-internet jitter to a regional
+        // relay; bump in v2 if testing surfaces frequent backward-clamp warnings.
+        private const double REMOTE_ENGINE_DELAY_SECONDS = 0.120;
 
         private void SubscribeToInputEvents()
         {
@@ -364,6 +434,15 @@ namespace YARG.Gameplay.Player
             BaseEngine.QueueInput(ref input);
             OnInputQueued(input);
             _replayInputs.Add(input);
+
+            // Forward to the network *after* the local engine has consumed the input, so
+            // network send latency cannot stall local play. Input.Time is now in song-time
+            // (post GetRelativeInputTime + InputCalibration), which is what the wire expects.
+            // Fully qualified to disambiguate from the inherited GameManager instance property.
+            if (YARG.Gameplay.GameManager.IsOnline)
+            {
+                GameManager.OnlineSession?.EnqueueLocalInput(Player, input);
+            }
         }
 
         protected virtual void OnStarPowerPhraseHit()

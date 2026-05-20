@@ -24,7 +24,7 @@ namespace YARG.Gameplay.HUD
             Cursor.visible = true;
         }
 
-        protected override void OnSongStarted()
+        protected override void OnSongReady()
         {
             Cursor.visible = false;
         }

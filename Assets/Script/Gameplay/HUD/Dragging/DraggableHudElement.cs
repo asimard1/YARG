@@ -81,13 +81,11 @@ namespace YARG.Gameplay.HUD
             _defaultPosition = position;
         }
 
-        protected override void OnSongStarted()
+        protected override void OnSongReady()
         {
-            if (GameManager.Players.Count > 1)
-            {
-                enabled = false;
-                return;
-            }
+            // In multi-player the element is not draggable; setup is skipped and the
+            // base class's enabled = true is reverted in OnSongStarted below.
+            if (GameManager.Players.Count > 1) return;
 
             _defaultPosition = _rectTransform.anchoredPosition;
 
@@ -110,6 +108,16 @@ namespace YARG.Gameplay.HUD
 
             _draggingDisplay.Hide();
             _draggingDisplay.gameObject.SetActive(false);
+        }
+
+        protected override void OnSongStarted()
+        {
+            // Runs after the base class flips enabled = true. In multi-player we want
+            // to stay disabled (not draggable), so revert here.
+            if (GameManager.Players.Count > 1)
+            {
+                enabled = false;
+            }
         }
 
         protected override void GameplayDestroy()

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using YARG.Online.Lobbies.Contracts.Enums;
 
 namespace YARG.Menu.Online
 {
@@ -14,17 +15,15 @@ namespace YARG.Menu.Online
     /// </summary>
     public sealed class LobbyFilterSettings
     {
-        public bool       ShowFullLobbies    = true;
-        public bool       ShowPrivateLobbies = true;
-        public LobbyType? OnlyType           = null;   // null = any type
-        public LobbyState? OnlyState         = null;   // null = any state
+        public bool         ShowFullLobbies = true;
+        public GameMode?    OnlyGameMode    = null;   // null = any mode
+        public LobbyStatus? OnlyStatus      = null;   // null = any status
 
         public bool Passes(LobbyData lobby)
         {
-            if (!ShowFullLobbies    && lobby.IsFull)              return false;
-            if (!ShowPrivateLobbies && lobby.IsPrivate)           return false;
-            if (OnlyType.HasValue   && lobby.Type  != OnlyType)   return false;
-            if (OnlyState.HasValue  && lobby.State != OnlyState)  return false;
+            if (!ShowFullLobbies     && lobby.IsFull)                       return false;
+            if (OnlyGameMode.HasValue && lobby.GameMode != OnlyGameMode)    return false;
+            if (OnlyStatus.HasValue   && lobby.Status   != OnlyStatus)      return false;
             return true;
         }
     }

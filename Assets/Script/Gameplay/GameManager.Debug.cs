@@ -124,6 +124,9 @@ namespace YARG.Gameplay
                 }
 
                 var player = _players[_debugSelectedPlayer];
+                // Remote players have no local Bindings — the input-trace filter doesn't
+                // apply to them.
+                if (player.Player.Bindings == null) return false;
                 return player.Player.Bindings.ContainsDevice(device);
             };
         }

@@ -19,9 +19,11 @@ using YARG.Core.Replays;
 using YARG.Core.Replays.Analyzer;
 using YARG.Core.Song;
 using YARG.Localization;
+using YARG.Menu;
 using YARG.Menu.MusicLibrary;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
+using YARG.Online;
 using YARG.Scores;
 using YARG.Song;
 using YARG.Playlists;
@@ -34,6 +36,14 @@ namespace YARG.Menu.ScoreScreen
 {
     public class ScoreScreenMenu : MonoBehaviour
     {
+        /// <summary>
+        /// When true, the score screen represents an online lobby game: the Restart
+        /// button is suppressed (the online session is torn down by this point, so
+        /// reloading the gameplay scene would leave GameManager in a broken state).
+        /// Caller is responsible for resetting this to false when done.
+        /// </summary>
+        public static bool LobbyMode { get; set; }
+
         [SerializeField]
         private Transform _cardContainer;
         [SerializeField]
@@ -168,6 +178,8 @@ namespace YARG.Menu.ScoreScreen
 
         private void OnDisable()
         {
+            LobbyMode = false;
+
             MusicLibraryMenu.CurrentlyPlaying = GlobalVariables.State.CurrentSong;
             if (!GlobalVariables.State.PlayingAShow && !_restartingSong)
             {
@@ -448,6 +460,16 @@ namespace YARG.Menu.ScoreScreen
                         else
                         {
                             GlobalVariables.State.PlayingAShow = false;
+
+                            // If we're still in an online lobby session, force
+                            // the LobbyView menu open on the next MenuScene Start.
+                            // The stack-free start-game flow never pushed LobbyView
+                            // onto the menu stack, so _lastOpenMenu can't restore it.
+                            if (LobbyHubSession.Current?.CurrentLobby != null)
+                            {
+                                MenuManager.SetOverrideOpenMenu(MenuManager.Menu.LobbyView);
+                            }
+
                             GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
                         }
                     }
@@ -576,8 +598,12 @@ namespace YARG.Menu.ScoreScreen
             List<NavigationScheme.Entry> buttons = new()
             {
                 _continueButtonEntry,
-                _restartButtonEntry
             };
+
+            if (!LobbyMode)
+            {
+                buttons.Add(_restartButtonEntry);
+            }
 
             var song = GlobalVariables.State.CurrentSong;
             var isFavorited = PlaylistContainer.FavoritesPlaylist.ContainsSong(song);

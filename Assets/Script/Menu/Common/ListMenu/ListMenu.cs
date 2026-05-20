@@ -22,7 +22,7 @@ namespace YARG.Menu.ListMenu
 
         [Space]
         [SerializeField]
-        private Transform _viewObjectParent;
+        protected Transform _viewObjectParent;
         [SerializeField]
         private Scrollbar _scrollbar;
 
@@ -212,8 +212,11 @@ namespace YARG.Menu.ListMenu
                 }
             }
 
-            _viewObjectParent.GetComponent<RectTransform>().anchoredPosition = new Vector2(0, (topHeight - bottomHeight) / 2);
+            _viewObjectParent.GetComponent<RectTransform>().anchoredPosition = new Vector2(0, GetViewParentOffsetY(topHeight, bottomHeight));
         }
+
+        protected virtual float GetViewParentOffsetY(float topHeight, float bottomHeight)
+            => (topHeight - bottomHeight) / 2;
 
         public void OnScroll(PointerEventData eventData)
         {

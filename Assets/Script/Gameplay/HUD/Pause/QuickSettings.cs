@@ -53,7 +53,7 @@ namespace YARG.Gameplay.HUD
         private TextMeshProUGUI _noFailText;
         private TextMeshProUGUI _venuePostProcessingText;
 
-        protected override void OnSongStarted()
+        protected override void OnSongReady()
         {
             _failMeter = FindAnyObjectByType<FailMeter>();
             _noFailText = _noFailButton.GetComponentInChildren<TextMeshProUGUI>();

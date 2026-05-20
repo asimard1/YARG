@@ -190,8 +190,6 @@ namespace YARG.Playback
         private bool _resumeAfterOverride;
 
         private bool _pausedForFrameDebugger;
-
-        private double _forceStartTime = double.NaN;
         #endregion
 
         #region Rewind State
@@ -312,9 +310,16 @@ namespace YARG.Playback
             }
         }
 
-        private void Start()
+        /// <summary>
+        /// Deterministic kick for playback. Called by <see cref="GameManager"/> immediately
+        /// before flipping <c>IsSongStarted = true</c>. Spawns the sync thread and rebases
+        /// the time reference off the current <see cref="InputTime"/> so any load-phase lag
+        /// doesn't bleed into the timing reference.
+        /// </summary>
+        public void BeginPlayback()
         {
-            YargLogger.LogDebug("Starting song runner");
+            if (Started) return;
+            YargLogger.LogDebug("Beginning song runner playback");
 
             // Re-initialize song times to avoid lag issues
             InitializeSongTime(InputTime, 0);
@@ -325,26 +330,9 @@ namespace YARG.Playback
 
         public void Update()
         {
-            // Runner is lazy-started to avoid timing issues with lag
-            if (!Started)
-            {
-                // Hack: delay if the starting frame lagged
-
-                // Only delay a maximum of one second
-                if (double.IsNaN(_forceStartTime))
-                {
-                    _forceStartTime = InputManager.CurrentInputTime + 1;
-                }
-
-                double currentTime = InputManager.CurrentInputTime;
-                double currentFrameLength = currentTime - InputManager.InputUpdateTime;
-                if (currentFrameLength >= 0.1f && currentTime < _forceStartTime)
-                {
-                    return;
-                }
-
-                Start();
-            }
+            // BeginPlayback must have been called before the runner is ticked.
+            // A stray tick (e.g. during the online cue wait) is a harmless no-op.
+            if (!Started) return;
 
             // Hack: don't update while in the frame debugger
             if (_pausedForFrameDebugger != FrameDebugger.enabled)

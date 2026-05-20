@@ -1,10 +1,13 @@
+using System;
 using TMPro;
 using UnityEngine;
 using YARG.Core.Input;
+using YARG.Core.Logging;
 using YARG.Menu.MusicLibrary;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.Settings;
+using YARG.Online;
 using YARG.Settings;
 
 namespace YARG.Menu.Main
@@ -73,9 +76,40 @@ namespace YARG.Menu.Main
             menu.gameObject.SetActive(true);
         }
 
-        public void Online()
+        public async void Online()
         {
-            MenuManager.Instance.PushMenu(MenuManager.Menu.Online);
+            YargLogger.LogInfo("MainMenu: Online button pressed — authenticating before push");
+            using var context = new LoadingContext();
+            context.SetLoadingText("Signing in…");
+
+            var provider = new OnlineAccessTokenProvider(OnlineAccessTokenProvider.ResolveDefaultAuthName());
+            try
+            {
+                await provider.EnsureAuthenticatedAsync();
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex);
+                DialogManager.Instance.ShowMessage("Authentication failed",
+                    "Could not sign in to the YARG server. Check that it's running and try again.");
+                return;
+            }
+
+            context.SetLoadingText("Connecting…");
+            try
+            {
+                await LobbyHubSession.InitializeAsync(provider);
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex);
+                DialogManager.Instance.ShowMessage("Online unavailable",
+                    "Could not connect to the YARG server. Check that it's running and try again.");
+                return;
+            }
+
+            YargLogger.LogInfo("MainMenu: connected — opening Online menu");
+            MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.Online);
         }
 
         public void Practice()
