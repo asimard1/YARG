@@ -92,7 +92,7 @@ namespace YARG.Online
             UniTask<bool> connectTask;
             try
             {
-                connectTask = gameSession.ConnectAsync(endpoint, lobby.GameConnectionKey, lobby.GameToken);
+                connectTask = gameSession.ConnectAsync(endpoint, lobby.GameToken);
                 director = new OnlineSessionDirector(gameSession);
                 clockSync = new ServerClockSync(gameSession);
             }

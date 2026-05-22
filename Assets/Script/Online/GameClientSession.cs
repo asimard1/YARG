@@ -139,8 +139,11 @@ namespace YARG.Online
         public event Action<int, double, byte, byte[]> EngineStateSnapshotReceived;
 
         /// <summary>Connect to the game server. Single-shot — throws if called on a
-        /// session whose <see cref="NetManager"/> is already started.</summary>
-        public async UniTask<bool> ConnectAsync(IPEndPoint endpoint, string connectionKey, string jwt, CancellationToken ct = default)
+        /// session whose <see cref="NetManager"/> is already started. The game
+        /// server gates admission on the per-member JWT alone; the legacy
+        /// shared connection key was removed when the lobby allocator moved
+        /// to per-allocation tokens.</summary>
+        public async UniTask<bool> ConnectAsync(IPEndPoint endpoint, string jwt, CancellationToken ct = default)
         {
             lock (_lock)
             {
@@ -193,7 +196,6 @@ namespace YARG.Online
             }
 
             var writer = new NetDataWriter();
-            writer.Put(connectionKey);
             writer.Put(jwt);
             _manager.Connect(endpoint, writer);
 

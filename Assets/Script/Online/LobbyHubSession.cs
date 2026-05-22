@@ -744,9 +744,31 @@ namespace YARG.Online
             try { await UniTask.SwitchToMainThread(_lifetimeCts.Token); }
             catch (OperationCanceledException) { return; }
             if (!IsForCurrentLobby(e.LobbyId)) return;
+            var previous = _currentLobby.Status;
             _currentLobby.Status = e.Status;
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: OnLobbyStatusChanged -> {e.Status}");
             CurrentLobbyChanged?.Invoke();
+
+            // Surface the two new transitions the StartGame flow can produce
+            // to non-host members. The host already sees these via the
+            // LoadingContext that wraps StartGameAsync.
+            bool isHost = _currentLobby.IsLocalHost;
+            if (!isHost)
+            {
+                if (e.Status == LobbyStatus.Starting && previous != LobbyStatus.Starting)
+                {
+                    ToastManager.ToastInformation("Host is starting the game…");
+                }
+                else if (e.Status == LobbyStatus.SongSelect && previous == LobbyStatus.Starting)
+                {
+                    // Server rolled the lobby back from Starting → SongSelect.
+                    // The only path that produces this transition is an
+                    // allocator failure during StartGame (hub throws
+                    // "allocation_failed" to the host and broadcasts the
+                    // rollback to everyone).
+                    ToastManager.ToastWarning("Game start failed. No servers available.");
+                }
+            }
         }
 
         private async Task OnLobbySongLibraryUpdatedAsync(LobbySongLibraryUpdatedEvent e)
@@ -888,7 +910,6 @@ namespace YARG.Online
             if (!IsForCurrentLobby(e.LobbyId)) return;
             _currentLobby.Status             = LobbyStatus.GameStarted;
             _currentLobby.GameServerEndpoint = e.GameServerEndpoint;
-            _currentLobby.GameConnectionKey  = e.ConnectionKey;
             _currentLobby.GameToken          = e.GameToken;
             _currentLobby.GameTokenExpiresAt = e.ExpiresAt;
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: OnGameStarted endpoint={e.GameServerEndpoint}");

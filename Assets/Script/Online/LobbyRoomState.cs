@@ -75,9 +75,11 @@ namespace YARG.Online
             }
         }
 
-        // Set by OnGameStarted; consumed by the future scene-handoff path.
+        // Set by OnGameStarted; consumed by LobbyGameOrchestrator on the
+        // scene-handoff path. ConnectionKey was removed when the game server
+        // moved its admission gate fully onto the per-member JWT (the
+        // allocator now hands back just the UDP endpoint + token).
         public string         GameServerEndpoint;
-        public string         GameConnectionKey;
         public string         GameToken;
         public DateTimeOffset GameTokenExpiresAt;
 

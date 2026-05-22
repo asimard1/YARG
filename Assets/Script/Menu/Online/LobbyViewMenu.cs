@@ -15,6 +15,7 @@ using YARG.Menu.MusicLibrary;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Online;
+using YARG.Online.Lobbies.Contracts.Enums;
 using YARG.Online.Lobbies.Contracts.Hubs;
 using YARG.Player;
 using YARG.Song;
@@ -674,11 +675,24 @@ namespace YARG.Menu.Online
                     return;
                 }
 
-                // Client-side preflight on the same gate the server enforces.
-                // Catching it here gives the host immediate feedback with a
-                // useful message, listing which players haven't reported back
-                // from the results screen yet. The server still re-validates.
+                // Client-side preflight on the same gates the server enforces.
+                // Catching them here gives the host immediate feedback without
+                // burning an RPC. The server still re-validates everything.
                 var lobby = session.CurrentLobby;
+                if (lobby != null && lobby.Status == LobbyStatus.Starting)
+                {
+                    // The host hit Start, the server already transitioned us
+                    // to Starting, but the LoadingContext from the original
+                    // press hasn't ended yet. Silently ignore the second
+                    // press rather than show "already_starting" mid-flight.
+                    return;
+                }
+                if (lobby != null && lobby.Status == LobbyStatus.GameStarted)
+                {
+                    DialogManager.Instance.ShowMessage("Could not start game",
+                        "The game has already started.");
+                    return;
+                }
                 if (lobby != null && !lobby.AllMembersBackInLobby)
                 {
                     var stillOut = new List<string>();
@@ -697,20 +711,56 @@ namespace YARG.Menu.Online
                     return;
                 }
 
-                await session.StartGameAsync(CancellationToken.None);
-                // No state mutation here — LobbyGameOrchestrator listens for the
-                // OnGameStarted callback and drives the loadout flow + UDP connect.
+                // The server's new StartGame flow blocks the RPC across two
+                // phases: BeginStartGame (state -> Starting + broadcast) and,
+                // after the game server allocator returns, ConfirmStartGame
+                // (mint per-member tokens + state -> GameStarted + broadcast
+                // OnGameStarted). Allocation can take seconds, so wrap the
+                // await in a LoadingContext to show the host a "Preparing
+                // game…" overlay instead of a frozen menu.
+                using (var loading = new LoadingContext())
+                {
+                    loading.SetLoadingText("Preparing game...");
+                    await session.StartGameAsync(CancellationToken.None);
+                }
             }
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
-                // The server's hub-error string for the gate failure is
-                // "players_still_in_results". Surface a friendlier message in
-                // case the preflight above raced and the server caught it.
+                // Translate server-side hub-error strings into friendly text.
+                // Server tags are stable contract identifiers used across the
+                // new BeginStart / Confirm / Abort flow.
                 var msg = ex.Message;
-                if (msg != null && msg.Contains("players_still_in_results"))
+                if (msg != null)
                 {
-                    msg = "One or more players are still on the results screen. Wait for everyone to return to the lobby.";
+                    if (msg.Contains("players_still_in_results"))
+                    {
+                        msg = "One or more players are still on the results screen. Wait for everyone to return to the lobby.";
+                    }
+                    else if (msg.Contains("already_starting"))
+                    {
+                        msg = "The game is already being prepared. Please wait.";
+                    }
+                    else if (msg.Contains("already_started"))
+                    {
+                        msg = "The game has already started.";
+                    }
+                    else if (msg.Contains("allocation_failed"))
+                    {
+                        msg = "No game servers are available right now. Please try again in a moment.";
+                    }
+                    else if (msg.Contains("start_aborted"))
+                    {
+                        msg = "Game start was aborted. Please try again.";
+                    }
+                    else if (msg.Contains("not_enough_players"))
+                    {
+                        msg = "You need at least two players in the lobby to start a game.";
+                    }
+                    else if (msg.Contains("queue_empty"))
+                    {
+                        msg = "The song queue is empty — add a song before starting the game.";
+                    }
                 }
                 DialogManager.Instance.ShowMessage("Could not start game", msg);
             }
