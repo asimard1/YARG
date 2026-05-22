@@ -3,7 +3,6 @@ using System.Net;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Gameplay;
@@ -41,6 +40,7 @@ namespace YARG.Online
         private readonly OnlineSessionDirector _director;
         private readonly ServerClockSync _clockSync;
         private readonly UniTask<bool> _connectTask;
+        private readonly byte[] _chartHash;
         private int _disposed;
 
         /// <summary>
@@ -104,7 +104,12 @@ namespace YARG.Online
                 throw;
             }
 
-            var orch = new LobbyGameOrchestrator(lobbySession, gameSession, director, clockSync, connectTask);
+            // Chart hash bytes are sent with the loadout so the server can gate
+            // session start on every peer having the same chart. The hash here
+            // is the same one the lobby uses to identify the song.
+            var chartHashBytes = hash.HashBytes;
+
+            var orch = new LobbyGameOrchestrator(lobbySession, gameSession, director, clockSync, connectTask, chartHashBytes);
             orch.PushDifficultySelect(songs[0]);
             return UniTask.FromResult(orch);
         }
@@ -114,13 +119,19 @@ namespace YARG.Online
             GameClientSession gameSession,
             OnlineSessionDirector director,
             ServerClockSync clockSync,
-            UniTask<bool> connectTask)
+            UniTask<bool> connectTask,
+            byte[] chartHash)
         {
             _lobbySession = lobbySession;
             _gameSession  = gameSession;
             _director     = director;
             _clockSync    = clockSync;
-            _connectTask  = connectTask;
+            // Preserve() so we can await this task more than once. SendLocalLoadoutAsync
+            // runs once per Ready click, and the Unready → re-Ready flow needs to be able
+            // to re-check the connection without consuming the original UniTask token.
+            // Without Preserve, the second await throws "Token version is not matched".
+            _connectTask  = connectTask.Preserve();
+            _chartHash    = chartHash;
             _instanceId   = Interlocked.Increment(ref _instanceCounter);
             YargLogger.LogInfo($"LobbyGameOrchestrator[#{_instanceId}]: created");
 
@@ -136,13 +147,29 @@ namespace YARG.Online
 
             DifficultySelectMenu.LobbyMode = true;
             DifficultySelectMenu.OnLobbyLoadoutsConfirmed = OnLoadoutsConfirmed;
-            ScoreScreenMenu.LobbyMode = true;
+            DifficultySelectMenu.OnLobbyUnreadied = OnLoadoutsUnreadied;
             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.DifficultySelect);
         }
 
         private void OnLoadoutsConfirmed()
         {
             SendLocalLoadoutAsync().Forget();
+        }
+
+        private void OnLoadoutsUnreadied()
+        {
+            // Best-effort retraction. SendUnready is a no-op when disconnected and the
+            // server's ClearLoadout handler ignores the request after the game has started,
+            // so the worst case is "the user clicked Unready a hair too late" — the next
+            // GameStarted callback will still fire and transition them into gameplay.
+            try
+            {
+                _gameSession.SendUnready();
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex, "LobbyGameOrchestrator: SendUnready failed");
+            }
         }
 
         private async UniTaskVoid SendLocalLoadoutAsync()
@@ -171,7 +198,10 @@ namespace YARG.Online
                 _gameSession.SendLoadout(
                     (InstrumentId)profile.CurrentInstrument,
                     (DifficultyId)profile.CurrentDifficulty,
-                    profile.EnginePreset);
+                    profile.EnginePreset,
+                    profile.NoteSpeed,
+                    (ulong)profile.CurrentModifiers,
+                    _chartHash);
             }
             catch (Exception ex)
             {
@@ -199,6 +229,7 @@ namespace YARG.Online
             // doesn't inherit lobby behaviour.
             DifficultySelectMenu.LobbyMode = false;
             DifficultySelectMenu.OnLobbyLoadoutsConfirmed = null;
+            DifficultySelectMenu.OnLobbyUnreadied = null;
 
             // Hard invariant: from this point on, no MenuScene menu is loaded.
             // HideAllMenus deactivates every registered menu and clears the stack.
@@ -244,14 +275,9 @@ namespace YARG.Online
 
             DifficultySelectMenu.LobbyMode = false;
             DifficultySelectMenu.OnLobbyLoadoutsConfirmed = null;
-
-            // If the user is on the score screen, let ScoreScreenMenu.OnDisable
-            // clear its own flag — clearing here would race with the live screen
-            // (GameEnded can fire while the score scene is still showing).
-            if (SceneManager.GetActiveScene().buildIndex != (int)SceneIndex.Score)
-            {
-                ScoreScreenMenu.LobbyMode = false;
-            }
+            DifficultySelectMenu.OnLobbyUnreadied = null;
+            // ScoreScreenMenu no longer keeps a per-game flag — it reads lobby state from
+            // LobbyHubSession.Current directly, so there's nothing to clear here.
 
             // Failure-recovery: if we're still in MenuScene with DifficultySelect
             // visible, route the user back to LobbyView. If we're in another

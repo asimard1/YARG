@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Threading.Tasks;
@@ -15,7 +15,6 @@ using YARG.Core.Replays.Analyzer;
 using YARG.Core.Song;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Player;
-using YARG.Gameplay.Visuals;
 using YARG.Input;
 using YARG.Integration;
 using YARG.Localization;
@@ -76,20 +75,8 @@ namespace YARG.Gameplay
         /// </summary>
         public IReadOnlyList<YargPlayer> YargPlayers { get; private set;}
 
-        /// <summary>
-        /// True when the gameplay session is part of an online lobby. Set by the lobby
-        /// orchestrator before the gameplay scene is loaded; cleared on scene teardown.
-        /// While true: pause UI is suppressed, the engine manager runs without band-level
-        /// aggregation, and the local player's inputs are mirrored over the network.
-        /// </summary>
         public static bool IsOnline { get; set; }
 
-        /// <summary>
-        /// The director for the current online session, cached in <see cref="Awake"/>
-        /// from <see cref="OnlineSessionDirector.Current"/>. Null when <see cref="IsOnline"/>
-        /// is false. <see cref="Gameplay.Player.BasePlayer"/> reads this through its
-        /// GameManager reference instead of touching the static directly.
-        /// </summary>
         public OnlineSessionDirector OnlineSession { get; private set; }
 
         private List<BasePlayer> _players;
@@ -184,6 +171,13 @@ namespace YARG.Gameplay
         private int _originalSleepTimeout;
         private bool _breBoxActive;
         private bool _gameCompleteSent;
+        private double _gameCompleteRealtime;
+        // Upper bound on how long EndSong waits for every remote peer's
+        // final EngineStateSnapshot before falling back to the results
+        // screen. 3s is comfortable under typical network conditions and
+        // short enough that a disconnected straggler doesn't pin players
+        // at the end-of-song screen.
+        private const double FINAL_SNAPSHOT_TIMEOUT_SECONDS = 3.0;
 
         private StemMixer _mixer;
 
@@ -211,9 +205,6 @@ namespace YARG.Gameplay
             EngineManager = new EngineManager();
             if (IsOnline)
             {
-                // Per-player scoring only — no band aggregation, no unison bonuses, no
-                // band multiplier sharing. Each remote engine on this client is computed
-                // independently and must agree with the same engine on its owning peer.
                 EngineManager.BandFeaturesEnabled = false;
             }
 
@@ -229,6 +220,11 @@ namespace YARG.Gameplay
                     return;
                 }
                 YargPlayers = OnlineSession.Players;
+                // Hide a peer's highway on RemotePeerLeft — fires when their
+                // UDP session drops (either explicit Quit via
+                // LobbyHubSession.LeaveCurrentGame, or a network failure).
+                // Without this the track keeps rendering empty.
+                OnlineSession.RemotePlayerLeft += HideRemotePlayerHighway;
             }
             else
             {
@@ -298,10 +294,35 @@ namespace YARG.Gameplay
             // Reset sleep timeout setting
             Screen.sleepTimeout = _originalSleepTimeout;
 
-            // Clear the online flag so the next song (likely solo) doesn't inherit online
-            // semantics. The orchestrator sets this back to true before each online scene
-            // load.
+            if (OnlineSession != null)
+            {
+                OnlineSession.RemotePlayerLeft -= HideRemotePlayerHighway;
+            }
+
+            // Clear the online flag.
+            // The orchestrator sets this back to true before each online scene load.
             IsOnline = false;
+        }
+
+        // Find the BasePlayer mirroring the given remote peer and disable its
+        // GameObject so the highway, score box, and per-frame Update logic
+        // all stop. _players still contains the entry (the results screen
+        // iterates it) but with the GameObject inactive nothing renders.
+        private void HideRemotePlayerHighway(int peerId)
+        {
+            if (_players == null) return;
+            foreach (var player in _players)
+            {
+                if (player == null) continue;
+                if (player.Player == null) continue;
+                if (!player.Player.IsRemote) continue;
+                if (player.Player.RemotePeerId != peerId) continue;
+
+                YargLogger.LogInfo(
+                    $"GameManager: hiding remote player highway for peerId={peerId} ({player.Player.Profile?.Name})");
+                player.gameObject.SetActive(false);
+                return;
+            }
         }
 
         private void Update()
@@ -423,7 +444,10 @@ namespace YARG.Gameplay
 
         public void Pause(bool showMenu = true)
         {
-            _songRunner.Pause();
+            if (!IsOnline)
+            {
+                _songRunner.Pause();
+            }
             PauseCore(showMenu);
         }
 
@@ -447,16 +471,23 @@ namespace YARG.Gameplay
                 {
                     _pauseMenu.PushMenu(PauseMenuManager.Menu.SetlistPause);
                 }
+                else if (IsOnline)
+                {
+                    _pauseMenu.PushMenu(PauseMenuManager.Menu.OnlinePause);
+                }
                 else
                 {
                     _pauseMenu.PushMenu(PauseMenuManager.Menu.QuickPlayPause);
                 }
             }
 
-            // Pause the background/venue
-            Time.timeScale = 0f;
-            BackgroundManager.SetPaused(true);
-            GameStateFetcher.SetPaused(true);
+            // Pause the background/venue. Skipped entirely during online play.
+            if (!IsOnline)
+            {
+                Time.timeScale = 0f;
+                BackgroundManager.SetPaused(true);
+                GameStateFetcher.SetPaused(true);
+            }
 
             // This uses the raw input update time because it keeps running during the pause
             // allowing us to accurately calculate the length of the pause later
@@ -489,6 +520,14 @@ namespace YARG.Gameplay
 
         public async void Resume(double? rewindDuration = null)
         {
+            // Online mode: nothing was actually paused. Just dismiss the
+            // menu and return.
+            if (IsOnline)
+            {
+                _pauseMenu.PopAllMenus();
+                return;
+            }
+
             // We don't rewind in practice mode or in replay, so we can skip all the BS
             if (IsPractice || IsReplay)
             {
@@ -656,11 +695,37 @@ namespace YARG.Gameplay
 
             // Notify the relay that this peer's song is over. The server holds GameEnd until
             // every peer reports (or the straggler timer fires), so other clients keep
-            // receiving any remaining inputs from us in flight.
+            // receiving any remaining inputs from us in flight. SendGameComplete also
+            // broadcasts this peer's final authoritative engine-state snapshot so
+            // receivers can snap their mirror engines before rendering results.
             if (IsOnline && !_gameCompleteSent)
             {
                 _gameCompleteSent = true;
+                _gameCompleteRealtime = Time.realtimeSinceStartupAsDouble;
                 OnlineSession?.SendGameComplete();
+            }
+
+            // Wait for every remote peer's FINAL authoritative snapshot
+            // (snapshotSongTime >= SongLength) to be applied before
+            // transitioning to the results screen. Without this gate the
+            // remote players' stat cards would render before the terminal
+            // mirror state has been snapped, showing stale mid-song values.
+            //
+            // Bounded by FINAL_SNAPSHOT_TIMEOUT_SECONDS so a disconnected
+            // straggler doesn't pin us at the end-of-song screen forever —
+            // when the timeout fires we proceed with whatever stats the
+            // last snapshot left on each mirror engine.
+            if (IsOnline && OnlineSession != null
+                && !OnlineSession.AllRemoteFinalSnapshotsReceived(SongLength))
+            {
+                double elapsed = Time.realtimeSinceStartupAsDouble - _gameCompleteRealtime;
+                if (elapsed < FINAL_SNAPSHOT_TIMEOUT_SECONDS)
+                {
+                    return false;
+                }
+                YargLogger.LogFormatWarning(
+                    "GameManager: final-snapshot gate timed out after {0:0.0}s — proceeding to results.",
+                    elapsed);
             }
 #nullable enable
             ReplayInfo? replayInfo = null;
@@ -714,9 +779,8 @@ namespace YARG.Gameplay
             {
                 var profile = player.Player.Profile;
 
-                // Remote players' scores belong to other users — never write them to our
-                // local score store (the YargProfile.Id is a throwaway Guid from the remote
-                // constructor, so attribution would be meaningless anyway).
+                // Remote players' scores belong to other users. Never write them to our
+                // local score store.
                 if (player.Player.IsRemote)
                 {
                     continue;
@@ -825,12 +889,23 @@ namespace YARG.Gameplay
 
         public void ForceQuitSong()
         {
+            // Mid-song bail-out: tear down the UDP game session so the relay
+            // tells remaining peers we left (they hide our highway) and
+            // flip our lobby-side IsBackInLobby flag so the host's Start
+            // gate ungates promptly. Skipping this would leave a phantom
+            // track on every remaining peer's screen for the rest of the
+            // song. Must run BEFORE we reset PersistentState — IsOnline
+            // is read from the gameplay-scope flag, not GlobalVariables.
+            if (IsOnline)
+            {
+                LobbyHubSession.Current?.LeaveCurrentGame();
+            }
             GlobalVariables.State = PersistentState.Default;
             BailOutToMenu();
         }
 
         /// <summary>
-        /// Common Gameplay → Menu exit path. When we're in an online lobby
+        /// Common Gameplay -> Menu exit path. When we're in an online lobby
         /// session, sets MenuManager's override so the next MenuScene Start
         /// lands the user on LobbyView. Otherwise behaves identically to a
         /// plain <c>LoadScene(Menu)</c>.
@@ -887,15 +962,7 @@ namespace YARG.Gameplay
             for (int i = 0; i < _players.Count; i++)
             {
                 var player = _players[i];
-                if (player.Player.Profile.IsBot)
-                {
-                    continue;
-                }
-
-                // Remote players' inputs aren't authored on this machine — saving an empty
-                // input stream would yield a replay frame that can't be reproduced. Skip
-                // them; the local player's replay still saves normally.
-                if (player.Player.IsRemote)
+                if (player.Player.Profile.IsBot || player.Player.IsRemote)
                 {
                     continue;
                 }
@@ -956,8 +1023,6 @@ namespace YARG.Gameplay
 
         private void OnApplicationFocus(bool hasFocus)
         {
-            // Online sessions can't pause — alt-tabbing must keep the engine running so we
-            // stay in sync with the other peers.
             if (!hasFocus && !Paused && !IsOnline && SettingsManager.Settings.PauseOnFocusLoss.Value)
             {
                 SetPaused(true);
@@ -984,7 +1049,8 @@ namespace YARG.Gameplay
 
         private async void OnSongFailed()
         {
-            if (SettingsManager.Settings.NoFail.Value != NoFailMode.Off || IsPractice)
+            if (SettingsManager.Settings.NoFail.Value != NoFailMode.Off ||
+                IsPractice || IsOnline)
             {
                 return;
             }

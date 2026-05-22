@@ -252,6 +252,9 @@ namespace YARG.Online
                 _connection.On<QueuedSongAvailabilityChangedEvent>(nameof(ILobbyHubClient.OnQueuedSongAvailabilityChanged), OnQueuedSongAvailabilityChangedAsync);
                 _connection.On<ChatMessageEvent>(nameof(ILobbyHubClient.OnChatMessage), OnChatMessageAsync);
                 _connection.On<GameStartedEvent>(nameof(ILobbyHubClient.OnGameStarted), OnGameStartedAsync);
+                _connection.On<PlayerLobbyReadyChangedEvent>(
+                    nameof(ILobbyHubClient.OnPlayerLobbyReadyChanged),
+                    OnPlayerLobbyReadyChangedAsync);
 
                 _connection.Reconnecting += _ =>
                 {
@@ -485,6 +488,21 @@ namespace YARG.Online
         }
 
         /// <summary>
+        /// Invoke <c>ILobbyHub.RemoveQueuedSong</c>. The server broadcasts
+        /// <c>OnSongDequeued</c> back to all members; we don't pre-emptively
+        /// mutate <see cref="CurrentLobby"/>.<c>SongQueue</c>. Throws on hub error
+        /// (e.g. caller isn't host, or sequence isn't in the queue).
+        /// </summary>
+        public async UniTask RemoveQueuedSongAsync(long sequence, CancellationToken ct = default)
+        {
+            var conn = RequireConnection();
+            var args = new RemoveQueuedSongArgs(sequence);
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: RemoveQueuedSong sequence={sequence}");
+            await conn.InvokeAsync(nameof(ILobbyHub.RemoveQueuedSong), args, ct);
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: RemoveQueuedSong ok — sequence={sequence}");
+        }
+
+        /// <summary>
         /// Invoke <c>ILobbyHub.SendChatMessage</c>. The server broadcasts
         /// <c>OnChatMessage</c> back to all members including the caller, which
         /// appends to <see cref="CurrentLobby"/>.<c>ChatHistory</c> — so we don't
@@ -512,6 +530,55 @@ namespace YARG.Online
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: StartGame");
             await conn.InvokeAsync(nameof(ILobbyHub.StartGame), ct);
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: StartGame ok — awaiting OnGameStarted");
+        }
+
+        /// <summary>
+        /// Signal to the lobby that this player has closed the post-game
+        /// results screen and is back at the song-select view. Called by
+        /// <c>ScoreScreenMenu</c> on the Continue button when an online
+        /// lobby is active. The host's Start button is gated on every
+        /// member having reported in. Safe to call when no lobby is
+        /// active — the server treats it as a no-op.
+        /// </summary>
+        public async UniTask LeaveResultsAsync(CancellationToken ct = default)
+        {
+            var conn = _connection;
+            if (conn == null || _state != ConnectionState.Connected)
+            {
+                // Offline play / disconnected — nothing to signal. Don't throw.
+                return;
+            }
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: LeaveResults");
+            await conn.InvokeAsync(nameof(ILobbyHub.LeaveResults), ct);
+        }
+
+        /// <summary>
+        /// Bail out of the in-flight game session entirely (used by the
+        /// in-gameplay Quit button). Tears down the UDP game session — the
+        /// game server detects the disconnect and broadcasts
+        /// <c>RemotePeerLeftPacket</c> to remaining peers, who hide the
+        /// leaver's track. Also fires <see cref="LeaveResults"/> against
+        /// the lobby hub so the leaver counts as back-in-lobby for the
+        /// host's Start gate. Safe to call when no game is active.
+        /// </summary>
+        public void LeaveCurrentGame()
+        {
+            // Fire-and-forget the lobby signal so the host's Start gate
+            // unblocks promptly. The hub-side RPC tolerates "no lobby"
+            // gracefully so this is safe even after a partial disconnect.
+            LeaveResultsAsync().Forget();
+
+            // Disposing the orchestrator cascades into GameClientSession
+            // disposal, which closes the UDP connection. The server's
+            // OnPeerDisconnected then broadcasts RemotePeerLeft to remaining
+            // peers. LobbyHubSession.OnOrchestratorEnded normally drives
+            // this on Disconnected/GameEnded events — calling it directly
+            // here just collapses the wait.
+            var orch = _orchestrator;
+            if (orch == null) return;
+            _orchestrator = null;
+            orch.Ended -= OnOrchestratorEnded;
+            orch.DisposeAsync().Forget();
         }
 
         private HubConnection RequireConnection()
@@ -542,7 +609,11 @@ namespace YARG.Online
             if (!IsForCurrentLobby(e.LobbyId)) return;
             if (!_currentLobby.Members.Contains(e.UserId)) _currentLobby.Members.Add(e.UserId);
             _currentLobby.MemberNames[e.UserId] = e.DisplayName;
-            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: OnPlayerJoined {e.UserId} ({e.DisplayName})");
+            _currentLobby.MemberInstruments[e.UserId] = (YARG.Core.Instrument) e.Instrument;
+            // Joiners always land on the lobby/song-select screen — the
+            // matching authoritative flag from the server is also true.
+            _currentLobby.MemberIsBackInLobby[e.UserId] = true;
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: OnPlayerJoined {e.UserId} ({e.DisplayName}) instrument={(YARG.Core.Instrument) e.Instrument}");
             CurrentLobbyChanged?.Invoke();
 
             if (e.UserId != _tokenProvider.UserId)
@@ -768,6 +839,18 @@ namespace YARG.Online
             CurrentLobbyChanged?.Invoke();
 
             StartOrchestratorAsync().Forget();
+        }
+
+        private async Task OnPlayerLobbyReadyChangedAsync(PlayerLobbyReadyChangedEvent e)
+        {
+            try { await UniTask.SwitchToMainThread(_lifetimeCts.Token); }
+            catch (OperationCanceledException) { return; }
+            if (!IsForCurrentLobby(e.LobbyId)) return;
+            _currentLobby.MemberIsBackInLobby[e.UserId] = e.IsBackInLobby;
+            YargLogger.LogFormatInfo(
+                "LobbyHubSession[#{0}]: OnPlayerLobbyReadyChanged userId={1} isBackInLobby={2}",
+                _instanceId, e.UserId, e.IsBackInLobby);
+            CurrentLobbyChanged?.Invoke();
         }
 
         // ---------- helpers ----------

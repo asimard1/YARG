@@ -356,6 +356,41 @@ namespace YARG.Gameplay.Player
             TrackMaterial.Initialize(Player.HighwayPreset);
             CameraPositioner.Initialize(Player.CameraPreset);
             FinalizeTrackEffects();
+
+            // Online sync wiring. Two distinct paths:
+            //   - LOCAL player: subscribe sync events on the engine so misses/
+            //     SP/whammy/sustain-releases get forwarded over the wire.
+            //   - REMOTE player: register a RemotePlayerSimulator wrapping
+            //     this engine + chart projection, so inbound wire events
+            //     drive the mirror engine via predicted hits / rollbacks.
+            var director = YARG.Online.OnlineSessionDirector.Current;
+            bool isOnline = director != null;
+            bool isLocalEligible = !Player.IsReplay && !Player.Profile.IsBot && !Player.IsRemote;
+            YargLogger.LogFormatInfo(
+                "Prediction[track-init]: player={0} isReplay={1} isBot={2} isRemote={3} onlineActive={4} localAttach={5}",
+                Player.Profile?.Name ?? "<null>",
+                Player.IsReplay, Player.Profile.IsBot, Player.IsRemote, isOnline, isLocalEligible && isOnline);
+
+            if (isOnline)
+            {
+                if (isLocalEligible)
+                {
+                    director.AttachLocalEngineForSync(Engine);
+                }
+                else if (Player.IsRemote)
+                {
+                    // Build the simulator. The mirror engine was already
+                    // constructed in CreateEngine and is identical-config to
+                    // the sender's. Notes come from the typed chart on this
+                    // TrackPlayer. The simulator's defaults (50 ms render
+                    // delay, 50 ms commit window, 250 ms rollback window)
+                    // are tuned for typical wifi RTT and are exposed via
+                    // constructor params if profiling argues for change.
+                    var sim = new YARG.Core.Engine.Prediction.RemotePlayerSimulator<TNote>(
+                        Engine, Notes);
+                    director.RegisterRemoteSimulator(Player.RemotePeerId, sim);
+                }
+            }
         }
 
         protected void ResetNoteCounters()

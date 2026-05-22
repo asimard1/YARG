@@ -323,6 +323,53 @@ namespace YARG.Menu.MusicLibrary
                 Navigator.Instance.PopScheme();
             }
 
+            // Picker mode (e.g. opened from an online lobby to queue a song): use a
+            // simplified scheme that drops Play-A-Show / setlist controls and exposes
+            // only navigate + confirm + filters + more options. Green is a plain confirm
+            // — SongViewType.PrimaryButtonClick already routes through SongPickedCallback
+            // and ExitFromPickerConfirm back to the lobby.
+            if (PickerMode)
+            {
+                Navigator.Instance.PushScheme(new NavigationScheme(new()
+                {
+                    new NavigationScheme.Entry(MenuAction.Up, "Menu.Common.Up",
+                        ctx =>
+                        {
+                            if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
+                            {
+                                GoToPreviousSection();
+                            }
+                            else
+                            {
+                                SetWrapAroundState(!ctx.IsRepeat);
+                                SelectedIndex--;
+                            }
+                        }),
+                    new NavigationScheme.Entry(MenuAction.Down, "Menu.Common.Down",
+                        ctx =>
+                        {
+                            if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
+                            {
+                                GoToNextSection();
+                            }
+                            else
+                            {
+                                SetWrapAroundState(!ctx.IsRepeat);
+                                SelectedIndex++;
+                            }
+                        }),
+                    new NavigationScheme.Entry(MenuAction.Left,  "Menu.MusicLibrary.SkipSection", GoToPreviousSection),
+                    new NavigationScheme.Entry(MenuAction.Right, "Menu.MusicLibrary.SkipSection", GoToNextSection),
+                    new NavigationScheme.Entry(MenuAction.Green, "Menu.Common.Confirm",
+                        () => CurrentSelection?.PrimaryButtonClick(), hide: true),
+                    new NavigationScheme.Entry(MenuAction.Red,   "Menu.Common.Back", Back, hide: true),
+                    new NavigationScheme.Entry(MenuAction.Blue,  "Menu.MusicLibrary.Filters", OpenFilters),
+                    new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
+                        OnOrangeHit, OnOrangeRelease),
+                }, false));
+                return;
+            }
+
             bool isSelectingPlaylist = MenuState == MenuState.PlaylistSelect;
             bool setListNotEmpty = ShowPlaylist.Count > 0;
             _sidebar.UpdatePlayButtonLabel(setListNotEmpty);

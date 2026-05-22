@@ -36,14 +36,6 @@ namespace YARG.Menu.ScoreScreen
 {
     public class ScoreScreenMenu : MonoBehaviour
     {
-        /// <summary>
-        /// When true, the score screen represents an online lobby game: the Restart
-        /// button is suppressed (the online session is torn down by this point, so
-        /// reloading the gameplay scene would leave GameManager in a broken state).
-        /// Caller is responsible for resetting this to false when done.
-        /// </summary>
-        public static bool LobbyMode { get; set; }
-
         [SerializeField]
         private Transform _cardContainer;
         [SerializeField]
@@ -178,8 +170,6 @@ namespace YARG.Menu.ScoreScreen
 
         private void OnDisable()
         {
-            LobbyMode = false;
-
             MusicLibraryMenu.CurrentlyPlaying = GlobalVariables.State.CurrentSong;
             if (!GlobalVariables.State.PlayingAShow && !_restartingSong)
             {
@@ -465,9 +455,18 @@ namespace YARG.Menu.ScoreScreen
                             // the LobbyView menu open on the next MenuScene Start.
                             // The stack-free start-game flow never pushed LobbyView
                             // onto the menu stack, so _lastOpenMenu can't restore it.
-                            if (LobbyHubSession.Current?.CurrentLobby != null)
+                            var lobbySession = LobbyHubSession.Current;
+                            if (lobbySession?.CurrentLobby != null)
                             {
                                 MenuManager.SetOverrideOpenMenu(MenuManager.Menu.LobbyView);
+                                // Tell the lobby that this player has returned to
+                                // the song-select view. The host's Start button is
+                                // gated on every member's flag being true; if we
+                                // skip this signal the host can never start the
+                                // next song. Fire-and-forget — load proceeds even
+                                // if the RPC is slow or fails (server enforces the
+                                // gate regardless).
+                                lobbySession.LeaveResultsAsync().Forget();
                             }
 
                             GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
@@ -600,7 +599,8 @@ namespace YARG.Menu.ScoreScreen
                 _continueButtonEntry,
             };
 
-            if (!LobbyMode)
+            // Only show the restart button if we aren't playing online
+            if (LobbyHubSession.Current == null || LobbyHubSession.Current.CurrentLobby == null)
             {
                 buttons.Add(_restartButtonEntry);
             }

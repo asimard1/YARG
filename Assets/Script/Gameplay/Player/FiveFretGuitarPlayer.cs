@@ -296,6 +296,26 @@ namespace YARG.Gameplay.Player
                 }
             }
 
+            // Remote players: drive WhammyFactor from the prediction layer's
+            // latest applied sample, since they have no OnInputQueued path
+            // for the engine to surface whammy state. Gated on _sustainCount
+            // so the bend visual + stem pitch only apply while a sustain is
+            // active (matches the local path's behavior).
+            if (Player.IsRemote && GameManager.OnlineSession != null)
+            {
+                float remoteWhammy = GameManager.OnlineSession.GetRemoteWhammyValue(Player.RemotePeerId);
+                if (_sustainCount > 0)
+                {
+                    WhammyFactor = remoteWhammy;
+                    GameManager.ChangeStemWhammyPitch(_stem, remoteWhammy);
+                }
+                else if (WhammyFactor != 0f)
+                {
+                    WhammyFactor = 0f;
+                    GameManager.ChangeStemWhammyPitch(_stem, 0f);
+                }
+            }
+
             base.UpdateVisuals(visualTime);
             UpdateRangeShift(visualTime);
             UpdateFretArray();

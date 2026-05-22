@@ -196,10 +196,18 @@ namespace YARG.Menu
                 throw new InvalidOperationException($"Failed to open menu {menu}.");
             }
 
+            // Two passes — deactivate every non-target menu BEFORE activating the target.
+            // Unity fires OnEnable/OnDisable synchronously inside SetActive, so a single
+            // interleaved loop in dictionary order can produce:
+            //   incoming.OnEnable → PushScheme (lobby, picker)
+            //   outgoing.OnDisable → PopScheme (lobby) — pops the picker we just pushed
+            // Two-pass guarantees the outgoing menu's PopScheme runs first, leaving the
+            // incoming menu free to push its scheme onto a clean top.
             foreach (var kv in _menus)
             {
-                kv.Value.gameObject.SetActive(kv.Key == menu);
+                if (kv.Key != menu) kv.Value.gameObject.SetActive(false);
             }
+            target.gameObject.SetActive(true);
 
             // Replace the top of the stack with this menu so that any legacy
             // PopMenu / OnDisable _lastOpenMenu derivation observes a consistent

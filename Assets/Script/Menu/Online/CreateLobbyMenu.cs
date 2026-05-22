@@ -10,6 +10,7 @@ using YARG.Menu.Persistent;
 using YARG.Online;
 using YARG.Online.Lobbies.Contracts.Enums;
 using YARG.Online.Lobbies.Contracts.Hubs;
+using YARG.Player;
 
 namespace YARG.Menu.Online
 {
@@ -75,13 +76,22 @@ namespace YARG.Menu.Online
             context.SetLoadingText("Creating lobby…");
             try
             {
+                // Sent so the server can broadcast our instrument to other members for
+                // display in their player lists. Defaults to 0 if no local profile is active.
+                byte localInstrument = PlayerContainer.Players.Count > 0
+                    ? (byte) PlayerContainer.Players[0].Profile.CurrentInstrument
+                    : (byte) 0;
+
                 var args = new CreateLobbyArgs(
                     Name:       name,
                     GameMode:   DefaultGameMode,
                     Region:     DefaultRegion,
                     Song:       null,
                     MaxPlayers: DefaultMaxPlayers,
-                    Library:    LocalSongLibrary.BuildLocal());
+                    Library:    LocalSongLibrary.BuildLocal())
+                {
+                    Instrument = localInstrument,
+                };
 
                 await session.CreateLobbyAsync(args, CancellationToken.None);
 

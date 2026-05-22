@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
@@ -23,8 +24,8 @@ namespace YARG.Online
     public sealed class OnlineAccessTokenProvider
     {
         // TODO: surface as a setting once the online flow stabilizes.
-        public const string BaseUrl = "http://localhost:5230";
-        //public const string BaseUrl = "https://h1qr6560fh25.shares.zrok.io";
+        //public const string BaseUrl = "http://localhost:5230";
+        public const string BaseUrl = "https://rjoghqrt4k6k.shares.zrok.io";
 
         private const string DevAuthPath = "/api/v1/auth/dev";
 
@@ -61,13 +62,30 @@ namespace YARG.Online
 
         public OnlineAccessTokenProvider(string authName)
         {
-            _authName = string.IsNullOrWhiteSpace(authName) ? "YARG-Player" : authName;
+            _authName = SanitizeAuthName(authName);
         }
 
         public static string ResolveDefaultAuthName()
         {
             var name = PlayerContainer.Players.FirstOrDefault()?.Profile.Name;
-            return string.IsNullOrWhiteSpace(name) ? "YARG-Player" : name;
+            return SanitizeAuthName(name);
+        }
+
+        // Server-side validation rejects names with anything outside
+        // [A-Za-z0-9 _-] (e.g. "Mic'd Up" fails because of the apostrophe).
+        // Replace each disallowed char with an underscore so the player's
+        // profile name still resolves to a recognizable identity rather than
+        // silently falling back to "YARG-Player".
+        private static readonly Regex DisallowedAuthNameChars = new(@"[^A-Za-z0-9 _-]", RegexOptions.Compiled);
+
+        private static string SanitizeAuthName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return "YARG-Player";
+            }
+            var sanitized = DisallowedAuthNameChars.Replace(name, "_").Trim();
+            return string.IsNullOrEmpty(sanitized) ? "YARG-Player" : sanitized;
         }
 
         /// <summary>

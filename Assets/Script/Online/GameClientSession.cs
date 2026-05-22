@@ -1,15 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.IO.Pipelines;
 using System.Net;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using LiteNetLib;
 using LiteNetLib.Utils;
-using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Online.Game.Contracts.Enums;
 using YARG.Online.Game.Contracts.Packets;
@@ -28,14 +24,11 @@ namespace YARG.Online
     public sealed class GameClientSession
     {
         private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
-        private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(15);
 
         private readonly object _lock = new();
         private NetManager _manager;
         private EventBasedNetListener _listener;
         private NetPeer _serverPeer;
-        private CancellationTokenSource _pollCts;
-        private UniTask? _pollLoop;
         private TaskCompletionSource<bool> _connectOutcome;
 
         private readonly CancellationTokenSource _lifetimeCts = new();
@@ -45,12 +38,6 @@ namespace YARG.Online
         // waits for this to drain to zero before tearing down the NetManager, so a
         // callback racing with shutdown can't fire an event after disposal.
         private int _inflightHandlers;
-
-        // Per-peer destination pipes for inbound EngineInputBatch records. Installed
-        // by OnlineSessionDirector via AttachEngineInputSinks; the poll thread writes
-        // GameInput-shaped records straight into the matching writer (no main-thread hop).
-        // Volatile so a Dispose-time swap is visible immediately to the poll thread.
-        private volatile IReadOnlyDictionary<int, PipeWriter> _engineInputSinks;
 
         public GameClientSession()
         {
@@ -94,6 +81,62 @@ namespace YARG.Online
         /// reason (server stop, idle timeout, network error).</summary>
         public event Action Disconnected;
 
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer reports a
+        /// missed note. Args: <c>peerId</c>, <c>noteIndex</c> (into the chart's flattened
+        /// note list for the remote peer's instrument+difficulty), <c>songTime</c>.
+        /// Stays on the receive thread because the prediction layer needs the lowest
+        /// possible event-arrival latency to decide whether a miss lands inside the
+        /// commit window or triggers a rollback.</summary>
+        public event Action<int, int, double> NoteMissedReceived;
+
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer activates
+        /// star power. Args: <c>peerId</c>, <c>songTime</c> at which activation occurred.
+        /// Stays on the receive thread for the same latency reason as
+        /// <see cref="NoteMissedReceived"/>.</summary>
+        public event Action<int, double> StarPowerActivatedReceived;
+
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer's whammy
+        /// axis changes. Args: <c>peerId</c>, <c>songTime</c>, <c>value</c> in [0,1].
+        /// Stays on the receive thread for the same latency reason as
+        /// <see cref="NoteMissedReceived"/>.</summary>
+        public event Action<int, double, float> WhammyReceived;
+
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
+        /// emits a vocal pitch sample. Args: <c>peerId</c>, <c>songTime</c>,
+        /// <c>pitchMidi</c>, <c>isSinging</c>. The director's per-peer simulator
+        /// buffers samples and the visual layer interpolates between them so
+        /// the on-track pitch blob slides smoothly between packets.</summary>
+        public event Action<int, double, float, bool> VocalPitchReceived;
+
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
+        /// releases a sustain early. Args: <c>peerId</c>, <c>noteIndex</c>
+        /// (root note of the sustain), <c>songTime</c> at which release
+        /// happened. Stays on the receive thread because the prediction
+        /// layer keys its rollback decision off event-arrival time.</summary>
+        public event Action<int, int, double> SustainReleasedReceived;
+
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
+        /// overstrums. Args: <c>peerId</c>, <c>songTime</c> at which the
+        /// overstrum fired. Stays on the receive thread for the same
+        /// rationale as <see cref="SustainReleasedReceived"/>.</summary>
+        public event Action<int, double> OverstrumReceived;
+
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
+        /// reports a hit. Paired with <see cref="NoteMissedReceived"/> —
+        /// together they form the per-note outcome stream used by the
+        /// prediction layer's Markov-1 model.</summary>
+        public event Action<int, int, double> NoteHitReceived;
+
+        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
+        /// delivers a periodic authoritative engine-state snapshot. Args:
+        /// <c>peerId</c>, <c>songTime</c> (sender's engine time at capture),
+        /// <c>snapshotKind</c> (1=Guitar, ...), <c>snapshotData</c> (opaque
+        /// bytes, deserialized by <see cref="EngineSnapshotSerializer"/>).
+        /// The receiver restores the mirror engine to the sender's exact
+        /// state, eliminating any drift accumulated since the previous
+        /// snapshot.</summary>
+        public event Action<int, double, byte, byte[]> EngineStateSnapshotReceived;
+
         /// <summary>Connect to the game server. Single-shot — throws if called on a
         /// session whose <see cref="NetManager"/> is already started.</summary>
         public async UniTask<bool> ConnectAsync(IPEndPoint endpoint, string connectionKey, string jwt, CancellationToken ct = default)
@@ -107,7 +150,16 @@ namespace YARG.Online
                 }
 
                 _listener = new EventBasedNetListener();
-                _manager = new NetManager(_listener) { UnconnectedMessagesEnabled = false };
+                // UnsyncedEvents: LiteNetLib fires every callback directly on its
+                // receive thread instead of buffering for PollEvents(). Removes
+                // the per-tick latency floor between packet arrival and our
+                // handler. We already marshal to the Unity main thread via
+                // Track + SwitchToMainThread for handlers that need it.
+                _manager = new NetManager(_listener)
+                {
+                    UnconnectedMessagesEnabled = false,
+                    UnsyncedEvents = true,
+                };
                 _connectOutcome = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
                 _listener.PeerConnectedEvent += peer =>
@@ -139,9 +191,6 @@ namespace YARG.Online
                 return false;
             }
 
-            _pollCts = new CancellationTokenSource();
-            _pollLoop = PollLoopAsync(_pollCts.Token);
-
             var writer = new NetDataWriter();
             writer.Put(connectionKey);
             writer.Put(jwt);
@@ -163,12 +212,20 @@ namespace YARG.Online
             }
         }
 
-        public void SendLoadout(InstrumentId instrument, DifficultyId difficulty, Guid enginePreset)
+        public void SendLoadout(
+            InstrumentId instrument, DifficultyId difficulty, Guid enginePreset,
+            float noteSpeed, ulong modifiers, byte[] chartHash)
         {
             var peer = _serverPeer;
             if (peer == null)
             {
                 throw new InvalidOperationException("GameClientSession not connected; cannot send loadout.");
+            }
+            if (chartHash == null || chartHash.Length != SetLoadoutPacket.ChartHashLength)
+            {
+                throw new ArgumentException(
+                    $"chartHash must be exactly {SetLoadoutPacket.ChartHashLength} bytes (got {chartHash?.Length ?? 0}).",
+                    nameof(chartHash));
             }
 
             var writer = new NetDataWriter();
@@ -177,28 +234,32 @@ namespace YARG.Online
                 Instrument = instrument,
                 Difficulty = difficulty,
                 EnginePreset = enginePreset,
+                NoteSpeed = noteSpeed,
+                Modifiers = modifiers,
+                ChartHash = chartHash,
             });
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            YargLogger.LogInfo($"GameClientSession: SendLoadout instrument={instrument} difficulty={difficulty}");
+            YargLogger.LogInfo($"GameClientSession: SendLoadout instrument={instrument} difficulty={difficulty} noteSpeed={noteSpeed} modifiers=0x{modifiers:X}");
         }
 
-        /// <summary>Send a batch of local-player engine inputs to the server for fan-out.
-        /// PeerId on the wire is left at 0; the server stamps it with the sender's id before
-        /// fanning out to other peers in the session. Safe to call from the Unity main thread.</summary>
-        public void SendEngineInputs(IReadOnlyList<EngineInputRecord> batch)
+        /// <summary>
+        /// Retract a previously-sent loadout (DifficultySelect "Unready"). Server drops
+        /// the stored loadout if the game hasn't started yet; otherwise the request is a
+        /// silent no-op (you can't unready once the game is in progress).
+        /// </summary>
+        public void SendUnready()
         {
-            if (batch == null || batch.Count == 0) return;
             var peer = _serverPeer;
-            if (peer == null) return;
-
-            var packet = new EngineInputBatchPacket
+            if (peer == null)
             {
-                PeerId = 0,
-                Inputs = ToArray(batch),
-            };
+                YargLogger.LogWarning("GameClientSession: SendUnready called while disconnected; ignoring.");
+                return;
+            }
+
             var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.EngineInputBatch, packet);
+            writer.Put((byte) PacketOpcode.ClearLoadout);
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            YargLogger.LogInfo("GameClientSession: SendUnready (ClearLoadout)");
         }
 
         public void SendPeerReady()
@@ -231,16 +292,136 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>
-        /// Install (or, with <c>null</c>, remove) the per-peer destination pipes for
-        /// inbound EngineInputBatch packets. Called by <see cref="OnlineSessionDirector"/>:
-        /// once on game-start with the full map, and once on dispose with <c>null</c>.
-        /// Producer writes (LiteNetLib poll thread) snapshot the volatile field once per
-        /// packet, so a swap from the main thread races safely.
-        /// </summary>
-        public void AttachEngineInputSinks(IReadOnlyDictionary<int, PipeWriter> sinks)
+        /// <summary>Send a single missed-note event to the server for fan-out. Called
+        /// the instant the local engine reports a miss — NOT batched, because the
+        /// receivers' prediction layer is sensitive to event arrival time. Safe to
+        /// call from any thread.</summary>
+        public void SendNoteMissed(int noteIndex, double songTime)
         {
-            _engineInputSinks = sinks;
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.NoteMissed, new NoteMissedPacket
+            {
+                PeerId = 0,
+                NoteIndex = noteIndex,
+                SongTime = songTime,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Send a star-power activation event to the server for fan-out.
+        /// Called when the local player activates SP. Safe to call from any thread.</summary>
+        public void SendStarPowerActivated(double songTime)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.StarPowerActivated, new StarPowerActivatedPacket
+            {
+                PeerId = 0,
+                SongTime = songTime,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Send a whammy axis sample to the server for fan-out. Called from
+        /// the local engine's whammy input handler — NOT batched. Senders should apply
+        /// their own change-threshold (e.g. quantize to 256 levels) before calling so
+        /// the packet rate stays bounded. Safe to call from any thread.</summary>
+        public void SendWhammy(double songTime, float value)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.Whammy, new WhammyPacket
+            {
+                PeerId = 0,
+                SongTime = songTime,
+                Value = value,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Send a vocal pitch sample for the singer's on-track blob position.
+        /// Senders should rate-limit (~20 Hz is plenty — receivers interpolate between
+        /// samples). pitchMidi matches VocalsEngine.PitchSang. isSinging disambiguates
+        /// a valid 0 MIDI value from "silence" on the wire.</summary>
+        public void SendVocalPitch(double songTime, float pitchMidi, bool isSinging)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.VocalPitch, new VocalPitchPacket
+            {
+                PeerId = 0,
+                SongTime = songTime,
+                PitchMidi = pitchMidi,
+                IsSinging = isSinging,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Send an early-sustain-release event to the server for
+        /// fan-out. Called the instant the local engine reports a sustain
+        /// was dropped before its natural end. Doesn't break combo on the
+        /// receiver — only stops sustain scoring at <paramref name="songTime"/>.
+        /// Safe to call from any thread.</summary>
+        public void SendSustainReleased(int noteIndex, double songTime)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.SustainReleased, new SustainReleasedPacket
+            {
+                PeerId = 0,
+                NoteIndex = noteIndex,
+                SongTime = songTime,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Send an overstrum event to the server for fan-out.
+        /// Called the instant the local engine reports an overstrum.
+        /// Breaks combo, drops active sustains, strips SP from the current
+        /// note, and docks the rock meter on receivers. Safe to call from
+        /// any thread.</summary>
+        public void SendOverstrum(double songTime)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.Overstrum, new OverstrumPacket
+            {
+                PeerId = 0,
+                SongTime = songTime,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Send a note-hit event to the server for fan-out.
+        /// Paired with <see cref="SendNoteMissed"/> — together they form
+        /// the per-note outcome stream that drives the receiver's
+        /// prediction model. Safe to call from any thread.</summary>
+        public void SendNoteHit(int noteIndex, double songTime)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.NoteHit, new NoteHitPacket
+            {
+                PeerId = 0,
+                NoteIndex = noteIndex,
+                SongTime = songTime,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendGameComplete()
@@ -257,6 +438,29 @@ namespace YARG.Online
             YargLogger.LogInfo("GameClientSession: SendGameComplete");
         }
 
+        /// <summary>Send an authoritative engine-state snapshot to the relay
+        /// for fan-out. Receivers restore their mirror engine to the
+        /// sender's exact state, eliminating any drift accumulated since the
+        /// previous snapshot. Sent periodically by the local player update
+        /// path; one final snapshot is also sent immediately before
+        /// GameComplete so receivers can render the results screen using
+        /// authoritative final values. Safe to call from any thread.</summary>
+        public void SendEngineStateSnapshot(double songTime, byte snapshotKind, byte[] snapshotData)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.EngineStateSnapshot, new EngineStateSnapshotPacket
+            {
+                PeerId = 0,
+                SongTime = songTime,
+                SnapshotKind = snapshotKind,
+                SnapshotData = snapshotData,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
         public async UniTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
@@ -264,27 +468,6 @@ namespace YARG.Online
             YargLogger.LogInfo("GameClientSession: disposing");
 
             try { _lifetimeCts.Cancel(); } catch { }
-
-            // Drain the poll loop so it doesn't tick a stopped manager.
-            UniTask? poll;
-            CancellationTokenSource pollCts;
-            lock (_lock)
-            {
-                poll = _pollLoop;
-                pollCts = _pollCts;
-                _pollLoop = null;
-                _pollCts = null;
-            }
-            if (pollCts != null)
-            {
-                try { pollCts.Cancel(); } catch { }
-                pollCts.Dispose();
-            }
-            if (poll.HasValue)
-            {
-                try { await poll.Value.SuppressCancellationThrow(); }
-                catch (Exception ex) { YargLogger.LogException(ex); }
-            }
 
             // Drain in-flight Track bodies. After cancel, each pending
             // SwitchToMainThread continuation throws on its next Update tick and
@@ -376,71 +559,6 @@ namespace YARG.Online
                         }).Forget();
                         break;
                     }
-                    case PacketOpcode.EngineInputBatch:
-                    {
-                        // SPSC fast path: stays on the poll thread, no SwitchToMainThread,
-                        // no managed-array allocation. Producer parses the (peerId, count,
-                        // records) prefix manually and writes count GameInputs into the
-                        // matching per-peer PipeWriter; BasePlayer's UpdateInputs drains
-                        // the matching reader on the main thread.
-                        int sourcePeerId = reader.GetInt();
-                        int count = reader.GetInt();
-                        int recordSize = Unsafe.SizeOf<GameInput>(); // 16 bytes (Explicit, Pack=1)
-                        int bytes = count * recordSize;
-                        if (count < 0 || reader.AvailableBytes < bytes)
-                        {
-                            YargLogger.LogWarning(
-                                $"GameClientSession: malformed EngineInputBatch — count={count}, " +
-                                $"available={reader.AvailableBytes}; dropping packet.");
-                            break;
-                        }
-
-                        var sinks = _engineInputSinks;
-                        PipeWriter writer = null;
-                        if (sinks != null) sinks.TryGetValue(sourcePeerId, out writer);
-
-                        if (writer != null && count > 0)
-                        {
-                            try
-                            {
-                                var span = writer.GetSpan(bytes);
-                                var inputs = MemoryMarshal.Cast<byte, GameInput>(span);
-                                for (int i = 0; i < count; i++)
-                                {
-                                    inputs[i] = new GameInput(
-                                        reader.GetDouble(),
-                                        reader.GetInt(),
-                                        reader.GetInt());
-                                }
-                                writer.Advance(bytes);
-                                // Fire-and-forget: backpressure is disabled, so this never
-                                // actually awaits — the ValueTask completes synchronously.
-                                _ = writer.FlushAsync();
-                            }
-                            catch (InvalidOperationException ex)
-                            {
-                                // Writer was completed by Dispose on the main thread
-                                // between the volatile snapshot and the write. Expected
-                                // during teardown.
-                                YargLogger.LogWarning(
-                                    $"GameClientSession: EngineInputBatch write into completed pipe " +
-                                    $"for peerId={sourcePeerId} — {ex.Message}");
-                            }
-                        }
-                        else
-                        {
-                            // No sink registered for this peer (or no sinks at all yet).
-                            // Skip past the records so the reader stays aligned with the
-                            // outer dispatch loop's AvailableBytes check.
-                            for (int i = 0; i < count; i++)
-                            {
-                                reader.GetDouble();
-                                reader.GetInt();
-                                reader.GetInt();
-                            }
-                        }
-                        break;
-                    }
                     case PacketOpcode.RemotePeerLeft:
                     {
                         var leftPacket = new RemotePeerLeftPacket();
@@ -470,10 +588,108 @@ namespace YARG.Online
                     {
                         var pongPacket = new PongPacket();
                         pongPacket.Deserialize(reader);
-                        // Invoke synchronously on the poll thread. ServerClockSync's handler
-                        // is small and lock-free; main-thread serialization would only add
-                        // jitter to the sample.
+                        // Invoke synchronously on the receive thread. ServerClockSync's
+                        // handler is small and lock-free; a main-thread hop would only
+                        // add frame-time jitter to the very thing we're measuring.
                         PongReceived?.Invoke(pongPacket.ClientTickMs, pongPacket.ServerUtcMs, receiveLocalUtcMs);
+                        break;
+                    }
+                    case PacketOpcode.NoteMissed:
+                    {
+                        var missPacket = new NoteMissedPacket();
+                        missPacket.Deserialize(reader);
+                        int subCount = NoteMissedReceived?.GetInvocationList().Length ?? 0;
+                        YargLogger.LogFormatDebug(
+                            "Prediction[wire-recv] NoteMissed: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
+                            missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime, subCount);
+                        // Invoke synchronously on the receive thread. The prediction
+                        // layer's commit-window decision is keyed off event arrival time;
+                        // a main-thread hop would push every miss past the deadline by
+                        // up to one frame and inflate the rollback rate for no benefit.
+                        NoteMissedReceived?.Invoke(missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime);
+                        break;
+                    }
+                    case PacketOpcode.StarPowerActivated:
+                    {
+                        var spPacket = new StarPowerActivatedPacket();
+                        spPacket.Deserialize(reader);
+                        int subCount = StarPowerActivatedReceived?.GetInvocationList().Length ?? 0;
+                        YargLogger.LogFormatDebug(
+                            "Prediction[wire-recv] StarPowerActivated: peer={0} songTime={1:0.000} subs={2}",
+                            spPacket.PeerId, spPacket.SongTime, subCount);
+                        // Same rationale as NoteMissed: stays on the receive thread to
+                        // keep activation alignment as tight as possible.
+                        StarPowerActivatedReceived?.Invoke(spPacket.PeerId, spPacket.SongTime);
+                        break;
+                    }
+                    case PacketOpcode.Whammy:
+                    {
+                        var whammyPacket = new WhammyPacket();
+                        whammyPacket.Deserialize(reader);
+                        int subCount = WhammyReceived?.GetInvocationList().Length ?? 0;
+                        YargLogger.LogFormatDebug(
+                            "Prediction[wire-recv] Whammy: peer={0} songTime={1:0.000} value={2:0.00} subs={3}",
+                            whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value, subCount);
+                        // Same rationale as NoteMissed: stays on the receive thread.
+                        WhammyReceived?.Invoke(whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value);
+                        break;
+                    }
+                    case PacketOpcode.VocalPitch:
+                    {
+                        var vpPacket = new VocalPitchPacket();
+                        vpPacket.Deserialize(reader);
+                        // Same rationale as Whammy: stays on the receive thread; the
+                        // director queues the sample for next-tick consumption.
+                        VocalPitchReceived?.Invoke(
+                            vpPacket.PeerId, vpPacket.SongTime, vpPacket.PitchMidi, vpPacket.IsSinging);
+                        break;
+                    }
+                    case PacketOpcode.SustainReleased:
+                    {
+                        var releasePacket = new SustainReleasedPacket();
+                        releasePacket.Deserialize(reader);
+                        int subCount = SustainReleasedReceived?.GetInvocationList().Length ?? 0;
+                        YargLogger.LogFormatDebug(
+                            "Prediction[wire-recv] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
+                            releasePacket.PeerId, releasePacket.NoteIndex, releasePacket.SongTime, subCount);
+                        SustainReleasedReceived?.Invoke(
+                            releasePacket.PeerId, releasePacket.NoteIndex, releasePacket.SongTime);
+                        break;
+                    }
+                    case PacketOpcode.Overstrum:
+                    {
+                        var overPacket = new OverstrumPacket();
+                        overPacket.Deserialize(reader);
+                        int subCount = OverstrumReceived?.GetInvocationList().Length ?? 0;
+                        YargLogger.LogFormatDebug(
+                            "Prediction[wire-recv] Overstrum: peer={0} songTime={1:0.000} subs={2}",
+                            overPacket.PeerId, overPacket.SongTime, subCount);
+                        OverstrumReceived?.Invoke(overPacket.PeerId, overPacket.SongTime);
+                        break;
+                    }
+                    case PacketOpcode.NoteHit:
+                    {
+                        var hitPacket = new NoteHitPacket();
+                        hitPacket.Deserialize(reader);
+                        int subCount = NoteHitReceived?.GetInvocationList().Length ?? 0;
+                        YargLogger.LogFormatDebug(
+                            "Prediction[wire-recv] NoteHit: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
+                            hitPacket.PeerId, hitPacket.NoteIndex, hitPacket.SongTime, subCount);
+                        NoteHitReceived?.Invoke(hitPacket.PeerId, hitPacket.NoteIndex, hitPacket.SongTime);
+                        break;
+                    }
+                    case PacketOpcode.EngineStateSnapshot:
+                    {
+                        var snapPacket = new EngineStateSnapshotPacket();
+                        snapPacket.Deserialize(reader);
+                        int subCount = EngineStateSnapshotReceived?.GetInvocationList().Length ?? 0;
+                        YargLogger.LogFormatDebug(
+                            "Prediction[wire-recv] EngineStateSnapshot: peer={0} songTime={1:0.000} kind={2} bytes={3} subs={4}",
+                            snapPacket.PeerId, snapPacket.SongTime, snapPacket.SnapshotKind,
+                            snapPacket.SnapshotData?.Length ?? 0, subCount);
+                        EngineStateSnapshotReceived?.Invoke(
+                            snapPacket.PeerId, snapPacket.SongTime,
+                            snapPacket.SnapshotKind, snapPacket.SnapshotData);
                         break;
                     }
                     default:
@@ -491,31 +707,5 @@ namespace YARG.Online
             }
         }
 
-        private static EngineInputRecord[] ToArray(IReadOnlyList<EngineInputRecord> list)
-        {
-            if (list is EngineInputRecord[] arr) return arr;
-            var copy = new EngineInputRecord[list.Count];
-            for (int i = 0; i < copy.Length; i++) copy[i] = list[i];
-            return copy;
-        }
-
-        private async UniTask PollLoopAsync(CancellationToken ct)
-        {
-            try
-            {
-                while (!ct.IsCancellationRequested)
-                {
-                    var manager = _manager;
-                    if (manager == null) break;
-                    manager.PollEvents();
-                    await UniTask.Delay(PollInterval, cancellationToken: ct);
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                YargLogger.LogException(ex);
-            }
-        }
     }
 }

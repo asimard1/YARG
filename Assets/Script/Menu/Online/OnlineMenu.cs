@@ -12,6 +12,7 @@ using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Online;
 using YARG.Online.Lobbies.Contracts.Hubs;
+using YARG.Player;
 
 namespace YARG.Menu.Online
 {
@@ -183,7 +184,15 @@ namespace YARG.Menu.Online
             context.SetLoadingText("Joining lobby…");
             try
             {
-                var args = new EnterLobbyArgs(lobby.LobbyId, LocalSongLibrary.BuildLocal());
+                // Sent so the server can broadcast our instrument to other members for
+                // display in their player lists. Defaults to 0 if no local profile is active.
+                byte localInstrument = PlayerContainer.Players.Count > 0
+                    ? (byte) PlayerContainer.Players[0].Profile.CurrentInstrument
+                    : (byte) 0;
+                var args = new EnterLobbyArgs(lobby.LobbyId, LocalSongLibrary.BuildLocal())
+                {
+                    Instrument = localInstrument,
+                };
                 var session = LobbyHubSession.Current;
                 if (session == null)
                 {

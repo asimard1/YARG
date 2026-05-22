@@ -633,7 +633,9 @@ namespace YARG.Gameplay.Visuals
 
         private float ZFromTime(double time)
         {
-            float z = TrackPlayer.STRIKE_LINE_POS + (float) (time - GameManager.VisualTime) * Player.NoteSpeed;
+            // Use the player's EffectiveVisualTime so remote-peer highways
+            // stay shifted in lock-step with their delayed engine clock.
+            float z = TrackPlayer.STRIKE_LINE_POS + (float) (time - Player.EffectiveVisualTime) * Player.NoteSpeed;
             return z;
         }
     }

@@ -3,21 +3,34 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
+using YARG.Core;
 using YARG.Core.Song;
 using YARG.Helpers.Extensions;
+using YARG.Menu.MusicLibrary;
+using YARG.Player;
 using YARG.Song;
 
 namespace YARG.Menu.Online
 {
     public class QueuedSong : MonoBehaviour
     {
+        // Renamed from _albumArt — semantic: this is the card's main background image, set
+        // to the song's album-art sprite on load. FormerlySerializedAs preserves existing wiring.
         [SerializeField]
-        private Image _albumArt;
+        [FormerlySerializedAs("_albumArt")]
+        private Image _songBackground;
         [SerializeField]
         private Sprite _placeholder;
         [SerializeField]
         private TextMeshProUGUI _songName;
+        [SerializeField]
+        private TextMeshProUGUI _artistText;
+        [SerializeField]
+        private TextMeshProUGUI _charterText;
+        [SerializeField]
+        private DifficultyRing _difficultyRing;
         [SerializeField]
         private Button _removeButton;
 
@@ -31,20 +44,40 @@ namespace YARG.Menu.Online
             ClearOwnedTexture();
 
             _onRemove = onRemove;
-            //_removeButton.onClick.RemoveAllListeners();
-            //_removeButton.onClick.AddListener(InvokeRemove);
-            _removeButton.gameObject.SetActive(isLocalHost);
+            // Remove button is optional in the prefab (redesign in progress) — null-guard
+            // so a stripped-down card layout doesn't NRE.
+            // OnClick is wired in the prefab inspector → InvokeRemove. We only toggle
+            // visibility here based on host status.
+            if (_removeButton != null)
+            {
+                _removeButton.gameObject.SetActive(isLocalHost);
+            }
 
             if (!SongContainer.SongsByHash.TryGetValue(hash, out var songs))
             {
                 _songName.text = hash.ToString();
-                _albumArt.sprite = _placeholder;
+                _songBackground.sprite = _placeholder;
+                if (_artistText  != null) _artistText.text  = string.Empty;
+                if (_charterText != null) _charterText.text = string.Empty;
+                // Difficulty ring left at its default state — no song to query parts from.
                 return;
             }
 
             var song = songs[0];
             _songName.text = song.Name;
-            _albumArt.sprite = _placeholder;
+            if (_artistText  != null) _artistText.text  = song.Artist.ToString();
+            if (_charterText != null) _charterText.text = song.Charter.ToString();
+
+            // Difficulty ring is per-viewer: shows the local player's selected instrument.
+            // PartValues for an absent instrument come back with SubTracks==0 and the ring
+            // renders inactive — no HasInstrument check needed.
+            if (_difficultyRing != null && PlayerContainer.Players.Count > 0)
+            {
+                var instrument = PlayerContainer.Players[0].Profile.CurrentInstrument;
+                _difficultyRing.SetInfo(instrument.ToResourceName(), instrument, song[instrument]);
+            }
+
+            _songBackground.sprite = _placeholder;
 
             _albumCts = new CancellationTokenSource();
             LoadAlbumArtAsync(song, _albumCts.Token).Forget();
@@ -74,12 +107,12 @@ namespace YARG.Menu.Online
 
             if (texture == null)
             {
-                _albumArt.sprite = _placeholder;
+                _songBackground.sprite = _placeholder;
                 return;
             }
 
             _ownedTexture = texture;
-            _albumArt.sprite = Sprite.Create(
+            _songBackground.sprite = Sprite.Create(
                 texture,
                 new Rect(0, 0, texture.width, texture.height),
                 new Vector2(0.5f, 0.5f));
@@ -87,7 +120,7 @@ namespace YARG.Menu.Online
 
         public void SetRemoveButtonVisible(bool visible)
         {
-            _removeButton.gameObject.SetActive(visible);
+            if (_removeButton != null) _removeButton.gameObject.SetActive(visible);
         }
 
         public void InvokeRemove()
@@ -126,7 +159,7 @@ namespace YARG.Menu.Online
                 return;
             }
 
-            _albumArt.sprite = _placeholder;
+            _songBackground.sprite = _placeholder;
             Destroy(_ownedTexture);
             _ownedTexture = null;
         }

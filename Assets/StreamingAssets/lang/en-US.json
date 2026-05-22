@@ -266,9 +266,11 @@
             "Harmony": "Harmony",
             "Modifiers": "Modifiers",
             "Ready": "Ready",
+            "Unready": "Unready",
             "SitOut": "Sit Out",
 			"Disconnect" : "Disconnect",
             "Done": "Done",
+            "WaitingForPlayers": "Waiting for other players ({0}/{1})",
             "WarningPlayerNoInputDevice" : "This player has no input device assigned! Assign one from the Profiles menu.",
             "WarningVocalistNoMicrophone" : "This vocalist has no microphone assigned! Assign one from the Profiles menu."
         },
@@ -291,7 +293,15 @@
             "Name": "Online",
             "CreateLobby": "Create Lobby",
             "Filters": "Filters",
-            "JoinByCode": "Join By Code"
+            "JoinByCode": "Join By Code",
+            "AddSong": "Add Song",
+            "StartGame": "Start Game",
+            "LobbyHeaderSubText": "Online",
+            "PlayersHeader": "Players ({0}/{1})",
+            "SongsQueued": {
+                "Singular": "1 Song Queued",
+                "Plural": "{0} Songs Queued"
+            }
         },
         "Main": {
             "MessageOfTheDay": "<align=center><size=32><b>Welcome to the v0.15 nightlies!</b></size></align>\n\nv0.15 now has support for tremolo/trill lanes, customizable track backgrounds (including transparency), custom vocal characters for venues, advanced player performance tracking, repositionable highways, adds new in game calibration tools, and more! Oh, and the new and improved music library is finally here, including advanced song filters so even the largest library can't keep you from finding what you're looking for! :D\n\n<b>If you have any feedback or find any bugs, please let us know on Discord or GitHub.</b>\n\nHappy YARGin'!",

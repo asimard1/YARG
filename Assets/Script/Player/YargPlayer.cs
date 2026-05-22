@@ -91,7 +91,15 @@ namespace YARG.Player
                 CurrentDifficulty = (Difficulty)(byte)loadout.Difficulty,
                 DifficultyFallback = (Difficulty)(byte)loadout.Difficulty,
                 EnginePreset = loadout.EnginePreset,
+                NoteSpeed = loadout.NoteSpeed,
             };
+
+            // CurrentModifiers has a private setter; apply the bitmask via the public OR-in
+            // helper. Starting from Modifier.None, the OR equals the input.
+            if (loadout.Modifiers != 0)
+            {
+                Profile.AddSingleModifier((Modifier)loadout.Modifiers);
+            }
             Bindings = null;
             IsReplay = false;
             IsRemote = true;

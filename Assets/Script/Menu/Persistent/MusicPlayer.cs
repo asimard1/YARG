@@ -17,6 +17,45 @@ namespace YARG.Menu.Persistent
         private static SongEntry _nowPlaying = null;
         public static SongEntry NowPlaying => _nowPlaying;
 
+        // When non-null, NextSong always picks this song instead of a random one.
+        private static SongEntry _lockedSong = null;
+        public static SongEntry LockedSong => _lockedSong;
+
+        /// <summary>
+        /// Lock the player to a specific song (looped on repeat) or unlock by passing null.
+        /// If the player is active and the locked song differs from what's currently playing,
+        /// the swap happens immediately via <see cref="NextSong"/>. If the player isn't active
+        /// (no menu music allowed in the current context, e.g. gameplay), the flag is stored
+        /// and takes effect the next time the player is enabled.
+        /// </summary>
+        public static void SetLockedSong(SongEntry song)
+        {
+            if (_lockedSong == song)
+            {
+                return;
+            }
+
+            _lockedSong = song;
+
+            var instance = HelpBar.Instance ? HelpBar.Instance.MusicPlayer : null;
+            if (!instance)
+            {
+                return;
+            }
+
+            if (!instance.gameObject.activeSelf)
+            {
+                return;
+            }
+
+            if (song != null && song == _nowPlaying)
+            {
+                return;
+            }
+
+            instance.NextSong();
+        }
+
         private object _lock = new();
         private StemMixer _mixer = null;
 
@@ -66,10 +105,20 @@ namespace YARG.Menu.Persistent
             const int MAX_TRIES = 20;
             for (int tries = 0; tries < MAX_TRIES; tries++)
             {
-                var entry = SongContainer.GetRandomSong();
-                if (entry == _nowPlaying)
+                SongEntry entry;
+                if (_lockedSong != null)
                 {
-                    continue;
+                    // Locked-song mode (e.g. lobby top-of-queue): always use this entry,
+                    // skipping the dedup check so SongEnd → NextSong loops the same song.
+                    entry = _lockedSong;
+                }
+                else
+                {
+                    entry = SongContainer.GetRandomSong();
+                    if (entry == _nowPlaying)
+                    {
+                        continue;
+                    }
                 }
                 _nowPlaying = entry;
 

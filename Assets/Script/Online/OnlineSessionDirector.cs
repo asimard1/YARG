@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO.Pipelines;
 using System.Threading;
 using Cysharp.Threading.Tasks;
-using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Online.Game.Contracts.Packets;
 using YARG.Player;
@@ -12,10 +10,12 @@ namespace YARG.Online
 {
     /// <summary>
     /// Orchestrates the gameplay-side of an online session: builds the per-peer
-    /// <see cref="YargPlayer"/> list (local first, remotes sorted by peer id), owns the
-    /// per-peer <see cref="Pipe"/>s into which <see cref="GameClientSession"/>'s poll
-    /// thread writes inbound <see cref="GameInput"/>-shaped records, and forwards
-    /// local-player <see cref="GameInput"/>s back over the wire for fanout.
+    /// <see cref="YargPlayer"/> list (local first, remotes sorted by peer id),
+    /// owns the per-peer <see cref="YARG.Core.Engine.Prediction.IRemotePlayerSimulator"/>
+    /// registry, and routes inbound wire events from <see cref="GameClientSession"/>
+    /// to the matching simulator. Also forwards the local engine's sync events
+    /// (note hits/misses, sustain releases, overstrums, SP activations, whammy,
+    /// and periodic engine-state snapshots) back over the wire for fan-out.
     ///
     /// One director instance per game. Constructed by <see cref="LobbyGameOrchestrator"/>
     /// alongside the session it wraps, and disposed by the orchestrator before the session
@@ -33,14 +33,85 @@ namespace YARG.Online
 
         private readonly GameClientSession _session;
 
-        // Per-peer SPSC pipe carrying GameInput-shaped records (16 bytes each, layout
-        // matches the wire body of EngineInputBatchPacket). Producer: LiteNetLib poll
-        // thread inside GameClientSession.OnNetworkReceive. Consumer: BasePlayer.UpdateInputs
-        // on the Unity main thread. System.IO.Pipelines is SPSC-safe by construction —
-        // no lock needed.
-        private readonly Dictionary<int, Pipe> _peerPipes = new();
         private readonly Dictionary<int, YargPlayer> _peerToPlayer = new();
         private List<YargPlayer> _orderedPlayers = new();
+
+        // Per-remote-peer simulator. The gameplay scene registers each remote
+        // BasePlayer's engine + note projection through RegisterRemoteSimulator
+        // once the engine is constructed; events arriving on _session get
+        // dispatched here by peer id. Null until the gameplay scene starts
+        // registering simulators.
+        private readonly Dictionary<int, YARG.Core.Engine.Prediction.IRemotePlayerSimulator> _remoteSimulators = new();
+
+        // Reference to the local player's authoritative engine. Captured by
+        // AttachLocalEngineForSync. Used by MaybeSendPeriodicSnapshot to
+        // capture the canonical engine state and forward it to remote peers
+        // as the source-of-truth EngineStateSnapshot packet.
+        private YARG.Core.Engine.BaseEngine _localEngineForStats;
+
+        // Wire events arrive on the LiteNetLib receive thread; the simulator
+        // and the YARG.Core engine it wraps are NOT thread-safe — they mutate
+        // engine state, fire OnSustainEnd/OnNoteHit/etc. into the gameplay
+        // scene, and those handlers touch Unity Material APIs that throw if
+        // called off the main thread (UnityException:
+        // GetFirstPropertyNameIdByAttribute can only be called from the main
+        // thread). Marshal everything through this thread-safe queue and
+        // drain in TickRemoteSimulator (which runs on the Unity main thread
+        // via BasePlayer.UpdateInputs).
+        private readonly System.Collections.Concurrent.ConcurrentQueue<PendingWireEvent> _pendingWireEvents = new();
+
+        // Packet-typed queue for engine-state snapshots. Drained alongside
+        // the primitive wire-event queue inside DrainWireEvents — the
+        // sentinel in _pendingWireEvents triggers a pop from this list.
+        private readonly System.Collections.Concurrent.ConcurrentQueue<PendingSnapshot> _pendingSnapshots = new();
+
+        private readonly struct PendingSnapshot
+        {
+            public PendingSnapshot(int peerId, double songTime, byte snapshotKind, byte[] snapshotData)
+            {
+                PeerId = peerId;
+                SongTime = songTime;
+                SnapshotKind = snapshotKind;
+                SnapshotData = snapshotData;
+            }
+
+            public readonly int    PeerId;
+            public readonly double SongTime;
+            public readonly byte   SnapshotKind;
+            public readonly byte[] SnapshotData;
+        }
+
+        private enum WireEventKind : byte
+        {
+            NoteMissed = 1,
+            StarPowerActivated = 2,
+            Whammy = 3,
+            SustainReleased = 4,
+            Overstrum = 5,
+            NoteHit = 6,
+            EngineStateSnapshot = 7,
+            // PendingWireEvent.Value carries pitchMidi; NoteIndex (0|1) carries isSinging.
+            // Stored this way to avoid widening the struct just for one bool field.
+            VocalPitch = 8,
+        }
+
+        private readonly struct PendingWireEvent
+        {
+            public PendingWireEvent(int peerId, WireEventKind kind, int noteIndex, double songTime, float value)
+            {
+                PeerId = peerId;
+                Kind = kind;
+                NoteIndex = noteIndex;
+                SongTime = songTime;
+                Value = value;
+            }
+
+            public readonly int          PeerId;
+            public readonly WireEventKind Kind;
+            public readonly int          NoteIndex;
+            public readonly double       SongTime;
+            public readonly float        Value;
+        }
         private int _localPeerId;
         private long? _songOriginUtcMs;
         private int _countdownMs;
@@ -77,6 +148,24 @@ namespace YARG.Online
             _session.StartCueReceived += OnStartCueReceived;
             _session.RemotePeerLeft   += OnRemotePeerLeftEvent;
 
+            // Prediction-event fanout: route inbound per-event packets and
+            // the periodic EngineStateSnapshot to the matching peer's
+            // RemotePlayerSimulator. Subscribers fire on the LiteNetLib
+            // receive thread; the simulator mutates engine state and the
+            // gameplay update loop ticks it on the Unity main thread. The
+            // engine itself isn't yet thread-safe for free-running access,
+            // so we hop to the main thread for the commits by deferring
+            // through the player update — but the event *handler* runs on
+            // the receive thread.
+            _session.NoteMissedReceived          += OnWireNoteMissed;
+            _session.NoteHitReceived             += OnWireNoteHit;
+            _session.StarPowerActivatedReceived  += OnWireStarPowerActivated;
+            _session.WhammyReceived              += OnWireWhammy;
+            _session.VocalPitchReceived          += OnWireVocalPitch;
+            _session.SustainReleasedReceived     += OnWireSustainReleased;
+            _session.OverstrumReceived           += OnWireOverstrum;
+            _session.EngineStateSnapshotReceived += OnWireEngineStateSnapshot;
+
             if (Current != null)
             {
                 YargLogger.LogWarning(
@@ -92,17 +181,16 @@ namespace YARG.Online
 
             _session.StartCueReceived -= OnStartCueReceived;
             _session.RemotePeerLeft   -= OnRemotePeerLeftEvent;
+            _session.NoteMissedReceived          -= OnWireNoteMissed;
+            _session.NoteHitReceived             -= OnWireNoteHit;
+            _session.StarPowerActivatedReceived  -= OnWireStarPowerActivated;
+            _session.WhammyReceived              -= OnWireWhammy;
+            _session.VocalPitchReceived          -= OnWireVocalPitch;
+            _session.SustainReleasedReceived     -= OnWireSustainReleased;
+            _session.OverstrumReceived           -= OnWireOverstrum;
+            _session.EngineStateSnapshotReceived -= OnWireEngineStateSnapshot;
+            _remoteSimulators.Clear();
 
-            // Detach the sink map before completing writers so any in-flight write on the
-            // poll thread either sees the old map (and the now-completed writer throws
-            // InvalidOperationException, swallowed there) or the new null map (skips).
-            _session.AttachEngineInputSinks(null);
-            foreach (var pipe in _peerPipes.Values)
-            {
-                try { pipe.Writer.Complete(); }
-                catch (Exception ex) { YargLogger.LogWarning($"OnlineSessionDirector: pipe writer complete — {ex.Message}"); }
-            }
-            _peerPipes.Clear();
             _peerToPlayer.Clear();
             _orderedPlayers = new List<YargPlayer>();
             _localPeerId = 0;
@@ -193,36 +281,17 @@ namespace YARG.Online
                 if (l.UserId != localUserId) remotes.Add(l);
             }
             remotes.Sort((a, b) => a.PeerId.CompareTo(b.PeerId));
-            var sinks = new Dictionary<int, PipeWriter>(remotes.Count);
             foreach (var l in remotes)
             {
                 var remotePlayer = new YargPlayer(l.PeerId, l);
                 _peerToPlayer[l.PeerId] = remotePlayer;
-                var pipe = new Pipe(InputPipeOptions);
-                _peerPipes[l.PeerId] = pipe;
-                sinks[l.PeerId] = pipe.Writer;
                 _orderedPlayers.Add(remotePlayer);
             }
-            // Hand the writer map to the session in one atomic swap. The poll thread
-            // will start writing into these pipes on the next inbound packet.
-            _session.AttachEngineInputSinks(sinks);
 
             YargLogger.LogInfo(
                 $"OnlineSessionDirector: registered session — localPeerId={_localPeerId}, " +
                 $"players={_orderedPlayers.Count} (1 local + {remotes.Count} remote)");
         }
-
-        // Tight per-peer engine-input pipe. No backpressure (pauseWriterThreshold=0):
-        // the consumer ticks every Unity frame and the producer rate is bounded
-        // (<30 inputs/sec/peer typical, ~16 B each). useSynchronizationContext=false
-        // because the reader-side TryRead is fully synchronous from the main thread.
-        // minimumSegmentSize keeps a single batch (~16 records) in one segment so the
-        // consumer's FirstSpan fast-path is taken.
-        private static readonly PipeOptions InputPipeOptions = new PipeOptions(
-            pauseWriterThreshold: 0,
-            resumeWriterThreshold: 0,
-            minimumSegmentSize: 256,
-            useSynchronizationContext: false);
 
         /// <summary>
         /// UniTask that completes when the server's GameStartCue arrives. If the cue has
@@ -238,37 +307,411 @@ namespace YARG.Online
         }
 
         /// <summary>
-        /// Returns the <see cref="PipeReader"/> draining inbound engine inputs for a remote
-        /// player, or null if the player is local/unregistered. BasePlayer.UpdateInputs
-        /// calls TryRead on this each frame.
+        /// Wire the local player's engine into the network-sync event stream:
+        /// every miss/SP activation/whammy sample the engine emits gets
+        /// forwarded as a packet for fanout to other peers.
+        ///
+        /// Idempotent against the same engine reference. Call after the engine
+        /// is constructed in <see cref="BasePlayer"/> initialization. The
+        /// director does not hold the engine — it only subscribes; the
+        /// engine's lifetime is owned by the player.
         /// </summary>
-        public PipeReader GetInputReader(YargPlayer remotePlayer)
+        public void AttachLocalEngineForSync(YARG.Core.Engine.BaseEngine engine)
         {
-            if (remotePlayer == null || !remotePlayer.IsRemote) return null;
-            return _peerPipes.TryGetValue(remotePlayer.RemotePeerId, out var pipe) ? pipe.Reader : null;
+            if (engine == null)
+            {
+                throw new ArgumentNullException(nameof(engine));
+            }
+
+            // Each handler captures the session reference once and uses the
+            // already-thread-safe send methods. Engine events fire on the
+            // Unity main thread (the engine is updated from BasePlayer's
+            // Unity update path); _session.Send* are safe from any thread.
+            _localEngineForStats = engine;
+
+            engine.OnSyncNoteMissed         += OnLocalEngineNoteMissed;
+            engine.OnSyncNoteHit            += OnLocalEngineNoteHit;
+            engine.OnSyncStarPowerActivated += OnLocalEngineStarPowerActivated;
+            engine.OnSyncWhammyAxis         += OnLocalEngineWhammy;
+            engine.OnSyncSustainReleased    += OnLocalEngineSustainReleased;
+            engine.OnSyncOverstrum          += OnLocalEngineOverstrum;
+
+            YargLogger.LogInfo(
+                $"Prediction[local-attach]: wired local engine — localPeerId={_localPeerId}, engine={engine.GetType().Name}");
+        }
+
+        private void OnLocalEngineNoteMissed(int noteIndex)
+        {
+            // Send the engine's CurrentTime as the wire songTime. For misses
+            // it acts as the receiver's offset anchor — without it the remote
+            // can't reconstruct the player's hit-timing histogram (offsets
+            // would all read 0 because the mirror engine commits each hit
+            // at note.Time, not at the sender's actual input time).
+            double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
+            YargLogger.LogFormatDebug(
+                "Prediction[local-send] NoteMissed: peer={0} noteIndex={1} hitTime={2:0.000}",
+                _localPeerId, noteIndex, hitTime);
+            _session.SendNoteMissed(noteIndex, hitTime);
+        }
+
+        private void OnLocalEngineNoteHit(int noteIndex)
+        {
+            double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
+            YargLogger.LogFormatDebug(
+                "Prediction[local-send] NoteHit: peer={0} noteIndex={1} hitTime={2:0.000}",
+                _localPeerId, noteIndex, hitTime);
+            _session.SendNoteHit(noteIndex, hitTime);
+        }
+
+        private void OnLocalEngineStarPowerActivated(double songTime)
+        {
+            YargLogger.LogFormatDebug(
+                "Prediction[local-send] StarPowerActivated: peer={0} songTime={1:0.000}",
+                _localPeerId, songTime);
+            _session.SendStarPowerActivated(songTime);
+        }
+
+        private void OnLocalEngineWhammy(double songTime, float value)
+        {
+            YargLogger.LogFormatDebug(
+                "Prediction[local-send] Whammy: peer={0} songTime={1:0.000} value={2:0.00}",
+                _localPeerId, songTime, value);
+            _session.SendWhammy(songTime, value);
         }
 
         /// <summary>
-        /// Forwards a local-player input over the network for fanout. Called from
-        /// <c>BasePlayer.OnGameInput</c> after the input has already been queued into the
-        /// local engine — network send latency must never stall local play.
+        /// Public hook for the local vocals player to publish a pitch sample. Caller is
+        /// responsible for rate-limiting (~20 Hz is plenty — the receiver interpolates).
+        /// Pass IsSinging so the receiver can distinguish a valid 0 MIDI from silence.
         /// </summary>
-        public void EnqueueLocalInput(YargPlayer localPlayer, GameInput input)
+        public void SendLocalVocalPitch(double songTime, float pitchMidi, bool isSinging)
         {
-            if (localPlayer == null || localPlayer.IsRemote) return;
-            // v1: single-input flush, no batching. Wire is ReliableOrdered; per-input
-            // packets are 33 bytes total and we expect <30/sec/peer at busy moments.
-            var record = new EngineInputRecord(input.Time, input.Action, input.Integer);
-            _session.SendEngineInputs(new[] { record });
+            _session.SendVocalPitch(songTime, pitchMidi, isSinging);
+        }
+
+        private void OnLocalEngineSustainReleased(int noteIndex, double songTime)
+        {
+            YargLogger.LogFormatDebug(
+                "Prediction[local-send] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000}",
+                _localPeerId, noteIndex, songTime);
+            _session.SendSustainReleased(noteIndex, songTime);
+        }
+
+        private void OnLocalEngineOverstrum(double songTime)
+        {
+            YargLogger.LogFormatDebug(
+                "Prediction[local-send] Overstrum: peer={0} songTime={1:0.000}",
+                _localPeerId, songTime);
+            _session.SendOverstrum(songTime);
+        }
+
+        /// <summary>
+        /// Register a <see cref="YARG.Core.Engine.Prediction.IRemotePlayerSimulator"/>
+        /// for a remote peer. Called by the gameplay scene's remote BasePlayer
+        /// after CreateEngine returns, so inbound miss/SP/whammy/sustain
+        /// events for that peer drive the simulator's mirror engine.
+        /// </summary>
+        public void RegisterRemoteSimulator(int peerId, YARG.Core.Engine.Prediction.IRemotePlayerSimulator simulator)
+        {
+            if (simulator == null) throw new ArgumentNullException(nameof(simulator));
+            _remoteSimulators[peerId] = simulator;
+            YargLogger.LogInfo(
+                $"Prediction[director-register] simulator registered for peerId={peerId} engine={simulator.Engine.GetType().Name}");
+        }
+
+        public void UnregisterRemoteSimulator(int peerId)
+        {
+            if (_remoteSimulators.Remove(peerId))
+            {
+                YargLogger.LogFormatInfo(
+                    "Prediction[director-unregister] simulator removed for peerId={0}",
+                    peerId);
+            }
+        }
+
+        /// <summary>
+        /// Tick the simulator for the given remote peer to <paramref name="localSongTime"/>.
+        /// Called from the gameplay-scene remote BasePlayer's UpdateInputs.
+        /// Safe to call when no simulator is registered — no-op in that case.
+        /// </summary>
+        public void TickRemoteSimulator(int peerId, double localSongTime)
+        {
+            // Drain wire events queued by the receive thread before advancing
+            // any simulator. Doing it on every TickRemoteSimulator call is
+            // wasteful when multiple remote peers exist (each peer tick
+            // drains the global queue), but the queue's Dequeue is cheap
+            // and the events apply to the correct sim regardless of which
+            // peer's tick triggered the drain. Drain runs on the Unity main
+            // thread, which is what all the OnSustainEnd / OnNoteHit /
+            // OnNoteMissed handlers (and the Material APIs they invoke)
+            // require.
+            DrainWireEvents();
+
+            if (_remoteSimulators.TryGetValue(peerId, out var sim))
+            {
+                sim.Update(localSongTime);
+            }
+        }
+
+        /// <summary>
+        /// Total visual delay (in seconds) the remote player's highway should
+        /// apply. This is the simulator's <c>VisualDelaySeconds</c> —
+        /// transport-delay budget plus the scheduler's commit-window — so
+        /// strikeline crossing aligns with the engine event firing. Returns 0
+        /// if no simulator is registered.
+        /// </summary>
+        public double GetRemoteVisualDelay(int peerId)
+        {
+            return _remoteSimulators.TryGetValue(peerId, out var sim)
+                ? sim.VisualDelaySeconds
+                : 0.0;
+        }
+
+        /// <summary>
+        /// Most-recent whammy axis value applied to the remote player's
+        /// mirror engine, in [0,1]. Remote-player instrument scripts poll
+        /// this each frame to drive their visual whammy state (sustain bar
+        /// bend + stem pitch) because their engine has no OnInputQueued
+        /// path that would otherwise produce it.
+        /// </summary>
+        public float GetRemoteWhammyValue(int peerId)
+        {
+            return _remoteSimulators.TryGetValue(peerId, out var sim)
+                ? sim.LatestWhammyValue
+                : 0f;
+        }
+
+        /// <summary>
+        /// Smoothly interpolated vocal pitch for the remote singer at the given local time.
+        /// Returns (pitchMidi, isSinging); when no simulator is registered for the peer
+        /// (e.g. they aren't a vocalist) returns (0f, false). The visual layer reads this
+        /// per-frame to position the on-track pitch blob.
+        /// </summary>
+        public (float pitchMidi, bool isSinging) GetRemoteVocalPitch(int peerId, double currentSongTime)
+        {
+            return _remoteSimulators.TryGetValue(peerId, out var sim)
+                ? sim.GetInterpolatedPitch(currentSongTime)
+                : (0f, false);
+        }
+
+        /// <summary>
+        /// Most recently known local song time on the gameplay thread. Used by
+        /// the receive-thread event handlers as the "now" for routing decisions
+        /// (in-window vs rollback). Updated each frame by gameplay update.
+        /// </summary>
+        private volatile float _latestLocalSongTimeFloat;
+        public double LatestLocalSongTime => _latestLocalSongTimeFloat;
+        public void SetLatestLocalSongTime(double t) => _latestLocalSongTimeFloat = (float) t;
+
+        // Wire handlers: called on the LiteNetLib receive thread. ONLY
+        // enqueue here — never touch _remoteSimulators or the engine
+        // directly. The main-thread drain in TickRemoteSimulator handles
+        // dispatch.
+
+        private void OnWireNoteMissed(int peerId, int noteIndex, double songTime)
+        {
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.NoteMissed, noteIndex, songTime, 0f));
+        }
+
+        private void OnWireStarPowerActivated(int peerId, double songTime)
+        {
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.StarPowerActivated, 0, songTime, 0f));
+        }
+
+        private void OnWireWhammy(int peerId, double songTime, float value)
+        {
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.Whammy, 0, songTime, value));
+        }
+
+        private void OnWireVocalPitch(int peerId, double songTime, float pitchMidi, bool isSinging)
+        {
+            // NoteIndex re-used as a bool: 1 = singing, 0 = silent. Value carries pitchMidi.
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.VocalPitch, isSinging ? 1 : 0, songTime, pitchMidi));
+        }
+
+        private void OnWireSustainReleased(int peerId, int noteIndex, double songTime)
+        {
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.SustainReleased, noteIndex, songTime, 0f));
+        }
+
+        private void OnWireOverstrum(int peerId, double songTime)
+        {
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.Overstrum, 0, songTime, 0f));
+        }
+
+        private void OnWireNoteHit(int peerId, int noteIndex, double songTime)
+        {
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.NoteHit, noteIndex, songTime, 0f));
+        }
+
+        private void OnWireEngineStateSnapshot(int peerId, double songTime, byte snapshotKind, byte[] snapshotData)
+        {
+            _pendingSnapshots.Enqueue(new PendingSnapshot(peerId, songTime, snapshotKind, snapshotData));
+            // Sentinel entry in the main queue so the drain loop has a
+            // dispatch site even though the real payload lives in the
+            // packet-typed queue.
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.EngineStateSnapshot, 0, songTime, 0f));
+        }
+
+        // Drains the wire-event queue and dispatches each to the matching
+        // simulator. Caller runs on the Unity main thread.
+        private void DrainWireEvents()
+        {
+            while (_pendingWireEvents.TryDequeue(out var ev))
+            {
+                if (!_remoteSimulators.TryGetValue(ev.PeerId, out var sim))
+                {
+                    // Warn for discrete events; whammy and vocal-pitch are too high-volume
+                    // to warn on every dropped sample (a peer connecting late would spam).
+                    if (ev.Kind != WireEventKind.Whammy && ev.Kind != WireEventKind.VocalPitch)
+                    {
+                        YargLogger.LogFormatWarning(
+                            "Prediction[director-dispatch] {0} for unregistered peerId={1}",
+                            ev.Kind, ev.PeerId);
+                    }
+                    continue;
+                }
+
+                switch (ev.Kind)
+                {
+                    case WireEventKind.NoteMissed:
+                        sim.OnNoteMissed(ev.NoteIndex, LatestLocalSongTime);
+                        break;
+                    case WireEventKind.StarPowerActivated:
+                        sim.OnStarPowerActivated(ev.SongTime, LatestLocalSongTime);
+                        break;
+                    case WireEventKind.Whammy:
+                        sim.OnWhammy(ev.SongTime, ev.Value, LatestLocalSongTime);
+                        break;
+                    case WireEventKind.VocalPitch:
+                        sim.OnVocalPitch(ev.SongTime, ev.Value, ev.NoteIndex != 0, LatestLocalSongTime);
+                        break;
+                    case WireEventKind.SustainReleased:
+                        sim.OnSustainReleased(ev.NoteIndex, ev.SongTime, LatestLocalSongTime);
+                        break;
+                    case WireEventKind.Overstrum:
+                        sim.OnOverstrum(ev.SongTime, LatestLocalSongTime);
+                        break;
+                    case WireEventKind.NoteHit:
+                        sim.OnNoteHit(ev.NoteIndex, LatestLocalSongTime);
+                        // Wire-provided hit timing — feed the receiver's
+                        // offset histogram with the sender's real input
+                        // timing rather than the mirror engine's
+                        // synthetic-at-note.Time commit.
+                        sim.RecordWireHitOffset(ev.NoteIndex, ev.SongTime);
+                        break;
+                    case WireEventKind.EngineStateSnapshot:
+                    {
+                        if (!_pendingSnapshots.TryDequeue(out var snap))
+                        {
+                            YargLogger.LogWarning(
+                                "Prediction[director-dispatch] EngineStateSnapshot sentinel without payload.");
+                            break;
+                        }
+                        try
+                        {
+                            var decoded = EngineSnapshotSerializer.Deserialize(snap.SnapshotData, snap.SnapshotKind);
+                            sim.OnEngineStateSnapshot(decoded, snap.SongTime);
+                        }
+                        catch (Exception ex)
+                        {
+                            YargLogger.LogException(ex,
+                                $"Prediction[director-dispatch] failed to deserialize/apply snapshot from peerId={snap.PeerId} kind={snap.SnapshotKind} bytes={snap.SnapshotData?.Length ?? 0}");
+                        }
+                        break;
+                    }
+                }
+            }
         }
 
         /// <summary>Pass-through to the wrapped session — GameManager's signal that this
         /// peer is ready to begin playback once the server's GameStartCue arrives.</summary>
         public void SendPeerReady() => _session.SendPeerReady();
 
-        /// <summary>Pass-through to the wrapped session — GameManager's signal that this
-        /// peer has finished the song.</summary>
-        public void SendGameComplete() => _session.SendGameComplete();
+        /// <summary>Pass-through to the wrapped session — GameManager's signal
+        /// that this peer has finished the song. Sends one final authoritative
+        /// engine-state snapshot first so receivers can snap their mirror
+        /// engine to the exact terminal state before GameEnd fans out and the
+        /// results screen renders.</summary>
+        public void SendGameComplete()
+        {
+            // Force a final snapshot send regardless of the throttle so
+            // receivers don't wait through the snapshot interval before
+            // seeing the terminal state.
+            SendSnapshotNow();
+            _session.SendGameComplete();
+        }
+
+        /// <summary>
+        /// True once every connected remote peer has delivered a snapshot
+        /// whose <c>SongTime</c> is at or beyond <paramref name="chartLengthSeconds"/>.
+        /// The local sender broadcasts its final snapshot right before
+        /// GameComplete, so this flips true on every receiver once GameComplete
+        /// chains through (or sooner, if snapshots arrive ahead of GameComplete).
+        /// GameManager waits on this before transitioning to the results
+        /// screen — with a timeout fallback for disconnected peers.
+        /// </summary>
+        public bool AllRemoteFinalSnapshotsReceived(double chartLengthSeconds)
+        {
+            foreach (var kv in _remoteSimulators)
+            {
+                if (kv.Value.AuthoritativeSnapshotSongTime < chartLengthSeconds)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // --- Periodic snapshot sender ---------------------------------
+
+        // Send an engine-state snapshot every this many seconds of song time.
+        // 0.5s is a good balance: drift is corrected fast enough that visual
+        // anomalies are short-lived, and per-peer bandwidth stays modest
+        // (a typical guitar snapshot is ~600 bytes, so ~1.2 KB/s/peer).
+        public const double SnapshotIntervalSeconds = 0.5;
+        private double _lastSnapshotSongTime = double.NegativeInfinity;
+
+        /// <summary>
+        /// Capture + send an authoritative engine-state snapshot if enough
+        /// song time has elapsed since the last send. Called from the local
+        /// player's per-frame UpdateInputs path. No-op when the local engine
+        /// isn't wired up.
+        /// </summary>
+        public void MaybeSendPeriodicSnapshot(double localSongTime)
+        {
+            // Throttle and store both keyed off engine.CurrentTime so the
+            // gate stays consistent with the wire payload (snapshots carry
+            // engine.CurrentTime as their SongTime). localSongTime is only
+            // used to discover that we *might* be due — the actual decision
+            // uses the engine clock the receiver will key off.
+            var engine = _localEngineForStats;
+            if (engine == null) return;
+            _ = localSongTime; // see comment above
+            if (engine.CurrentTime - _lastSnapshotSongTime < SnapshotIntervalSeconds) return;
+            SendSnapshotNow();
+        }
+
+        // Capture the local engine's current state and ship it.
+        private void SendSnapshotNow()
+        {
+            var engine = _localEngineForStats;
+            if (engine == null) return;
+
+            var snapshot = engine.CreateSnapshot();
+            byte kind = EngineSnapshotSerializer.KindFor(snapshot);
+            byte[] data = EngineSnapshotSerializer.Serialize(snapshot);
+            _session.SendEngineStateSnapshot(engine.CurrentTime, kind, data);
+            _lastSnapshotSongTime = engine.CurrentTime;
+        }
 
         private void OnStartCueReceived(long originUtcMs, int countdownMs)
         {
@@ -285,15 +728,6 @@ namespace YARG.Online
                 YargLogger.LogInfo(
                     $"OnlineSessionDirector: remote peer {peerId} ({player.Profile?.Name}) " +
                     "left — marked SittingOut");
-            }
-            if (_peerPipes.TryGetValue(peerId, out var pipe))
-            {
-                // Signal end-of-stream to the consumer. BasePlayer drains anything still
-                // buffered, then TryRead returns IsCompleted = true and the consumer
-                // stops looping. The SittingOut flag prevents the player from being
-                // ticked further anyway.
-                try { pipe.Writer.Complete(); }
-                catch (Exception ex) { YargLogger.LogWarning($"OnlineSessionDirector: pipe writer complete (peer left) — {ex.Message}"); }
             }
             RemotePlayerLeft?.Invoke(peerId);
         }
