@@ -82,6 +82,14 @@ namespace YARG.Menu.Main
             using var context = new LoadingContext();
             context.SetLoadingText("Signing in…");
 
+            // Auth + connect are both treated as soft failures: if either
+            // step throws, we still navigate into the Online menu so the
+            // local LAN host/join flow stays reachable (it doesn't depend
+            // on the central matchmaking service). A warning dialog tells
+            // the user the cause + scope. The public lobby browser will
+            // simply stay empty since LobbyHubSession.Current ends up null.
+            bool serverReachable = true;
+
             var provider = new OnlineAccessTokenProvider(OnlineAccessTokenProvider.ResolveDefaultAuthName());
             try
             {
@@ -90,26 +98,42 @@ namespace YARG.Menu.Main
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
-                DialogManager.Instance.ShowMessage("Authentication failed",
-                    "Could not sign in to the YARG server. Check that it's running and try again.");
-                return;
+                serverReachable = false;
             }
 
-            context.SetLoadingText("Connecting…");
-            try
+            if (serverReachable)
             {
-                await LobbyHubSession.InitializeAsync(provider);
-            }
-            catch (Exception ex)
-            {
-                YargLogger.LogException(ex);
-                DialogManager.Instance.ShowMessage("Online unavailable",
-                    "Could not connect to the YARG server. Check that it's running and try again.");
-                return;
+                context.SetLoadingText("Connecting…");
+                try
+                {
+                    await LobbyHubSession.InitializeAsync(provider);
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogException(ex);
+                    serverReachable = false;
+                }
             }
 
-            YargLogger.LogInfo("MainMenu: connected — opening Online menu");
+            // Transition to the Online menu FIRST, then surface any error
+            // dialog. The dialog needs to render on top of the destination
+            // menu's UI — if we show it before the menu switch, the menu
+            // transition tears down the dialog's parent canvas (or steals
+            // focus) and the user lands on the Online menu with no
+            // explanation for why the lobby browser is empty.
             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.Online);
+
+            if (!serverReachable)
+            {
+                YargLogger.LogWarning("MainMenu: online server unavailable — proceeded to Online menu in LAN-only mode");
+                DialogManager.Instance.ShowMessage(
+                    YARG.Localization.Localize.Key("Menu.Online.ServerUnavailable.Title"),
+                    YARG.Localization.Localize.Key("Menu.Online.ServerUnavailable.Body"));
+            }
+            else
+            {
+                YargLogger.LogInfo("MainMenu: connected — opened Online menu");
+            }
         }
 
         public void Practice()

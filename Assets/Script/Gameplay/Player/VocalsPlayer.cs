@@ -525,39 +525,30 @@ namespace YARG.Gameplay.Player
                 // gating) can stay unchanged.
                 _lastTargetNote = FindRemoteTargetNoteAt(GameManager.SongTime);
 
-                // Pitch-display state machine. Predict optimistically until the
-                // wire gives us a reason to do otherwise — symmetric with how
-                // the guitar/drums simulators predict hits, except here the
-                // "decision" is a continuous pitch sample rather than a discrete
-                // hit/miss. Three observable states from the simulator:
+                // Pitch-display state machine. The needle is visible iff the
+                // wire's latest sample says isSinging=true — earlier iterations
+                // optimistically showed it at the chart target during gaps in
+                // the sample stream, but that looked wrong in practice (singer
+                // is silent and the indicator floats on the target note as if
+                // they were hitting it perfectly).
                 //
-                //   (0f, false)           - no sample received yet for this peer.
-                //                           Optimistic: assume the remote is on
-                //                           the chart target. (Initial gap, mic
-                //                           startup, brief network blips all
-                //                           land here.)
-                //   (nonzero, false)      - sender explicitly stopped singing.
-                //                           This is the "cut off confirmation"
-                //                           — hide the needle.
-                //   (nonzero, true)       - sender is actively singing. Classify
-                //                           against the chart target using the
-                //                           engine's PitchWindow:
-                //                             on-pitch  → render at target (keep
-                //                                         showing target until a
-                //                                         later sample says no)
-                //                             off-pitch → render at the received
-                //                                         pitch literally (held
-                //                                         at whatever wrong note
-                //                                         they're on until they
-                //                                         get back on pitch or
-                //                                         stop singing)
+                // When isSinging is true:
+                //   - on-pitch (within EngineParams.PitchWindow of the chart
+                //     target, octave-insensitive) → snap to target pitch, hit
+                //     particles on.
+                //   - off-pitch → render at the received pitch literally. The
+                //     latest sample arriving every ~50 ms holds the position
+                //     until they get back on pitch or stop.
                 //
-                // The "held" behavior is automatic because pitch samples arrive
-                // at ~20 Hz and GetInterpolatedPitch always returns the latest
-                // anchor pair; we just translate "latest sample" into one of
-                // the three display modes.
+                // When isSinging is false:
+                //   - hide the needle outright, but leave `pitchSang` set to
+                //     the simulator's latest pitch so the transform's z stays
+                //     in a coherent place. Unity preserves localPosition across
+                //     SetActive cycles, so when singing resumes the needle
+                //     reappears at the prior pitch and lerps to the new one —
+                //     no flicker from "top of track" to actual pitch on each
+                //     phrase boundary.
                 bool hasActiveTarget = _lastTargetNote is not null;
-                bool noSampleYet     = remotePitch == 0f && !remoteSinging;
 
                 if (remoteSinging && hasActiveTarget)
                 {
@@ -577,21 +568,13 @@ namespace YARG.Gameplay.Player
                     }
                     isCurrentlySinging = true;
                 }
-                else if (noSampleYet && hasActiveTarget)
-                {
-                    // No evidence yet — assume on-pitch.
-                    pitchSang          = _lastTargetNote.PitchAtSongTime(GameManager.SongTime);
-                    isCurrentlySinging = true;
-                    isHittingTarget    = !_lastTargetNote.IsNonPitched;
-                }
                 else
                 {
-                    // Either explicit cut-off (nonzero,false) or no target —
-                    // mirror the simulator's view directly. The UpdateSingNeedle
-                    // branch below hides the needle when isCurrentlySinging
-                    // is false.
+                    // Not singing OR no chart target (between phrases).
+                    // Hide the needle; preserve pitchSang at the last known
+                    // value so the transform stays coherent for next show.
                     pitchSang          = remotePitch;
-                    isCurrentlySinging = remoteSinging;
+                    isCurrentlySinging = false;
                     isHittingTarget    = false;
                 }
             }

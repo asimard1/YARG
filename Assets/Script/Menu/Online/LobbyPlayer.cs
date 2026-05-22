@@ -16,6 +16,21 @@ namespace YARG.Menu.Online
 
         [SerializeField]
         private TextMeshProUGUI _playerNameText;
+
+        // Single host-action entry point. Hidden for non-hosts and for the
+        // host's own row (you can't kick yourself / re-host yourself).
+        // Clicking opens a shared LobbyPlayerActionsPopup that lists Make
+        // Host + Kick targeting this row's member.
+        [SerializeField]
+        private Button _editButton;
+
+        // Legacy kick/host buttons from the previous LobbyPlayer prefab —
+        // kept for compatibility while the prefab is being updated to use
+        // the EditButton + popup flow. Always hidden when an EditButton is
+        // present so a half-updated prefab doesn't expose two parallel
+        // paths to the same action. Once the prefab drops these, the
+        // SerializeFields + null-guards can be deleted with no behavior
+        // change.
         [SerializeField]
         private Button _kickButton;
         [SerializeField]
@@ -23,9 +38,14 @@ namespace YARG.Menu.Online
 
         private Action _onKick;
         private Action _onMakeHost;
+        private string _displayName;
+        private LobbyPlayerActionsPopup _actionsPopup;
 
-        public void Initialize(string userId, string displayName, string instrumentSpriteName,
-            bool isLocalHost, bool isSelf, bool isBackInLobby, Action onKick, Action onMakeHost)
+        public void Initialize(
+            string userId, string displayName, string instrumentSpriteName,
+            bool isLocalHost, bool isSelf, bool isBackInLobby,
+            Action onKick, Action onMakeHost,
+            LobbyPlayerActionsPopup actionsPopup)
         {
             // Caller resolves the sprite name (self → local profile's CurrentInstrument; remote → fallback)
             // because the lobby contract doesn't yet expose per-member instrument data.
@@ -43,28 +63,47 @@ namespace YARG.Menu.Online
                     $"LobbyPlayer: _playerNameText is unwired — name '{displayName}' (userId={userId}) won't render. Re-link in the prefab inspector.");
             }
 
-            _onKick = onKick;
-            _onMakeHost = onMakeHost;
+            _onKick       = onKick;
+            _onMakeHost   = onMakeHost;
+            _displayName  = displayName;
+            _actionsPopup = actionsPopup;
 
-            // Host-only actions, never shown on the local player's own row.
-            // Buttons may be absent in the prefab (redesign in progress) — null-guard so a
-            // missing wire-up doesn't NRE and abort the whole Refresh pipeline.
+            // EditButton is the new single entry point for host actions on
+            // other members. Hidden when the local user isn't host (nothing
+            // useful for them to do here) or when looking at their own row
+            // (Make Host / Kick on self are nonsensical operations).
             bool showHostControls = isLocalHost && !isSelf;
+            if (_editButton != null)
+            {
+                _editButton.onClick.RemoveAllListeners();
+                _editButton.onClick.AddListener(OpenActionsPopup);
+                _editButton.gameObject.SetActive(showHostControls);
+            }
+
+            // Legacy direct-action buttons: always hide if the prefab still
+            // has them. The EditButton + popup is the only sanctioned UI
+            // surface for host actions now.
             if (_kickButton != null)
             {
                 _kickButton.onClick.RemoveAllListeners();
-                _kickButton.onClick.AddListener(InvokeKick);
-                _kickButton.gameObject.SetActive(showHostControls);
+                _kickButton.gameObject.SetActive(false);
             }
             if (_makeHostButton != null)
             {
                 _makeHostButton.onClick.RemoveAllListeners();
-                _makeHostButton.onClick.AddListener(InvokeMakeHost);
-                _makeHostButton.gameObject.SetActive(showHostControls);
+                _makeHostButton.gameObject.SetActive(false);
             }
         }
 
-        private void InvokeKick()     => _onKick?.Invoke();
-        private void InvokeMakeHost() => _onMakeHost?.Invoke();
+        private void OpenActionsPopup()
+        {
+            if (_actionsPopup == null)
+            {
+                YargLogger.LogWarning(
+                    "LobbyPlayer: edit button clicked but no LobbyPlayerActionsPopup was wired — falling back to direct invocation order (make host, then kick) is unsafe; ignoring.");
+                return;
+            }
+            _actionsPopup.Show(_displayName, _onMakeHost, _onKick);
+        }
     }
 }

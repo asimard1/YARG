@@ -107,6 +107,7 @@ namespace YARG.Online
         /// buffers samples and the visual layer interpolates between them so
         /// the on-track pitch blob slides smoothly between packets.</summary>
         public event Action<int, double, float, bool> VocalPitchReceived;
+        public event Action<int, double, int, float>  FreePlayInputReceived;
 
         /// <summary>Fired on the LiteNetLib receive thread when a remote peer
         /// releases a sustain early. Args: <c>peerId</c>, <c>noteIndex</c>
@@ -362,6 +363,26 @@ namespace YARG.Online
                 SongTime = songTime,
                 PitchMidi = pitchMidi,
                 IsSinging = isSinging,
+            });
+            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Fan-out a single free-play input action (drum pad or guitar
+        /// fret + strum) so remote receivers can flash their highway visuals
+        /// during BRE / drum activator phrases — the normal NoteHit pipe goes
+        /// silent during those sections.</summary>
+        public void SendFreePlayInput(double songTime, int action, float velocity)
+        {
+            var peer = _serverPeer;
+            if (peer == null) return;
+
+            var writer = new NetDataWriter();
+            GamePacketWriter.Write(writer, PacketOpcode.FreePlayInput, new FreePlayInputPacket
+            {
+                PeerId = 0,
+                SongTime = songTime,
+                Action = action,
+                Velocity = velocity,
             });
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
@@ -642,6 +663,14 @@ namespace YARG.Online
                         // director queues the sample for next-tick consumption.
                         VocalPitchReceived?.Invoke(
                             vpPacket.PeerId, vpPacket.SongTime, vpPacket.PitchMidi, vpPacket.IsSinging);
+                        break;
+                    }
+                    case PacketOpcode.FreePlayInput:
+                    {
+                        var fpPacket = new FreePlayInputPacket();
+                        fpPacket.Deserialize(reader);
+                        FreePlayInputReceived?.Invoke(
+                            fpPacket.PeerId, fpPacket.SongTime, fpPacket.Action, fpPacket.Velocity);
                         break;
                     }
                     case PacketOpcode.SustainReleased:

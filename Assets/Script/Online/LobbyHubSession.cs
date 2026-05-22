@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
@@ -222,6 +223,21 @@ namespace YARG.Online
                         // GetAccessTokenAsync refreshes the cached token if needed,
                         // so SignalR reconnects automatically pick up a fresh one.
                         options.AccessTokenProvider = _tokenProvider.GetAccessTokenAsync;
+
+                        // Skip negotiation + force WebSockets-only transport so
+                        // the client opens a single persistent WS connection
+                        // straight to the hub without the preliminary HTTP
+                        // /negotiate round trip. The negotiate handshake is
+                        // what triggers sticky-session affinity in front of
+                        // a load-balanced SignalR deployment — without it
+                        // every subsequent HTTP poll has to land on the
+                        // same backend node. Since we run a single WS
+                        // connection per client and don't use long-polling
+                        // / SSE fallbacks, sticky sessions buy us nothing
+                        // and just block horizontal scale-out behind a
+                        // round-robin LB.
+                        options.SkipNegotiation = true;
+                        options.Transports = HttpTransportType.WebSockets;
                     })
                     .AddJsonProtocol(o =>
                     {
@@ -316,6 +332,46 @@ namespace YARG.Online
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: disposing");
 
             Application.quitting -= OnApplicationQuitting;
+
+            // Fire explicit LeaveResults + LeaveLobby RPCs BEFORE cancelling
+            // the lifetime token so the server's lobby state cleans up
+            // promptly when the player closes the client window. The
+            // server's OnDisconnectedAsync also runs LeaveAsync on socket
+            // teardown, but that's reactive — relying on it leaves a
+            // window where: (a) the SignalR Stop hasn't completed before
+            // the process exits and the server has to wait for the TCP
+            // keepalive to time out, and (b) LeaveAsync alone doesn't fire
+            // LeaveResults, so a stale IsBackInLobby flag blocks the
+            // remaining members' Start gate. Bound the await with a short
+            // timeout — DisposeAsync may run from Application.quitting
+            // where Unity gives us only a few hundred ms before forcibly
+            // exiting; we'd rather skip the RPC than block the quit.
+            try
+            {
+                using var leaveCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+                leaveCts.CancelAfter(TimeSpan.FromMilliseconds(750));
+                if (_orchestrator != null)
+                {
+                    // We're mid-game — flag back-in-lobby so the host's
+                    // Start gate unblocks and the all-back transition can
+                    // run if every other player also bailed.
+                    await LeaveResultsAsync(leaveCts.Token);
+                }
+                await LeaveLobbyAsync(leaveCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected if the 750ms window expired or the connection
+                // is already torn down — the server's OnDisconnectedAsync
+                // will still clean up via the socket teardown path.
+            }
+            catch (Exception ex)
+            {
+                // Best-effort signal — server-side disconnect handler is
+                // the backstop. Don't let a stray RPC failure here keep
+                // the dispose from making progress.
+                YargLogger.LogWarning($"LobbyHubSession[#{_instanceId}]: leave-on-dispose threw — {ex.Message}");
+            }
 
             // Cancel first so any pending main-thread continuations (SignalR
             // handlers + Track bodies) throw OperationCanceledException on resume

@@ -26,6 +26,7 @@ namespace YARG.Online
         // TODO: surface as a setting once the online flow stabilizes.
         //public const string BaseUrl = "http://localhost:5230";
         public const string BaseUrl = "https://rjoghqrt4k6k.shares.zrok.io";
+        //public const string BaseUrl = "https://lobbies.yarg.online";
 
         private const string DevAuthPath = "/api/v1/auth/dev";
 

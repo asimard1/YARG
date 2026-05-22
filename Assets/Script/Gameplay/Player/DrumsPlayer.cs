@@ -216,7 +216,60 @@ namespace YARG.Gameplay.Player
 
             engine.OnPadHit += OnPadHit;
 
+            // Online: forward pad hits that happen during free-play sections
+            // (BRE / coda + freestyle windows: before first note, after last
+            // note, wait-countdown). The normal NoteHit / OnSyncNoteHit wire
+            // path goes silent in these sections because the engine's
+            // HitNote() short-circuits before firing the sync events. Without
+            // this fanout the remote highway shows nothing while the player
+            // is wailing on a coda. Receivers subscribe to
+            // OnlineSessionDirector.RemoteFreePlayInput and replay
+            // OnPadHit-equivalent visuals on the remote mirror.
+            if (GameManager.IsOnline && !Player.IsReplay && !Player.IsRemote)
+            {
+                engine.OnPadHit += ForwardFreePlayPadHitIfActive;
+            }
+            else if (Player.IsRemote)
+            {
+                var director = YARG.Online.OnlineSessionDirector.Current;
+                if (director != null)
+                {
+                    director.RemoteFreePlayInput += OnRemoteFreePlayInput;
+                }
+            }
+
             return engine;
+        }
+
+        // Local-sender hook. Gates on the engine's freestyle state so we
+        // don't fanout pad hits that already have a matching NoteHit packet
+        // — those run through the prediction layer and are handled by the
+        // receiver's mirror engine. Free-play sections are exactly the gap
+        // where OnPadHit fires but no NoteHit does, so this hook is the
+        // wire's only signal for those pads.
+        private void ForwardFreePlayPadHitIfActive(
+            DrumsAction action, bool wasNoteHit, bool wasNoteHitCorrectly,
+            bool wasOverhitInLane, DrumNoteType type, float velocity)
+        {
+            if (!Engine.IsCodaActive && !IsDrumFreestyle())
+            {
+                return;
+            }
+            YARG.Online.OnlineSessionDirector.Current?.SendLocalFreePlayInput(
+                GameManager.SongTime, (int) action, velocity);
+        }
+
+        // Receiver hook. The remote-side mirror engine's IsCodaActive /
+        // freestyle state is kept in sync via EngineStateSnapshot, so the
+        // existing OnPadHit body produces the right visuals (coda lane
+        // bonus, fret flash, kick bounce) when we route the wire event back
+        // through it with sensible defaults for the not-present fields
+        // (wasNoteHit/wasNoteHitCorrectly/wasOverhitInLane: false, type:
+        // Normal — the sender's wire packet carries action + velocity only).
+        private void OnRemoteFreePlayInput(int peerId, double songTime, int action, float velocity)
+        {
+            if (peerId != Player.RemotePeerId) return;
+            OnPadHit((DrumsAction) action, false, false, false, DrumNoteType.Neutral, velocity);
         }
 
         protected override void FinishInitialization()

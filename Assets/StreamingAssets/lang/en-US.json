@@ -301,6 +301,45 @@
             "SongsQueued": {
                 "Singular": "1 Song Queued",
                 "Plural": "{0} Songs Queued"
+            },
+            "PlayerActions": {
+                "MakeHost": "Make Host",
+                "Kick": "Kick"
+            },
+            "ServerUnavailable": {
+                "Title": "Online Server Unavailable",
+                "Body": "Couldn't reach the YARG server. Only LAN play is available."
+            },
+            "CreateLobbyMenu": {
+                "Create": "Create",
+                "LobbyName": "Lobby Name",
+                "LobbyNamePlaceholder": "Enter lobby name...",
+                "GameMode": "Game Mode",
+                "GameMode.Band": "Band",
+                "GameMode.Quickplay": "Quickplay",
+                "MaxPlayers": "Max Players",
+                "MaxPlayers.2": "2",
+                "MaxPlayers.3": "3",
+                "MaxPlayers.4": "4",
+                "Visibility": "Visibility",
+                "Visibility.Public": "Public",
+                "Visibility.Private": "Private (With Code)"
+            },
+            "FiltersMenu": {
+                "Header": "Filters",
+                "Options": "Options",
+                "Filters": "Filters",
+                "SortBy": "Sort By",
+                "SortBy.LobbyName": "Lobby Name",
+                "SortBy.HostName": "Host Name",
+                "SortBy.SongName": "Song Name",
+                "SortBy.PlayerCount": "Player Count",
+                "ShowFullLobbies": "Show Full Lobbies",
+                "LanOnly": "LAN Only",
+                "ShowBand": "Show Band Lobbies",
+                "ShowQuickplay": "Show Quickplay Lobbies",
+                "ShowSongSelect": "Show In Song Select",
+                "ShowInGame": "Show In Game"
             }
         },
         "Main": {

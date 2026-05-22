@@ -156,6 +156,17 @@ namespace YARG.Menu.ListMenu
                 return;
             }
 
+            // Scale the handle size to the visible-rows fraction so long
+            // lists get a thin handle and short lists get a fat one. The
+            // prefab's Scrollbar component doesn't drive this on its own
+            // (only ScrollRects do auto-size, and this menu uses a bare
+            // Scrollbar to navigate the SelectedIndex). visibleRows is
+            // ExtraListViewPadding * 2 + 1 (selected row plus N above and
+            // N below). 0.05 floor keeps the handle grabbable on huge
+            // lists.
+            int visibleRows = ExtraListViewPadding * 2 + 1;
+            _scrollbar.size = Mathf.Clamp((float) visibleRows / _viewList.Count, 0.05f, 1f);
+
             _scrollbar.SetValueWithoutNotify((float) SelectedIndex / _viewList.Count);
         }
 

@@ -418,6 +418,18 @@ namespace YARG.Menu.MusicLibrary
                         () => CurrentSelection?.PrimaryButtonClick(),
                         hide: true
                     ) :
+                    PickerMode ?
+                    // Lobby picker: the green button is purely "add this song
+                    // to the setlist for the host" — there's no immediate-play
+                    // action available, so don't render the "Play Song / hold
+                    // Add to Setlist" two-line label that implies one. Drop
+                    // the hold handler too; tap is the only meaningful action.
+                    new NavigationScheme.Entry(
+                        MenuAction.Green,
+                        "Menu.Online.AddSong",
+                        OnGreenTap,
+                        hide: true
+                    ) :
                     new NavigationScheme.Entry(
                         MenuAction.Green,
                         setListNotEmpty ?

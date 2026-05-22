@@ -65,6 +65,47 @@ namespace YARG.Online
         // sentinel in _pendingWireEvents triggers a pop from this list.
         private readonly System.Collections.Concurrent.ConcurrentQueue<PendingSnapshot> _pendingSnapshots = new();
 
+        // Per-peer holding pen for wire events that arrived BEFORE the
+        // peer's simulator was registered. Cause: the receive thread starts
+        // queueing packets as soon as the UDP session connects, but each
+        // remote player's RegisterRemoteSimulator runs from BasePlayer.Start
+        // / TrackPlayer.FinishInitialization later in the gameplay scene's
+        // init sequence. Without buffering, every event that arrived in
+        // that window — including the very first snapshot, which carries
+        // the authoritative engine state — got silently dropped in
+        // DrainWireEvents, and subsequent snapshots arriving for the same
+        // un-registered peer kept getting dropped too. That's the "1/10
+        // times the sync just doesn't work" symptom: a deterministic-
+        // looking flake whose probability tracks the random ordering of
+        // GameObject.Start calls against the network thread.
+        //
+        // On RegisterRemoteSimulator we flush this peer's pending queue
+        // back into the main wire-event queue so the normal drain dispatches
+        // them in arrival order. The bounded size (MaxPeerPendingEvents)
+        // caps memory if a peer never actually registers (e.g. malicious
+        // server with a peer id no client knows).
+        //
+        // EngineStateSnapshot events are special: the sentinel in
+        // _pendingWireEvents pairs FIFO-with a payload in _pendingSnapshots.
+        // To preserve that pairing across deferral, the per-peer entry
+        // carries the matching snapshot blob inline — dequeued from
+        // _pendingSnapshots at buffer time, re-enqueued to it at flush
+        // time. Cross-peer snapshot ordering doesn't matter (each snapshot
+        // is per-peer authoritative); only the within-peer order is
+        // preserved by the FIFO queue.
+        private readonly struct DeferredEvent
+        {
+            public DeferredEvent(PendingWireEvent wireEvent, PendingSnapshot? snapshot)
+            {
+                WireEvent = wireEvent;
+                Snapshot  = snapshot;
+            }
+            public readonly PendingWireEvent WireEvent;
+            public readonly PendingSnapshot? Snapshot;
+        }
+        private readonly Dictionary<int, Queue<DeferredEvent>> _peerPendingEvents = new();
+        private const int MaxPeerPendingEvents = 1024;
+
         private readonly struct PendingSnapshot
         {
             public PendingSnapshot(int peerId, double songTime, byte snapshotKind, byte[] snapshotData)
@@ -93,6 +134,9 @@ namespace YARG.Online
             // PendingWireEvent.Value carries pitchMidi; NoteIndex (0|1) carries isSinging.
             // Stored this way to avoid widening the struct just for one bool field.
             VocalPitch = 8,
+            // PendingWireEvent.NoteIndex carries the instrument-action enum
+            // value; Value carries velocity (drums only; guitar passes 0).
+            FreePlayInput = 9,
         }
 
         private readonly struct PendingWireEvent
@@ -162,6 +206,7 @@ namespace YARG.Online
             _session.StarPowerActivatedReceived  += OnWireStarPowerActivated;
             _session.WhammyReceived              += OnWireWhammy;
             _session.VocalPitchReceived          += OnWireVocalPitch;
+            _session.FreePlayInputReceived       += OnWireFreePlayInput;
             _session.SustainReleasedReceived     += OnWireSustainReleased;
             _session.OverstrumReceived           += OnWireOverstrum;
             _session.EngineStateSnapshotReceived += OnWireEngineStateSnapshot;
@@ -186,6 +231,7 @@ namespace YARG.Online
             _session.StarPowerActivatedReceived  -= OnWireStarPowerActivated;
             _session.WhammyReceived              -= OnWireWhammy;
             _session.VocalPitchReceived          -= OnWireVocalPitch;
+            _session.FreePlayInputReceived       -= OnWireFreePlayInput;
             _session.SustainReleasedReceived     -= OnWireSustainReleased;
             _session.OverstrumReceived           -= OnWireOverstrum;
             _session.EngineStateSnapshotReceived -= OnWireEngineStateSnapshot;
@@ -389,6 +435,24 @@ namespace YARG.Online
             _session.SendVocalPitch(songTime, pitchMidi, isSinging);
         }
 
+        /// <summary>Public hook for local players to broadcast a raw input
+        /// event during a free-play section (drum/guitar BRE, drum activator
+        /// fill). Receivers fire <see cref="RemoteFreePlayInput"/> for the
+        /// matching peer so the remote highway's visual layer can flash the
+        /// corresponding pad / fret without involving the mirror engine's
+        /// score state. Caller is responsible for gating to the right sections
+        /// — every call results in a wire packet.</summary>
+        public void SendLocalFreePlayInput(double songTime, int action, float velocity)
+        {
+            _session.SendFreePlayInput(songTime, action, velocity);
+        }
+
+        /// <summary>Fires (peerId, songTime, action, velocity) when a free-play
+        /// input packet arrives. Drum/guitar player scripts subscribe to drive
+        /// pad/fret flash visuals on the remote highway. Runs on the Unity
+        /// main thread via the director's drain.</summary>
+        public event Action<int, double, int, float> RemoteFreePlayInput;
+
         private void OnLocalEngineSustainReleased(int noteIndex, double songTime)
         {
             YargLogger.LogFormatDebug(
@@ -415,8 +479,40 @@ namespace YARG.Online
         {
             if (simulator == null) throw new ArgumentNullException(nameof(simulator));
             _remoteSimulators[peerId] = simulator;
+
+            // Replay any events that arrived for this peer before this
+            // simulator registration — the receive thread starts queueing
+            // packets the moment the UDP session connects, but TrackPlayer
+            // / VocalsPlayer don't call RegisterRemoteSimulator until
+            // BasePlayer.Start runs later in the gameplay-scene init order.
+            // Push them back onto the main queues so the next DrainWireEvents
+            // tick dispatches them in arrival order. Without this flush, the
+            // very first authoritative snapshot is dropped on ~10% of song
+            // entries (rate tracks how the gameplay-scene Awake/Start order
+            // races the network thread).
+            //
+            // Snapshot payloads come back through _pendingSnapshots paired
+            // with their sentinels in _pendingWireEvents — same invariant
+            // the wire-receive path enforces, just deferred.
+            int replayed = 0;
+            int replayedSnapshots = 0;
+            if (_peerPendingEvents.Remove(peerId, out var pending))
+            {
+                while (pending.Count > 0)
+                {
+                    var deferred = pending.Dequeue();
+                    if (deferred.Snapshot.HasValue)
+                    {
+                        _pendingSnapshots.Enqueue(deferred.Snapshot.Value);
+                        replayedSnapshots++;
+                    }
+                    _pendingWireEvents.Enqueue(deferred.WireEvent);
+                    replayed++;
+                }
+            }
+
             YargLogger.LogInfo(
-                $"Prediction[director-register] simulator registered for peerId={peerId} engine={simulator.Engine.GetType().Name}");
+                $"Prediction[director-register] simulator registered for peerId={peerId} engine={simulator.Engine.GetType().Name} replayedPendingEvents={replayed} (snapshots={replayedSnapshots})");
         }
 
         public void UnregisterRemoteSimulator(int peerId)
@@ -533,6 +629,12 @@ namespace YARG.Online
                 peerId, WireEventKind.VocalPitch, isSinging ? 1 : 0, songTime, pitchMidi));
         }
 
+        private void OnWireFreePlayInput(int peerId, double songTime, int action, float velocity)
+        {
+            _pendingWireEvents.Enqueue(new PendingWireEvent(
+                peerId, WireEventKind.FreePlayInput, action, songTime, velocity));
+        }
+
         private void OnWireSustainReleased(int peerId, int noteIndex, double songTime)
         {
             _pendingWireEvents.Enqueue(new PendingWireEvent(
@@ -567,16 +669,58 @@ namespace YARG.Online
         {
             while (_pendingWireEvents.TryDequeue(out var ev))
             {
+                // FreePlayInput is a pure visual event — no simulator state
+                // changes, no per-peer scheduler. Fire the director-level
+                // event before the sim lookup so it works even when the
+                // sender doesn't have a registered simulator on this client
+                // (which never actually happens today but keeps the path
+                // independent of the prediction layer).
+                if (ev.Kind == WireEventKind.FreePlayInput)
+                {
+                    RemoteFreePlayInput?.Invoke(ev.PeerId, ev.SongTime, ev.NoteIndex, ev.Value);
+                    continue;
+                }
+
                 if (!_remoteSimulators.TryGetValue(ev.PeerId, out var sim))
                 {
-                    // Warn for discrete events; whammy and vocal-pitch are too high-volume
-                    // to warn on every dropped sample (a peer connecting late would spam).
-                    if (ev.Kind != WireEventKind.Whammy && ev.Kind != WireEventKind.VocalPitch)
+                    // Sim isn't registered yet — buffer per-peer so the
+                    // event can be replayed once RegisterRemoteSimulator
+                    // arrives. See _peerPendingEvents docs for the
+                    // registration race this guards against. Whammy /
+                    // VocalPitch are continuous-stream events where the
+                    // latest sample fully replaces prior ones, so dropping
+                    // pre-registration samples is fine — skip the buffer
+                    // to save memory.
+                    if (ev.Kind == WireEventKind.Whammy || ev.Kind == WireEventKind.VocalPitch)
                     {
-                        YargLogger.LogFormatWarning(
-                            "Prediction[director-dispatch] {0} for unregistered peerId={1}",
-                            ev.Kind, ev.PeerId);
+                        continue;
                     }
+
+                    // For EngineStateSnapshot, pull the matching payload
+                    // out of _pendingSnapshots NOW and pair it with the
+                    // sentinel — otherwise re-enqueueing the sentinel
+                    // alone would desync the FIFO pairing for other peers'
+                    // snapshots.
+                    PendingSnapshot? snap = null;
+                    if (ev.Kind == WireEventKind.EngineStateSnapshot &&
+                        _pendingSnapshots.TryDequeue(out var snapPayload))
+                    {
+                        snap = snapPayload;
+                    }
+
+                    if (!_peerPendingEvents.TryGetValue(ev.PeerId, out var peerQueue))
+                    {
+                        peerQueue = new Queue<DeferredEvent>();
+                        _peerPendingEvents[ev.PeerId] = peerQueue;
+                    }
+                    if (peerQueue.Count >= MaxPeerPendingEvents)
+                    {
+                        // Drop the oldest event rather than the new one —
+                        // the freshest snapshot is the most useful to keep
+                        // around for replay-on-registration.
+                        peerQueue.Dequeue();
+                    }
+                    peerQueue.Enqueue(new DeferredEvent(ev, snap));
                     continue;
                 }
 

@@ -55,6 +55,13 @@ namespace YARG.Menu.Online
         private Transform _playersContent;
         [SerializeField]
         private LobbyPlayer _playerPrefab;
+        // Single shared popup for host actions (Make Host / Kick). Hosted on
+        // the menu prefab as an inactive child; each player card invokes it
+        // via Initialize with the appropriate target's name + callbacks.
+        // May be unwired on prefabs that haven't been updated — the player
+        // card logs a warning and no-ops the edit button click in that case.
+        [SerializeField]
+        private LobbyPlayerActionsPopup _playerActionsPopup;
 
         [SerializeField]
         private Transform _songsContent;
@@ -324,7 +331,8 @@ namespace YARG.Menu.Online
                     isSelf:        isSelf,
                     isBackInLobby: isBackInLobby,
                     onKick:        () => OnKickPlayerClicked(userId),
-                    onMakeHost:    () => OnMakeHostClicked(userId));
+                    onMakeHost:    () => OnMakeHostClicked(userId),
+                    actionsPopup:  _playerActionsPopup);
                 // Newest member (last in lobby.Members) renders immediately after the static
                 // children. Member at list-index i → sibling staticChildCount + (count-1-i).
                 card.transform.SetSiblingIndex(staticChildCount + memberCount - 1 - i);
@@ -335,8 +343,9 @@ namespace YARG.Menu.Online
 
         private void RefreshSongs(LobbyRoomState lobby)
         {
-            bool isLocalHost = lobby.IsLocalHost;
-            int  count       = lobby.SongQueue.Count;
+            bool   isLocalHost  = lobby.IsLocalHost;
+            string localUserId  = LobbyHubSession.Current?.LocalUserId;
+            int    count        = lobby.SongQueue.Count;
 
             if (_songsHeaderText)
             {
@@ -357,11 +366,20 @@ namespace YARG.Menu.Online
                 var dto = lobby.SongQueue[i];
                 seen.Add(dto.Sequence);
 
+                // A song's remove button shows if the local user is host
+                // (host can clear anyone's pick) or if the local user is the
+                // requester (you can take back your own pick). RequesterId
+                // is server-authoritative — the hub re-checks this on the
+                // RemoveSongFromQueue RPC and rejects if neither condition
+                // holds, so toggling the button doesn't widen permissions.
+                bool canRemove = isLocalHost
+                    || (!string.IsNullOrEmpty(localUserId) && dto.RequesterId == localUserId);
+
                 if (_songCards.TryGetValue(dto.Sequence, out var card))
                 {
                     // Existing card — host status may have changed but the
                     // hash/sequence pairing is immutable, so skip the album load.
-                    card.SetRemoveButtonVisible(isLocalHost);
+                    card.SetRemoveButtonVisible(canRemove);
                 }
                 else
                 {
@@ -370,7 +388,7 @@ namespace YARG.Menu.Online
                     long sequence = dto.Sequence;
                     card.Initialize(
                         HashWrapper.FromString(dto.SongHash),
-                        isLocalHost,
+                        canRemove,
                         () => OnRemoveQueuedSongClicked(sequence));
                 }
                 // Queue order preserved (oldest first), offset past any static children.
