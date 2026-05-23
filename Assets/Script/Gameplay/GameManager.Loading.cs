@@ -124,11 +124,14 @@ namespace YARG.Gameplay
 
             YargLogger.LogFormatInfo("Loading song {0} - {1}", Song.Name, Song.Artist);
 
-            // ──────── Phase 1: load + announce ready, all under the loading screen ────────
+            // ──────── Phase 1+2: load and synchronize, all under the loading screen ────────
             // Firing SongReady inside the using block preserves today's timing — subscriber
             // setup work (e.g. QuickSettings caching its FailMeter reference) runs while the
-            // loading screen is still visible. Only the cue handshake and the press-play
-            // call move out of the loading context, into StartSong below.
+            // loading screen is still visible. The online clock-sync and cue-wait run under
+            // the loading screen too; the cue's wall-clock-alignment wait does NOT — instead
+            // it gets folded into the visible pre-roll so the user sees the highway scrolling
+            // during it (set via the preRoll value below).
+            double preRoll = SONG_START_DELAY;
             using (var context = new LoadingContext())
             {
                 if (ReplayInfo != null)
@@ -207,13 +210,15 @@ namespace YARG.Gameplay
 
                 // Initialize song runner up front so any code that reads GameManager.SongTime /
                 // VisualTime during init (e.g. BasePlayer.Update on a screen-size change) sees a
-                // valid runner. For online we use a placeholder startTime and skip the pre-roll;
-                // the real wall-clock-aligned press-play happens in StartSong once the server
-                // cue arrives.
+                // valid runner. SONG_START_DELAY gives both solo and online a uniform 2s pre-roll
+                // before audio kicks in — without it, notes that fall near song time 0 appear to
+                // "skip ahead" because the highway has nothing scrolling on screen first. For
+                // online, every peer's BeginPlayback fires at the same wall-clock instant
+                // (SongOriginUtcMs), and the pre-roll then runs concurrently on each client.
                 _songRunner = new SongRunner(
                     _mixer,
                     startTime: 0,
-                    startDelay: IsOnline ? 0 : SONG_START_DELAY,
+                    startDelay: SONG_START_DELAY,
                     GlobalVariables.State.SongSpeed,
                     Song.SongOffsetSeconds);
 
@@ -291,91 +296,95 @@ namespace YARG.Gameplay
                 // per-frame gameplay work; that stays gated by SongStarted below.
                 IsSongReady = true;
                 _songReady?.Invoke();
+
+                // Online sync + cue wait runs WHILE the loading screen is still up; the
+                // wall-clock-alignment wait is NOT held here — instead it gets absorbed
+                // into the visible pre-roll below so the user sees the highway scrolling
+                // during it. Solo falls through immediately.
+                preRoll = await NegotiateStartTimingAsync(context);
             }   // ← LoadingContext disposed: loading screen hidden, menu input re-enabled
 
-            // ──────── Phase 2 + 3: announce ready over the wire, wait for cue, then play ────────
-            await StartSong();
-        }
-
-        /// <summary>
-        /// Transition from "ready" to "playing." For online: sync the clock, announce
-        /// PeerReady, wait for the server's GameStartCue, wait for wall-clock alignment
-        /// to <c>SongOriginUtcMs</c>. For solo: a direct fall-through. In either case the
-        /// final steps are a deterministic <see cref="SongRunner.BeginPlayback"/> kick
-        /// followed by flipping <c>IsSongStarted</c> and firing the <c>SongStarted</c>
-        /// event so per-frame gameplay code wakes up.
-        /// </summary>
-        private async UniTask StartSong()
-        {
-            // Online barrier: PeerReady is sent here, after the loading screen is down
-            // and every OnSongReady subscriber has run, so the announcement truly means
-            // "ready to begin audio right now."
-            if (IsOnline)
-            {
-                // Sync the local→server clock offset over UDP before announcing PeerReady.
-                // The cue carries a wall-clock SongOriginUtcMs picked by the server; without
-                // this offset, alignment across peers is bounded by whatever the OS-level
-                // clock skew happens to be (often 100ms+, sometimes seconds). The server
-                // gates the cue on PeerReady, so spending ~400ms here just shifts pre-roll
-                // into our budget — no protocol change needed.
-                if (ServerClockSync.Current != null)
-                {
-                    bool ok = await ServerClockSync.Current.RunSyncBurstAsync(
-                        ct: this.GetCancellationTokenOnDestroy());
-                    if (!ok)
-                    {
-                        YargLogger.LogWarning(
-                            "Server clock sync failed; song start may be misaligned across peers.");
-                    }
-                }
-                else
-                {
-                    YargLogger.LogWarning(
-                        "ServerClockSync.Current is null at online song start; falling back to raw " +
-                        "local wall clock.");
-                }
-
-                OnlineSession?.SendPeerReady();
-                await OnlineSession.WaitForStartCueAsync();
-
-                if (OnlineSession.TryGetSongStartOffsetSeconds(out double secondsUntilOrigin))
-                {
-                    if (secondsUntilOrigin > 0)
-                    {
-                        // Hold here until wall-clock reaches the server-picked SongOriginUtcMs.
-                        // All peers wake on the same instant (within local clock skew), then
-                        // fall through to BeginPlayback at SongTime = 0.
-                        YargLogger.LogFormatInfo(
-                            "Online start: waiting {0:0.000}s for SongOriginUtcMs", secondsUntilOrigin);
-                        await UniTask.Delay(
-                            TimeSpan.FromSeconds(secondsUntilOrigin),
-                            DelayType.Realtime,
-                            PlayerLoopTiming.Update,
-                            this.GetCancellationTokenOnDestroy());
-                    }
-                    else
-                    {
-                        YargLogger.LogFormatWarning(
-                            "GameStartCue arrived after SongOriginUtcMs by {0:0.000}s; starting without wait",
-                            -secondsUntilOrigin);
-                    }
-                }
-                else
-                {
-                    YargLogger.LogWarning(
-                        "Online start cue missing SongOriginUtcMs; falling back to local-clock start");
-                }
-            }
-
-            // Deterministic kick — no lazy first-Update behaviour. For online (startDelay=0)
-            // the sync thread calls _mixer.Play() on its next ~1ms tick; for solo
-            // (startDelay=SONG_START_DELAY) it ramps SyncVisualTime from -2 to 0 first.
-            _songRunner.BeginPlayback();
+            // ──────── Phase 3: deterministic playback kick ────────
+            // The pre-roll runs inside BeginPlayback's sync thread (SyncVisualTime ramps
+            // from -preRoll to 0 before _mixer.Play()), so the user sees the highway +
+            // player names with notes scrolling in for the entire wait. For online, that
+            // pre-roll includes the wall-clock-alignment delay — audio still hits exactly
+            // SongOriginUtcMs + SONG_START_DELAY on every peer.
+            _songRunner.BeginPlayback(preRoll);
 
             // Loaded, enable updates
             enabled = true;
             IsSongStarted = true;
             _songStarted?.Invoke();
+        }
+
+        /// <summary>
+        /// Online start handshake: sync the local→server clock offset, announce PeerReady,
+        /// wait for the server's GameStartCue. Returns the desired pre-roll length —
+        /// solo gets <see cref="SONG_START_DELAY"/>; online gets <c>secondsUntilOrigin +
+        /// SONG_START_DELAY</c> so the wall-clock-alignment wait happens during a visible
+        /// track-scrolling animation rather than under the loading screen.
+        /// </summary>
+        private async UniTask<double> NegotiateStartTimingAsync(LoadingContext context)
+        {
+            if (!IsOnline) return SONG_START_DELAY;
+
+            context.SetLoadingText("Synchronizing with peers...");
+
+            // Sync the local→server clock offset over UDP before announcing PeerReady.
+            // The cue carries a wall-clock SongOriginUtcMs picked by the server; without
+            // this offset, alignment across peers is bounded by whatever the OS-level
+            // clock skew happens to be (often 100ms+, sometimes seconds). The server
+            // gates the cue on PeerReady, so spending ~400ms here just shifts pre-roll
+            // into our budget — no protocol change needed.
+            if (ServerClockSync.Current != null)
+            {
+                bool ok = await ServerClockSync.Current.RunSyncBurstAsync(
+                    ct: this.GetCancellationTokenOnDestroy());
+                if (!ok)
+                {
+                    YargLogger.LogWarning(
+                        "Server clock sync failed; song start may be misaligned across peers.");
+                }
+            }
+            else
+            {
+                YargLogger.LogWarning(
+                    "ServerClockSync.Current is null at online song start; falling back to raw " +
+                    "local wall clock.");
+            }
+
+            context.SetLoadingText("Waiting for players...");
+            OnlineSession?.SendPeerReady();
+            await OnlineSession.WaitForStartCueAsync();
+
+            if (OnlineSession.TryGetSongStartOffsetSeconds(out double secondsUntilOrigin))
+            {
+                if (secondsUntilOrigin > 0)
+                {
+                    // Roll the wall-clock-alignment wait into the visible pre-roll. Every
+                    // peer's BeginPlayback fires roughly when its cue arrives, but each
+                    // uses a per-peer pre-roll length = (SongOriginUtcMs - now) + standard
+                    // pre-roll. Audio still lands at the same wall-clock instant on every
+                    // peer (within local clock skew), just preceded by a longer visible
+                    // ramp on peers whose cue arrived earlier.
+                    YargLogger.LogFormatInfo(
+                        "Online start: absorbing {0:0.000}s wall-clock wait into visible pre-roll",
+                        secondsUntilOrigin);
+                    return secondsUntilOrigin + SONG_START_DELAY;
+                }
+
+                YargLogger.LogFormatWarning(
+                    "GameStartCue arrived after SongOriginUtcMs by {0:0.000}s; starting with minimum pre-roll",
+                    -secondsUntilOrigin);
+            }
+            else
+            {
+                YargLogger.LogWarning(
+                    "Online start cue missing SongOriginUtcMs; falling back to local-clock start");
+            }
+
+            return SONG_START_DELAY;
         }
 
         private bool LoadReplay()

@@ -289,6 +289,11 @@ namespace YARG.Menu.Online
             int staticChildCount = _playersContent.childCount - _playerCards.Count;
             int memberCount      = lobby.Members.Count;
 
+            // Host pinned to sibling 0; everyone else ranked by their position in
+            // lobby.Members, which the session appends in join order (FromEnter seeds
+            // the snapshot order, OnPlayerJoined appends new arrivals at the tail).
+            int nonHostRank = 0;
+
             var seen = new HashSet<string>();
             for (int i = 0; i < memberCount; i++)
             {
@@ -317,11 +322,10 @@ namespace YARG.Menu.Online
                 }
                 string instrumentSprite = memberInstrument?.ToResourceName();
 
-                // Missing entry → assume ready (true). The server's snapshot
-                // populates the dict on EnterLobby and the OnPlayerLobbyReadyChanged
-                // event keeps it fresh; an unseen userId is the brief window
-                // between a join broadcast and the first state event.
-                bool isBackInLobby = !lobby.MemberIsBackInLobby.TryGetValue(userId, out var ready) || ready;
+                // Stage derivation lives on LobbyRoomState so the dialog text and
+                // the row colour stay in sync. Missing IsBackInLobby entries are
+                // treated as InLobby — see LobbyRoomState.ResolveMemberStage.
+                var stage = lobby.ResolveMemberStage(userId);
 
                 // Cheap to re-init: just text + button visibility + click listeners.
                 card.Initialize(
@@ -329,14 +333,13 @@ namespace YARG.Menu.Online
                     lobby.GetDisplayName(userId),
                     instrumentSprite,
                     isLocalHost,
-                    isSelf:        isSelf,
-                    isBackInLobby: isBackInLobby,
-                    onKick:        () => OnKickPlayerClicked(userId),
-                    onMakeHost:    () => OnMakeHostClicked(userId),
-                    actionsPopup:  _playerActionsPopup);
-                // Newest member (last in lobby.Members) renders immediately after the static
-                // children. Member at list-index i → sibling staticChildCount + (count-1-i).
-                card.transform.SetSiblingIndex(staticChildCount + memberCount - 1 - i);
+                    isSelf:       isSelf,
+                    stage:        stage,
+                    onKick:       () => OnKickPlayerClicked(userId),
+                    onMakeHost:   () => OnMakeHostClicked(userId),
+                    actionsPopup: _playerActionsPopup);
+                int displayIndex = userId == lobby.HostUserId ? 0 : 1 + nonHostRank++;
+                card.transform.SetSiblingIndex(staticChildCount + displayIndex);
             }
 
             RemoveStale(_playerCards, seen);
@@ -649,16 +652,66 @@ namespace YARG.Menu.Online
             }
         }
 
-        public void OnKickPlayerClicked(string userId)
+        public void OnKickPlayerClicked(string userId) => KickPlayerAsync(userId).Forget();
+        public void OnMakeHostClicked(string userId)   => TransferHostAsync(userId).Forget();
+
+        private async UniTaskVoid KickPlayerAsync(string userId)
         {
-            // TODO: ILobbyHub.KickPlayer(new KickPlayerArgs(userId))
-            YargLogger.LogWarning($"LobbyView: OnKickPlayerClicked({userId}) — not yet wired");
+            var session = _boundSession ?? LobbyHubSession.Current;
+            if (session == null) return;
+            try
+            {
+                await session.KickPlayerAsync(userId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex);
+                DialogManager.Instance.ShowMessage(
+                    "Could not kick player",
+                    TranslateHostActionError(ex.Message, isKick: true));
+            }
         }
 
-        public void OnMakeHostClicked(string userId)
+        private async UniTaskVoid TransferHostAsync(string userId)
         {
-            // TODO: ILobbyHub.TransferHost(new TransferHostArgs(userId))
-            YargLogger.LogWarning($"LobbyView: OnMakeHostClicked({userId}) — not yet wired");
+            var session = _boundSession ?? LobbyHubSession.Current;
+            if (session == null) return;
+            try
+            {
+                await session.TransferHostAsync(userId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex);
+                DialogManager.Instance.ShowMessage(
+                    "Could not transfer host",
+                    TranslateHostActionError(ex.Message, isKick: false));
+            }
+        }
+
+        // Translate the shared set of hub error tags (KickPlayer + TransferHost throw the
+        // same outcomes) into a friendly sentence. Mirrors the inline pattern used in
+        // StartGameAsync below — the raw HubException.Message is a stable contract
+        // identifier like "not_host" that's useless to surface verbatim. Unknown tags
+        // fall through to the raw message so genuinely-novel server errors still get
+        // reported instead of being swallowed.
+        private static string TranslateHostActionError(string msg, bool isKick)
+        {
+            if (string.IsNullOrEmpty(msg)) return msg;
+            string action = isKick ? "kick" : "make a new host";
+            if (msg.Contains("not_host"))
+                return $"Only the lobby host can {action}.";
+            if (msg.Contains("target_is_host"))
+                return isKick
+                    ? "You can't kick the host. Transfer host to someone else first."
+                    : "That player is already the host.";
+            if (msg.Contains("target_not_member"))
+                return "That player is no longer in the lobby.";
+            if (msg.Contains("not_in_lobby"))
+                return "You're not in a lobby.";
+            if (msg.Contains("validation_failed"))
+                return $"Couldn't {action} — invalid request.";
+            return msg;
         }
 
         public void OnStartGameClicked() => StartGameAsync().Forget();
@@ -695,19 +748,44 @@ namespace YARG.Menu.Online
                 }
                 if (lobby != null && !lobby.AllMembersBackInLobby)
                 {
-                    var stillOut = new List<string>();
+                    // Bucket the not-back members into the two real-world states
+                    // (still playing the song vs. sitting on the results screen)
+                    // using LobbyRoomState.IsSongInProgress, which the session
+                    // flips on the LobbyStatus + Played-removal events. Names
+                    // appear in only one bucket so the host can tell at a glance
+                    // who they're waiting on for which reason.
+                    var inGame    = new List<string>();
+                    var onResults = new List<string>();
                     foreach (var userId in lobby.Members)
                     {
-                        if (lobby.MemberIsBackInLobby.TryGetValue(userId, out var ready) && !ready)
+                        switch (lobby.ResolveMemberStage(userId))
                         {
-                            stillOut.Add(lobby.GetDisplayName(userId));
+                            case LobbyMemberStage.InGame:    inGame.Add(lobby.GetDisplayName(userId));    break;
+                            case LobbyMemberStage.OnResults: onResults.Add(lobby.GetDisplayName(userId)); break;
                         }
                     }
-                    DialogManager.Instance.ShowMessage(
-                        "Waiting for players",
-                        stillOut.Count > 0
-                            ? "Still on the results screen: " + string.Join(", ", stillOut)
-                            : "Some players haven't returned to the lobby yet.");
+                    string body;
+                    if (inGame.Count > 0 && onResults.Count > 0)
+                    {
+                        body = $"In-game: {string.Join(", ", inGame)}\n"
+                             + $"On the results screen: {string.Join(", ", onResults)}";
+                    }
+                    else if (inGame.Count > 0)
+                    {
+                        body = "Still in-game: " + string.Join(", ", inGame);
+                    }
+                    else if (onResults.Count > 0)
+                    {
+                        body = "Still on the results screen: " + string.Join(", ", onResults);
+                    }
+                    else
+                    {
+                        // AllMembersBackInLobby was false but our bucketing found
+                        // nothing — only happens if the dictionary was mutated
+                        // between the check and the loop. Fall back to a generic.
+                        body = "Some players haven't returned to the lobby yet.";
+                    }
+                    DialogManager.Instance.ShowMessage("Waiting for players", body);
                     return;
                 }
 
@@ -735,7 +813,7 @@ namespace YARG.Menu.Online
                 {
                     if (msg.Contains("players_still_in_results"))
                     {
-                        msg = "One or more players are still on the results screen. Wait for everyone to return to the lobby.";
+                        msg = "One or more players are still in-game or on the results screen. Wait for everyone to return to the lobby.";
                     }
                     else if (msg.Contains("already_starting"))
                     {

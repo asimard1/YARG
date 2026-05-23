@@ -563,7 +563,10 @@ namespace YARG.Gameplay.Player
                 return;
             }
 
-            if (SettingsManager.Settings.OverstrumAndOverhitSoundEffects.Value)
+            // Skip the SFX for mirror-engine overstrums; otherwise every remote
+            // player's stick-noise on guitar adds to the local audio mix without
+            // giving the local user anything actionable.
+            if (SettingsManager.Settings.OverstrumAndOverhitSoundEffects.Value && !Player.IsRemote)
             {
                 const int MIN = (int) SfxSample.Overstrum1;
                 const int MAX = (int) SfxSample.Overstrum4;

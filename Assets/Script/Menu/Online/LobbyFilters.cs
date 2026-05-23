@@ -17,26 +17,30 @@ namespace YARG.Menu.Online
         PlayerCount,
     }
 
-    /// <summary>
-    /// Filter set for the lobby browser, mirroring MusicLibrary's filter
-    /// menu shape — each field is an independent boolean toggle rendered
-    /// as a <c>FilterEntryRow</c> in the popup. Default state has every
-    /// toggle on (= show everything); flipping one off filters out
-    /// lobbies of that category. Multi-select inside category groups.
-    /// </summary>
+    // UI-side filter enums with explicit "Any" sentinels so dropdown bindings
+    // can carry a single value (matches DropdownSetting<T>'s shape — nullables
+    // don't play well with the IndexOf/Equals machinery in DropdownSetting).
+    public enum LobbyGameModeFilter
+    {
+        Any,
+        Band,
+        Versus, // wire-side: ContractGameMode.Quickplay
+    }
+
+    public enum LobbyStatusFilter
+    {
+        Any,
+        SongSelect,
+        InGame, // covers both Starting and GameStarted
+    }
+
     public sealed class LobbyFilterSettings
     {
         public bool ShowFullLobbies = true;
         public bool LanOnly         = false; // unused placeholder — LobbyData has no IsLan flag yet
 
-        // Game-mode visibility — both on by default. Turn one off to hide
-        // that mode's lobbies. Both off hides everything mode-wise.
-        public bool ShowBand        = true;
-        public bool ShowQuickplay   = true;
-
-        // Status visibility — same pattern as game mode.
-        public bool ShowSongSelect  = true;
-        public bool ShowInGame      = true;
+        public LobbyGameModeFilter GameModeFilter = LobbyGameModeFilter.Any;
+        public LobbyStatusFilter   StatusFilter   = LobbyStatusFilter.Any;
 
         public bool Passes(LobbyData lobby)
         {
@@ -45,11 +49,27 @@ namespace YARG.Menu.Online
             // LAN filter has no LobbyData hook yet — gate here when
             // LobbyData grows an IsLan field.
 
-            if (!ShowBand      && lobby.GameMode == ContractGameMode.Band)      return false;
-            if (!ShowQuickplay && lobby.GameMode == ContractGameMode.Quickplay) return false;
+            switch (GameModeFilter)
+            {
+                case LobbyGameModeFilter.Band:
+                    if (lobby.GameMode != ContractGameMode.Band) return false;
+                    break;
+                case LobbyGameModeFilter.Versus:
+                    if (lobby.GameMode != ContractGameMode.Quickplay) return false;
+                    break;
+            }
 
-            if (!ShowSongSelect && lobby.Status == ContractStatus.SongSelect)  return false;
-            if (!ShowInGame     && lobby.Status == ContractStatus.GameStarted) return false;
+            // Status filter rolls Starting in with GameStarted under "In-game" — both are
+            // post-song-select transient states users think of as "in a game".
+            switch (StatusFilter)
+            {
+                case LobbyStatusFilter.SongSelect:
+                    if (lobby.Status != ContractStatus.SongSelect) return false;
+                    break;
+                case LobbyStatusFilter.InGame:
+                    if (lobby.Status == ContractStatus.SongSelect) return false;
+                    break;
+            }
 
             return true;
         }

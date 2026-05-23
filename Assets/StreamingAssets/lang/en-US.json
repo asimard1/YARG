@@ -316,7 +316,7 @@
                 "LobbyNamePlaceholder": "Enter lobby name...",
                 "GameMode": "Game Mode",
                 "GameMode.Band": "Band",
-                "GameMode.Quickplay": "Quickplay",
+                "GameMode.Quickplay": "Versus",
                 "MaxPlayers": "Max Players",
                 "MaxPlayers.2": "2",
                 "MaxPlayers.3": "3",
@@ -325,21 +325,26 @@
                 "Visibility.Public": "Public",
                 "Visibility.Private": "Private (With Code)"
             },
+            "JoinByCodeMenu": {
+                "Join": "Join",
+                "Code": "Code",
+                "CodePlaceholder": "Enter code..."
+            },
             "FiltersMenu": {
                 "Header": "Filters",
                 "Options": "Options",
                 "Filters": "Filters",
-                "SortBy": "Sort By",
+                "SortedBy": "Sorted By",
                 "SortBy.LobbyName": "Lobby Name",
                 "SortBy.HostName": "Host Name",
                 "SortBy.SongName": "Song Name",
                 "SortBy.PlayerCount": "Player Count",
-                "ShowFullLobbies": "Show Full Lobbies",
-                "LanOnly": "LAN Only",
-                "ShowBand": "Show Band Lobbies",
-                "ShowQuickplay": "Show Quickplay Lobbies",
-                "ShowSongSelect": "Show In Song Select",
-                "ShowInGame": "Show In Game"
+                "GameMode.Any": "Any",
+                "GameMode.Band": "Band",
+                "GameMode.Versus": "Versus",
+                "Status.Any": "Any",
+                "Status.SongSelect": "Song Select",
+                "Status.InGame": "In-game"
             }
         },
         "Main": {
@@ -1754,6 +1759,13 @@
 			"RockMeterPresetContainer" : "Rock Meter Presets"
         },
         "PresetSetting": {
+            "Online": {
+                "SortBy": { "Name": "Sorted By" },
+                "GameMode": { "Name": "Game Mode" },
+                "Status": { "Name": "Status" },
+                "ShowFullLobbies": { "Name": "Show Full Lobbies" },
+                "LanOnly": { "Name": "LAN Only" }
+            },
             "CameraPreset": {
                 "CurveFactor": {
                     "Name": "Curve Factor",

@@ -726,6 +726,15 @@ namespace YARG.Menu.MusicLibrary
         /// </param>
         private static void ExitToCallerMenu(bool wasPicker)
         {
+            // Real-exit cleanup. Previously this lived in OnDisable, but that fires
+            // for transient deactivations too (Filters submenu cycle), so it dropped
+            // the picker session on Filters open/close. Centralising here means both
+            // cancel-back (ExitLibrary) and picker-confirm (ExitFromPickerConfirm)
+            // funnel through the same teardown without burning state across the
+            // Filters menu cycle.
+            SongPickedCallback = null;
+            AllowedSongHashes = null;
+
             if (wasPicker && LobbyHubSession.Current?.CurrentLobby != null)
             {
                 MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);
@@ -901,13 +910,14 @@ namespace YARG.Menu.MusicLibrary
         {
             base.OnDisable();
 
-            // Handles the cancel-back path: picker confirm already nulled this before popping.
-            SongPickedCallback = null;
-
-            // Mirror the cleanup pattern for the allow-list filter: callers don't need to
-            // defensively null it after pop. Order matters — clear the active-instance ref
-            // last so any reentrant Notify in this teardown frame still sees us.
-            AllowedSongHashes = null;
+            // NOTE: do NOT clear SongPickedCallback / AllowedSongHashes here.
+            // OnDisable also fires for transient deactivations — opening and closing
+            // the Filters submenu routes through MenuManager.ReactivateCurrentMenu,
+            // which SetActive(false)→SetActive(true)'s this menu, and a clear here
+            // would silently drop the lobby picker session every time the user
+            // touches Filters. Real-exit cleanup lives in ExitToCallerMenu (both
+            // the cancel-back path via ExitLibrary and the picker-confirm path via
+            // ExitFromPickerConfirm funnel through there).
             _activeInstance = null;
 
             SetSidebarDifficultiesVisible(false);

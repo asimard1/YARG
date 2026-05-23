@@ -71,6 +71,22 @@ namespace YARG.Gameplay.Player
         // the lookup to O(1) per frame in steady state.
         private int _remoteTargetPhraseCursor;
 
+        /// <summary>
+        /// Deactivate this vocalist's HUD card (player name + score + needle icon).
+        /// The HUD GameObject is instantiated by <see cref="TrackViewManager.CreateVocalsPlayerHUD"/>
+        /// under a shared HUD canvas, NOT as a child of the VocalsPlayer transform, so
+        /// disabling this player's GameObject alone leaves the HUD card on screen.
+        /// Called by <see cref="GameManager.HideRemotePlayerHighway"/> when the peer's
+        /// UDP session drops, so a vocalist who quits mid-song actually disappears.
+        /// </summary>
+        public void HideHud()
+        {
+            if (_hud != null)
+            {
+                _hud.gameObject.SetActive(false);
+            }
+        }
+
         public void Initialize(int index, int vocalIndex, YargPlayer player, SongChart chart,
             VocalsPlayerHUD hud, VocalPercussionTrack percussionTrack, int? lastHighScore, float trackSpeed)
         {
@@ -247,7 +263,9 @@ namespace YARG.Gameplay.Player
 
             engine.OnNoteMissed += (_, _) =>
             {
-                if (LastCombo >= 2)
+                // Don't play the miss SFX for remote vocalists — their mirror engine
+                // emits OnNoteMissed too, and the local user can't act on it.
+                if (LastCombo >= 2 && !Player.IsRemote)
                 {
                     GlobalAudioHandler.PlaySoundEffect(SfxSample.NoteMiss);
                 }
@@ -525,30 +543,30 @@ namespace YARG.Gameplay.Player
                 // gating) can stay unchanged.
                 _lastTargetNote = FindRemoteTargetNoteAt(GameManager.SongTime);
 
-                // Pitch-display state machine. The needle is visible iff the
-                // wire's latest sample says isSinging=true — earlier iterations
-                // optimistically showed it at the chart target during gaps in
-                // the sample stream, but that looked wrong in practice (singer
-                // is silent and the indicator floats on the target note as if
-                // they were hitting it perfectly).
+                // Pitch-display state machine. Visibility tracks the wire's latest
+                // isSinging — matches the local needle, which is also driven purely
+                // by recent mic activity (IsInThreshold(_lastSingTime)) independent
+                // of whether there's an active chart phrase. Between phrases on the
+                // local side the needle still shows the singer's pitch, and remotes
+                // need to behave the same so a singer warming up between sections
+                // doesn't visually drop off the rest of the band's screen.
                 //
                 // When isSinging is true:
-                //   - on-pitch (within EngineParams.PitchWindow of the chart
-                //     target, octave-insensitive) → snap to target pitch, hit
-                //     particles on.
-                //   - off-pitch → render at the received pitch literally. The
-                //     latest sample arriving every ~50 ms holds the position
-                //     until they get back on pitch or stop.
+                //   - active chart target + on-pitch (within EngineParams.PitchWindow,
+                //     octave-insensitive) → snap to target pitch, hit particles on.
+                //   - active chart target + off-pitch → render at the received pitch.
+                //   - no chart target → render at the received pitch (no hit particles).
                 //
                 // When isSinging is false:
-                //   - hide the needle outright, but leave `pitchSang` set to
-                //     the simulator's latest pitch so the transform's z stays
-                //     in a coherent place. Unity preserves localPosition across
-                //     SetActive cycles, so when singing resumes the needle
-                //     reappears at the prior pitch and lerps to the new one —
-                //     no flicker from "top of track" to actual pitch on each
-                //     phrase boundary.
+                //   - hide the needle; leave pitchSang at the simulator's latest pitch
+                //     so the transform's z stays coherent across the SetActive(false)
+                //     toggle. Unity preserves localPosition across SetActive cycles,
+                //     so when singing resumes the needle reappears at the prior pitch
+                //     and lerps to the new one.
                 bool hasActiveTarget = _lastTargetNote is not null;
+                isCurrentlySinging   = remoteSinging;
+                isHittingTarget      = false;
+                pitchSang            = remotePitch;
 
                 if (remoteSinging && hasActiveTarget)
                 {
@@ -561,21 +579,6 @@ namespace YARG.Gameplay.Player
                         pitchSang       = targetPitch;
                         isHittingTarget = true;
                     }
-                    else
-                    {
-                        pitchSang       = remotePitch;
-                        isHittingTarget = false;
-                    }
-                    isCurrentlySinging = true;
-                }
-                else
-                {
-                    // Not singing OR no chart target (between phrases).
-                    // Hide the needle; preserve pitchSang at the last known
-                    // value so the transform stays coherent for next show.
-                    pitchSang          = remotePitch;
-                    isCurrentlySinging = false;
-                    isHittingTarget    = false;
                 }
             }
             else

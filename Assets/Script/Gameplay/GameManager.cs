@@ -321,7 +321,59 @@ namespace YARG.Gameplay
                 YargLogger.LogInfo(
                     $"GameManager: hiding remote player highway for peerId={peerId} ({player.Player.Profile?.Name})");
                 player.gameObject.SetActive(false);
+
+                // Vocals' player HUD card (name + score + needle icon) lives under a
+                // shared HUD canvas, not as a child of the player transform, so the
+                // SetActive above doesn't reach it. Tear it down explicitly so a
+                // vocalist who quits mid-song actually disappears from the screen.
+                if (player is VocalsPlayer vocals)
+                {
+                    vocals.HideHud();
+                    // If the leaver was the last active vocalist, demote the vocal
+                    // highway to the lyric bar so the remaining instrument players
+                    // aren't staring at an empty vocal track for the rest of the song.
+                    TrySwitchToLyricBarIfNoVocalists();
+                }
                 return;
+            }
+        }
+
+        // Walks _players for any still-active VocalsPlayer (local or remote). When
+        // none remain — i.e. every vocalist either never existed or has been hidden
+        // via HideRemotePlayerHighway — disables the vocal highway and falls back
+        // to the lyric bar at the bottom of the screen, mirroring the load-time
+        // selection at GameManager.Loading.cs:580/592. The bar's phrase objects
+        // were already instantiated under it during OnChartLoaded (which fires
+        // regardless of active state), so a SetActive(true) + SetSongTime is
+        // enough to bring it up to date mid-song.
+        private void TrySwitchToLyricBarIfNoVocalists()
+        {
+            if (!VocalTrack.gameObject.activeSelf) return;
+            if (_players == null) return;
+
+            foreach (var p in _players)
+            {
+                if (p is VocalsPlayer && p != null && p.gameObject.activeSelf)
+                {
+                    return;
+                }
+            }
+
+            YargLogger.LogInfo("GameManager: last vocalist left, hiding vocal highway and falling back to lyric bar");
+            VocalTrack.gameObject.SetActive(false);
+
+            // Only re-enable the lyric bar under the same conditions LyricBar's own
+            // OnChartLoaded would have used to keep itself active: the chart must
+            // have lyrics, we're not in practice mode (lyric bar is hidden during
+            // practice by design), and the user hasn't disabled lyric display.
+            // Otherwise leave both off — better an empty area than an empty bar.
+            if (_lyricBar != null
+                && Chart?.Lyrics?.Phrases.Count > 0
+                && !IsPractice
+                && SettingsManager.Settings.LyricDisplay.Value != LyricDisplayMode.Disabled)
+            {
+                _lyricBar.gameObject.SetActive(true);
+                _lyricBar.SetSongTime(_songRunner.SongTime);
             }
         }
 

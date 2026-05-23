@@ -589,6 +589,34 @@ namespace YARG.Online
         }
 
         /// <summary>
+        /// Invoke <c>ILobbyHub.TransferHost</c>. Host-only on the server side; the
+        /// hub broadcasts <c>OnHostChanged</c> to every member, which the session's
+        /// callback handler folds into <see cref="CurrentLobby"/> and surfaces via
+        /// <see cref="CurrentLobbyChanged"/>. No local pre-emptive mutation.
+        /// </summary>
+        public async UniTask TransferHostAsync(string targetUserId, CancellationToken ct = default)
+        {
+            var conn = RequireConnection();
+            var args = new TransferHostArgs(targetUserId);
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: TransferHost target={targetUserId}");
+            await conn.InvokeAsync(nameof(ILobbyHub.TransferHost), args, ct);
+        }
+
+        /// <summary>
+        /// Invoke <c>ILobbyHub.KickPlayer</c>. Host-only; the hub broadcasts
+        /// <c>OnPlayerKicked</c> to every member (including the kickee, who tears
+        /// down their session). The session callback removes the user from
+        /// <see cref="CurrentLobby"/>.<c>Members</c>.
+        /// </summary>
+        public async UniTask KickPlayerAsync(string targetUserId, CancellationToken ct = default)
+        {
+            var conn = RequireConnection();
+            var args = new KickPlayerArgs(targetUserId);
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: KickPlayer target={targetUserId}");
+            await conn.InvokeAsync(nameof(ILobbyHub.KickPlayer), args, ct);
+        }
+
+        /// <summary>
         /// Signal to the lobby that this player has closed the post-game
         /// results screen and is back at the song-select view. Called by
         /// <c>ScoreScreenMenu</c> on the Continue button when an online
@@ -674,7 +702,7 @@ namespace YARG.Online
 
             if (e.UserId != _tokenProvider.UserId)
             {
-                ToastManager.ToastInformation($"{e.DisplayName} joined the lobby");
+                LobbyChatterToast($"{e.DisplayName} joined the lobby");
             }
         }
 
@@ -691,7 +719,7 @@ namespace YARG.Online
 
             if (e.UserId != _tokenProvider.UserId)
             {
-                ToastManager.ToastInformation($"{displayName} left the lobby");
+                LobbyChatterToast($"{displayName} left the lobby");
             }
         }
 
@@ -735,7 +763,7 @@ namespace YARG.Online
             else
             {
                 CurrentLobbyChanged?.Invoke();
-                ToastManager.ToastInformation($"{displayName} was kicked from the lobby");
+                LobbyChatterToast($"{displayName} was kicked from the lobby");
             }
         }
 
@@ -746,6 +774,38 @@ namespace YARG.Online
             if (!IsForCurrentLobby(e.LobbyId)) return;
             var previous = _currentLobby.Status;
             _currentLobby.Status = e.Status;
+            // Drive the in-progress flag off the actual status transitions: arming
+            // it on entry into GameStarted, clearing it when the lobby winds all the
+            // way back to SongSelect (everyone's back). The Played-removal handler
+            // owns the middle transition (song over → members are on results, not
+            // in-game) so we don't need to touch the flag here for that case.
+            //
+            // Also mirror the server's per-member IsBackInLobby flips. The hub
+            // does NOT emit OnPlayerLobbyReadyChanged for the flip-to-false at
+            // game start — it only broadcasts the status change — but the repo's
+            // ConfirmStartGameAsync flips every member's flag to false atomically
+            // with the GameStarted transition. Without mirroring here, the
+            // client's MemberIsBackInLobby dict stays stuck at "true" for the
+            // entire in-game + results window, the stage always resolves to
+            // InLobby, and the row never tints away from white. SongSelect is
+            // the inverse: the server only allows that transition when every
+            // member is back, so mirroring true here is just defensive resync.
+            if (e.Status == LobbyStatus.GameStarted)
+            {
+                _currentLobby.IsSongInProgress = true;
+                foreach (var uid in _currentLobby.Members)
+                {
+                    _currentLobby.MemberIsBackInLobby[uid] = false;
+                }
+            }
+            else if (e.Status == LobbyStatus.SongSelect)
+            {
+                _currentLobby.IsSongInProgress = false;
+                foreach (var uid in _currentLobby.Members)
+                {
+                    _currentLobby.MemberIsBackInLobby[uid] = true;
+                }
+            }
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: OnLobbyStatusChanged -> {e.Status}");
             CurrentLobbyChanged?.Invoke();
 
@@ -757,7 +817,7 @@ namespace YARG.Online
             {
                 if (e.Status == LobbyStatus.Starting && previous != LobbyStatus.Starting)
                 {
-                    ToastManager.ToastInformation("Host is starting the game…");
+                    LobbyChatterToast("Host is starting the game…");
                 }
                 else if (e.Status == LobbyStatus.SongSelect && previous == LobbyStatus.Starting)
                 {
@@ -810,17 +870,17 @@ namespace YARG.Online
             if (addedCount > 0 && removedCount > 0)
             {
                 int total = addedCount + removedCount;
-                ToastManager.ToastInformation(
+                LobbyChatterToast(
                     $"Lobby library: +{addedCount} / -{removedCount} song{(total == 1 ? "" : "s")}");
             }
             else if (addedCount > 0)
             {
-                ToastManager.ToastInformation(
+                LobbyChatterToast(
                     $"{addedCount} song{(addedCount == 1 ? "" : "s")} added to lobby library");
             }
             else if (removedCount > 0)
             {
-                ToastManager.ToastInformation(
+                LobbyChatterToast(
                     $"{removedCount} song{(removedCount == 1 ? "" : "s")} removed from lobby library");
             }
         }
@@ -839,7 +899,12 @@ namespace YARG.Online
                 string songLabel = SongContainer.SongsByHash.TryGetValue(hash, out var songs)
                     ? songs[0].Name
                     : e.Song.SongHash;
-                ToastManager.ToastInformation($"{songLabel} was queued");
+                // Pull the queuer's display name out of the member map. GetDisplayName
+                // falls back to the userId string if we haven't seen the member yet,
+                // which keeps the toast useful even for users who joined after our
+                // session's MemberNames was last seeded.
+                string requesterName = _currentLobby.GetDisplayName(e.Song.RequesterId);
+                LobbyChatterToast($"{requesterName} queued {songLabel}");
             }
         }
 
@@ -861,6 +926,16 @@ namespace YARG.Online
             _currentLobby.SongQueue.RemoveAll(q => q.Sequence == e.Sequence);
             CurrentLobbyChanged?.Invoke();
 
+            // The chart finishing is the wire signal that flips members from "in-game"
+            // to "on results screen" — see LobbyRoomState.IsSongInProgress. Set this
+            // BEFORE the songLabel-null early-out so a removal for a song that's no
+            // longer in our local queue (e.g. queue mutated under our feet) still
+            // updates the stage derivation.
+            if (e.Reason == SongRemovalReason.Played)
+            {
+                _currentLobby.IsSongInProgress = false;
+            }
+
             if (songLabel == null) return;
             switch (e.Reason)
             {
@@ -868,11 +943,17 @@ namespace YARG.Online
                     // Score screen already communicates this — no toast.
                     break;
                 case SongRemovalReason.RequesterLeft:
-                    ToastManager.ToastInformation($"{songLabel} was removed (requester left)");
+                    LobbyChatterToast($"{songLabel} was removed (requester left)");
                     break;
                 case SongRemovalReason.Removed:
                 default:
-                    ToastManager.ToastInformation($"{_currentLobby.HostName} removed {songLabel} from queue");
+                    // RemovedByUserId is populated by the server only on the
+                    // explicit-Removed path. Falls back to HostName on legacy
+                    // servers / unexpected reasons so we never show an empty name.
+                    string removerName = !string.IsNullOrEmpty(e.RemovedByUserId)
+                        ? _currentLobby.GetDisplayName(e.RemovedByUserId)
+                        : _currentLobby.HostName;
+                    LobbyChatterToast($"{removerName} removed {songLabel} from queue");
                     break;
             }
         }
@@ -931,6 +1012,22 @@ namespace YARG.Online
         }
 
         // ---------- helpers ----------
+
+        // Lobby chatter (joins, leaves, kicks, queue churn, library deltas) is useful
+        // info in the menu/lobby views but pure noise stacked over the highway during
+        // a song. Route those toasts through this helper so they auto-suppress while
+        // the Gameplay scene is active. Score/Menu scenes still get them.
+        // Warnings/errors keep their direct ToastManager calls — a "Game start failed"
+        // or similar shouldn't be silenced.
+        private static void LobbyChatterToast(string message)
+        {
+            if (GlobalVariables.Instance != null
+                && GlobalVariables.Instance.CurrentScene == SceneIndex.Gameplay)
+            {
+                return;
+            }
+            ToastManager.ToastInformation(message);
+        }
 
         // Convert a wire-format hash string to the HashWrapper used by SongContainer indices.
         // Mirrors the pattern at OnSongQueuedAsync / OnSongFinalizedAsync.

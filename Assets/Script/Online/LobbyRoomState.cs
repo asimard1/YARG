@@ -56,6 +56,35 @@ namespace YARG.Online
         // The host's Start button is gated on every member's flag being true.
         public Dictionary<string, bool> MemberIsBackInLobby = new();
 
+        // Derived client-side flag that distinguishes "song actively playing" from
+        // "song finished, members on results screen" while the lobby is in
+        // GameStarted. The contract has only one per-member bit (IsBackInLobby),
+        // so this is computed from event ordering rather than carried on the wire:
+        //   • Flipped true  on LobbyStatusChanged → GameStarted (or seeded that way
+        //     for a fresh joiner whose snapshot status is GameStarted).
+        //   • Flipped false on the first SongRemovedFromQueue with reason=Played
+        //     after the song started — the chart finished, the queue head was
+        //     consumed, and any member with IsBackInLobby=false is now on the
+        //     results screen, not in-game.
+        //   • Reset to false on LobbyStatusChanged → SongSelect (game fully wrapped
+        //     up; everyone's back in the lobby).
+        // Consumed by ResolveMemberStage so the host's Start-blocker dialog and the
+        // per-row LobbyPlayer name colour can distinguish the in-game and
+        // on-results cases.
+        public bool IsSongInProgress;
+
+        /// <summary>
+        /// 3-state per-member stage derived from <see cref="MemberIsBackInLobby"/>
+        /// and <see cref="IsSongInProgress"/>. Missing IsBackInLobby entries are
+        /// treated as true (matches <see cref="AllMembersBackInLobby"/>'s default).
+        /// </summary>
+        public LobbyMemberStage ResolveMemberStage(string userId)
+        {
+            bool back = !MemberIsBackInLobby.TryGetValue(userId, out var ready) || ready;
+            if (back) return LobbyMemberStage.InLobby;
+            return IsSongInProgress ? LobbyMemberStage.InGame : LobbyMemberStage.OnResults;
+        }
+
         /// <summary>True iff every member in <see cref="Members"/> has reported
         /// back to the lobby (i.e. nobody is still mid-game / on the results
         /// screen). Used by <c>LobbyViewMenu</c> to enable the host's Start
@@ -170,6 +199,24 @@ namespace YARG.Online
             Region     = lobby.Region,
             Status     = lobby.Status,
             MaxPlayers = lobby.MaxPlayers,
+            // Fresh-join fallback: a member joining mid-session has no historical
+            // event stream, so derive the initial IsSongInProgress from the
+            // snapshot's lobby status. If the lobby is GameStarted we don't know
+            // whether the song just finished, but "in-game" is the more common
+            // case and visually disambiguates from the InLobby members. The first
+            // Played removal or SongSelect transition after join will correct it.
+            IsSongInProgress = lobby.Status == LobbyStatus.GameStarted,
         };
+    }
+
+    /// <summary>3-state per-member stage used by <see cref="LobbyRoomState.ResolveMemberStage"/>.</summary>
+    public enum LobbyMemberStage
+    {
+        /// <summary>Back in the lobby / song-select screen. White name.</summary>
+        InLobby,
+        /// <summary>Currently playing the active song. Yellow name.</summary>
+        InGame,
+        /// <summary>Song finished, viewing the per-player results screen. Orange name.</summary>
+        OnResults,
     }
 }

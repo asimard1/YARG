@@ -24,8 +24,8 @@ namespace YARG.Online
     public sealed class OnlineAccessTokenProvider
     {
         // TODO: surface as a setting once the online flow stabilizes.
-        //public const string BaseUrl = "http://localhost:5230";
-        public const string BaseUrl = "https://rjoghqrt4k6k.shares.zrok.io";
+        public const string BaseUrl = "http://localhost:5230";
+        //public const string BaseUrl = "https://rjoghqrt4k6k.shares.zrok.io";
         //public const string BaseUrl = "https://lobbies.yarg.online";
 
         private const string DevAuthPath = "/api/v1/auth/dev";
@@ -73,7 +73,7 @@ namespace YARG.Online
         }
 
         // Server-side validation rejects names with anything outside
-        // [A-Za-z0-9 _-] (e.g. "Mic'd Up" fails because of the apostrophe).
+        // [A-Za-z0-9 _-].
         // Replace each disallowed char with an underscore so the player's
         // profile name still resolves to a recognizable identity rather than
         // silently falling back to "YARG-Player".

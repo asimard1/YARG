@@ -28,6 +28,10 @@ PrefabInstance:
       propertyPath: m_fontColor32.rgba
       value: 4287226391
       objectReference: {fileID: 0}
+    - target: {fileID: 4397009308058567305, guid: 2aab1b720a6b1a44ab539de200dfcae5, type: 3}
+      propertyPath: m_Sprite
+      value: 
+      objectReference: {fileID: 21300000, guid: 404d648d782974f43995ecb80472c35b, type: 3}
     - target: {fileID: 5115320699573875707, guid: 2aab1b720a6b1a44ab539de200dfcae5, type: 3}
       propertyPath: m_Pivot.x
       value: 0.5

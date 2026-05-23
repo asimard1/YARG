@@ -44,6 +44,8 @@ namespace YARG.Menu.Online
         [SerializeField]
         private CreateLobbyMenu _createLobbyPopup;
         [SerializeField]
+        private JoinByCodeMenu _joinByCodePopup;
+        [SerializeField]
         private LobbyFiltersMenu _filtersMenu;
 
         // Dedicated sort button + its current-state label, modeled on
@@ -146,7 +148,7 @@ namespace YARG.Menu.Online
                 LobbySortAttribute.PlayerCount => Localize.Key("Menu.Online.FiltersMenu.SortBy.PlayerCount"),
                 _                              => _sortAttribute.ToString(),
             };
-            _sortButtonLabel.text = $"{Localize.Key("Menu.Online.FiltersMenu.SortBy")}: {value}";
+            _sortButtonLabel.text = $"{Localize.Key("Menu.Online.FiltersMenu.SortedBy")}: {value}";
         }
 
         protected override void OnEnable()
@@ -403,7 +405,12 @@ namespace YARG.Menu.Online
         private void JoinByCode()
         {
             YargLogger.LogInfo("OnlineMenu: join-by-code pressed");
-            // TODO: open code-entry dialog → ILobbyHub.EnterLobby
+            if (_joinByCodePopup != null)
+            {
+                _joinByCodePopup.gameObject.SetActive(true);
+                return;
+            }
+            YargLogger.LogWarning("OnlineMenu: _joinByCodePopup is unwired");
         }
 
         public void Back()

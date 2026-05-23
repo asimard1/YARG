@@ -8,6 +8,7 @@ using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.Settings;
 using YARG.Online;
+using YARG.Player;
 using YARG.Settings;
 
 namespace YARG.Menu.Main
@@ -78,6 +79,22 @@ namespace YARG.Menu.Main
 
         public async void Online()
         {
+            // Hard gate: the online flow assumes at least one connected player
+            // (lobby member instrument, loadout RPC, score tracking, etc. all read
+            // from PlayerContainer.Players[0]). Letting the user enter with an
+            // empty roster lands them in a lobby they can't actually queue/start
+            // from. MusicLibrary already shows a "no player" warning for the
+            // analogous solo case; for online we hard-block at the entry point
+            // with a dialog rather than let them stumble in.
+            if (PlayerContainer.Players.Count == 0)
+            {
+                YargLogger.LogInfo("MainMenu: Online blocked — no profiles connected");
+                DialogManager.Instance.ShowMessage(
+                    "No Profile Connected",
+                    "Connect a profile before entering Online. Open the Profiles menu and pick one to play with.");
+                return;
+            }
+
             YargLogger.LogInfo("MainMenu: Online button pressed — authenticating before push");
             using var context = new LoadingContext();
             context.SetLoadingText("Signing in…");

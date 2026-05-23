@@ -77,8 +77,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::YARG.Menu.Online.LobbyPlayer
   _playerNameText: {fileID: 7405586435506474572}
-  _kickButton: {fileID: 1663484256465183789}
-  _makeHostButton: {fileID: 0}
+  _editButton: {fileID: 1864041162302744035}
 --- !u!114 &9048734020237150924
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -323,6 +322,22 @@ PrefabInstance:
       propertyPath: m_Color.r
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 1245898288579793007, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.size
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1245898288579793007, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Mode
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1245898288579793007, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 800311180081146746}
+    - target: {fileID: 1245898288579793007, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_CallState
+      value: 2
+      objectReference: {fileID: 0}
     - target: {fileID: 1675296661440499702, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
       propertyPath: m_AnchorMax.x
       value: 1
@@ -439,6 +454,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: EditButton
       objectReference: {fileID: 0}
+    - target: {fileID: 4441713907549617493, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 8339972663341831657, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
       propertyPath: m_SizeDelta.x
       value: 40
@@ -446,6 +465,10 @@ PrefabInstance:
     - target: {fileID: 8339972663341831657, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
       propertyPath: m_SizeDelta.y
       value: 40
+      objectReference: {fileID: 0}
+    - target: {fileID: 8637973974686150122, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -455,15 +478,15 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 567188905164725731}
   m_SourcePrefab: {fileID: 100100000, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
---- !u!114 &1663484256465183789 stripped
+--- !u!114 &1864041162302744035 stripped
 MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 1245898288579793007, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
+  m_CorrespondingSourceObject: {fileID: 2270329289584791969, guid: 30455cc33f47e564894a0ec80dcbed66, type: 3}
   m_PrefabInstance: {fileID: 459283574699275330}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
+  m_GameObject: {fileID: 4322207414527396119}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 4e29b1a8efbd4b44bb3f3716e73f07ff, type: 3}
+  m_Script: {fileID: 11500000, guid: d83a51d897110654abb142971ffd1613, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 --- !u!224 &3133968827358336294 stripped

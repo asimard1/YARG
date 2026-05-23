@@ -1,18 +1,23 @@
 using System;
 using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 using YARG.Core.Logging;
+using YARG.Menu;
+using YARG.Online;
 
 namespace YARG.Menu.Online
 {
     public class LobbyPlayer : MonoBehaviour
     {
-        // White = back in the lobby (song-select), ready to start.
-        // Yellow = mid-game / on the results screen — the host's Start
-        // button is gated on every member's flag flipping back to white.
-        private static readonly Color ReadyColor   = Color.white;
-        private static readonly Color InGameColor  = new(1f, 0.85f, 0.2f, 1f);
+        // Stage → name tint. Three distinct colours so observers in the lobby can
+        // read the active members' status at a glance:
+        //   White  = InLobby   (back in the lobby / song-select screen).
+        //   Yellow = InGame    (song actively playing).
+        //   Orange = OnResults (song finished, viewing the per-player results).
+        // The host's Start button is gated on everyone being InLobby.
+        private static readonly Color ReadyColor    = Color.white;
+        private static readonly Color InGameColor   = new(1f, 0.85f, 0.2f, 1f);
+        private static readonly Color OnResultsColor = new(1f, 0.55f, 0.15f, 1f);
 
         [SerializeField]
         private TextMeshProUGUI _playerNameText;
@@ -22,19 +27,7 @@ namespace YARG.Menu.Online
         // Clicking opens a shared LobbyPlayerActionsPopup that lists Make
         // Host + Kick targeting this row's member.
         [SerializeField]
-        private Button _editButton;
-
-        // Legacy kick/host buttons from the previous LobbyPlayer prefab —
-        // kept for compatibility while the prefab is being updated to use
-        // the EditButton + popup flow. Always hidden when an EditButton is
-        // present so a half-updated prefab doesn't expose two parallel
-        // paths to the same action. Once the prefab drops these, the
-        // SerializeFields + null-guards can be deleted with no behavior
-        // change.
-        [SerializeField]
-        private Button _kickButton;
-        [SerializeField]
-        private Button _makeHostButton;
+        private IconButton _editButton;
 
         private Action _onKick;
         private Action _onMakeHost;
@@ -43,7 +36,7 @@ namespace YARG.Menu.Online
 
         public void Initialize(
             string userId, string displayName, string instrumentSpriteName,
-            bool isLocalHost, bool isSelf, bool isBackInLobby,
+            bool isLocalHost, bool isSelf, LobbyMemberStage stage,
             Action onKick, Action onMakeHost,
             LobbyPlayerActionsPopup actionsPopup)
         {
@@ -54,7 +47,18 @@ namespace YARG.Menu.Online
                 _playerNameText.text = string.IsNullOrEmpty(instrumentSpriteName)
                     ? displayName
                     : $"<sprite name=\"{instrumentSpriteName}\"> {displayName}";
-                _playerNameText.color = isBackInLobby ? ReadyColor : InGameColor;
+                // tintAllSprites makes inline <sprite> glyphs (the instrument icon)
+                // pick up the text's vertex color — otherwise the icon stays at
+                // its default colour and the row's stage tint only applies to the
+                // name, making the status change look like a subtle font recolour
+                // instead of the intended whole-row shift.
+                _playerNameText.tintAllSprites = true;
+                _playerNameText.color = stage switch
+                {
+                    LobbyMemberStage.InGame    => InGameColor,
+                    LobbyMemberStage.OnResults => OnResultsColor,
+                    _                          => ReadyColor,
+                };
             }
             else
             {
@@ -68,30 +72,14 @@ namespace YARG.Menu.Online
             _displayName  = displayName;
             _actionsPopup = actionsPopup;
 
-            // EditButton is the new single entry point for host actions on
-            // other members. Hidden when the local user isn't host (nothing
-            // useful for them to do here) or when looking at their own row
-            // (Make Host / Kick on self are nonsensical operations).
+            // Hidden when the local user isn't host (nothing useful to do)
+            // or on their own row (Make Host / Kick on self are nonsensical).
             bool showHostControls = isLocalHost && !isSelf;
             if (_editButton != null)
             {
-                _editButton.onClick.RemoveAllListeners();
-                _editButton.onClick.AddListener(OpenActionsPopup);
+                _editButton.OnClick.RemoveAllListeners();
+                _editButton.OnClick.AddListener(OpenActionsPopup);
                 _editButton.gameObject.SetActive(showHostControls);
-            }
-
-            // Legacy direct-action buttons: always hide if the prefab still
-            // has them. The EditButton + popup is the only sanctioned UI
-            // surface for host actions now.
-            if (_kickButton != null)
-            {
-                _kickButton.onClick.RemoveAllListeners();
-                _kickButton.gameObject.SetActive(false);
-            }
-            if (_makeHostButton != null)
-            {
-                _makeHostButton.onClick.RemoveAllListeners();
-                _makeHostButton.gameObject.SetActive(false);
             }
         }
 

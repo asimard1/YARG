@@ -38,7 +38,9 @@ namespace YARG.Menu.Online
             return _lobby.GameMode switch
             {
                 GameMode.Band      => "Band",
-                GameMode.Quickplay => "Quickplay",
+                // Contract enum value is "Quickplay" (kept for wire compat);
+                // user-visible name is "Versus".
+                GameMode.Quickplay => "Versus",
                 _                  => _lobby.GameMode.ToString(),
             };
         }
