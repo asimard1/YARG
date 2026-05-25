@@ -296,7 +296,16 @@
             "JoinByCode": "Join By Code",
             "AddSong": "Add Song",
             "StartGame": "Start Game",
+            "CopyCode": "Copy Code (Hold to Show)",
             "LobbyHeaderSubText": "Online",
+            "LobbyType": {
+                "Public": "Public Lobby",
+                "Private": "Private Lobby"
+            },
+            "ShowCode": {
+                "Title": "Lobby Code",
+                "Body": "Share this code so others can join:\n\n<size=200%><b>{0}</b></size>"
+            },
             "PlayersHeader": "Players ({0}/{1})",
             "SongsQueued": {
                 "Singular": "1 Song Queued",
@@ -305,6 +314,13 @@
             "PlayerActions": {
                 "MakeHost": "Make Host",
                 "Kick": "Kick"
+            },
+            "KickDialog": {
+                "Title": "Kicked from lobby",
+                "Reason": {
+                    "KickedByHost": "The host removed you from the lobby.",
+                    "Unknown": "You were removed from the lobby ({0})."
+                }
             },
             "ServerUnavailable": {
                 "Title": "Online Server Unavailable",
@@ -345,6 +361,62 @@
                 "Status.Any": "Any",
                 "Status.SongSelect": "Song Select",
                 "Status.InGame": "In-game"
+            },
+            "QueueFull": {
+                "Title": "Queue full",
+                "Body": "The song queue holds at most {0} songs. Remove one before adding another."
+            },
+            "WaitingForPlayers": {
+                "Title": "Waiting for players",
+                "InGame": "Still in-game: {0}",
+                "OnResults": "Still on the results screen: {0}",
+                "Both": "In-game: {0}\nOn the results screen: {1}",
+                "Generic": "Some players haven't returned to the lobby yet."
+            },
+            "PreparingGame": "Preparing game...",
+            "StartGameError": {
+                "Title": "Could not start game",
+                "AlreadyStarted": "The game has already started.",
+                "AlreadyStarting": "The game is already being prepared. Please wait.",
+                "PlayersStillInResults": "One or more players are still in-game or on the results screen. Wait for everyone to return to the lobby.",
+                "AllocationFailed": "No game servers are available right now. Please try again in a moment.",
+                "StartAborted": "Game start was aborted. Please try again.",
+                "NotEnoughPlayers": "You need at least two players in the lobby to start a game.",
+                "QueueEmpty": "The song queue is empty. Add a song before starting the game."
+            },
+            "HostActionError": {
+                "KickTitle": "Could not kick player",
+                "TransferHostTitle": "Could not transfer host",
+                "NotHost.Kick": "Only the lobby host can kick.",
+                "NotHost.MakeHost": "Only the lobby host can make a new host.",
+                "TargetIsHost.Kick": "You can't kick the host. Transfer host to someone else first.",
+                "TargetIsHost.MakeHost": "That player is already the host.",
+                "TargetNotMember": "That player is no longer in the lobby.",
+                "NotInLobby": "You're not in a lobby.",
+                "ValidationFailed.Kick": "Couldn't kick. Invalid request.",
+                "ValidationFailed.MakeHost": "Couldn't make a new host. Invalid request."
+            },
+            "Toast": {
+                "PlayerJoined": "{0} joined the lobby",
+                "PlayerLeft": "{0} left the lobby",
+                "PlayerKicked": "{0} was kicked from the lobby",
+                "HostStartingGame": "Host is starting the game...",
+                "SongQueued": "{0} queued {1}",
+                "SongRemovedByPlayer": "{0} removed {1} from queue",
+                "SongRemovedRequesterLeft": "{0} was removed (requester left)",
+                "LibrarySongsAdded.Singular": "1 song added to lobby library",
+                "LibrarySongsAdded.Plural": "{0} songs added to lobby library",
+                "LibrarySongsRemoved.Singular": "1 song removed from lobby library",
+                "LibrarySongsRemoved.Plural": "{0} songs removed from lobby library",
+                "LibrarySongsBoth.Singular": "Lobby library: +{0} / -{1} song",
+                "LibrarySongsBoth.Plural": "Lobby library: +{0} / -{1} songs",
+                "SessionEndedDuringGame": "Online session ended returning to lobby",
+                "CopyCode.Success": "Copied lobby code",
+                "CopyCode.NoLobby": "No lobby code to copy"
+            },
+            "Handshake": {
+                "SyncingPeers": "Synchronizing with peers...",
+                "WaitingForPlayers": "Waiting for players..."
             }
         },
         "Main": {
@@ -359,7 +431,15 @@
                 "Credits": "Credits",
                 "Exit": "Exit"
             },
-            "GoToCurrentlyPlaying": "Go To Currently Playing"
+            "GoToCurrentlyPlaying": "Go To Currently Playing",
+            "OnlineRequiresProfile": {
+                "Title": "No Profile Connected",
+                "Body": "Connect a profile before entering Online. Open the Profiles menu and pick one to play with."
+            },
+            "OnlineNoBots": {
+                "Title": "Bot Profile Connected",
+                "Body": "Bot profiles cannot play online. Please remove them from your connected profiles."
+            }
         },
         "MusicLibrary": {
             "Name": "Music Library",

@@ -26,6 +26,7 @@ namespace YARG.Online
         public Region      Region;
         public LobbyStatus Status;
         public int         MaxPlayers;
+        public bool        IsPublic;
 
         // userIds of members currently in the lobby (includes the local player).
         public List<string>          Members          = new();
@@ -199,6 +200,7 @@ namespace YARG.Online
             Region     = lobby.Region,
             Status     = lobby.Status,
             MaxPlayers = lobby.MaxPlayers,
+            IsPublic   = lobby.IsPublic,
             // Fresh-join fallback: a member joining mid-session has no historical
             // event stream, so derive the initial IsSongInProgress from the
             // snapshot's lobby status. If the lobby is GameStarted we don't know

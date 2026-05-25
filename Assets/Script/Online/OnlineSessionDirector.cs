@@ -167,6 +167,27 @@ namespace YARG.Online
         /// can react by freezing the relevant highway.</summary>
         public event Action<int> RemotePlayerLeft;
 
+        /// <summary>Fired (Unity main thread) when the underlying session dies mid-game —
+        /// either the server sent GameEnd (straggler timeout, all-complete) or the UDP
+        /// transport disconnected. The gameplay scene should bail out of the song
+        /// gracefully (no fake-online single-player run-out) and route the user back
+        /// to the lobby or score screen. The bool argument is true when at least one
+        /// note had been resolved locally before the session died — used by the bail
+        /// path to decide between "save partial run" vs "abort cleanly".</summary>
+        public event Action<bool> SessionEndedExternally;
+
+        /// <summary>True after either the GameEnd packet was received from the server
+        /// or the UDP transport reported a disconnect. Latched by the wire handlers,
+        /// cleared on Dispose. Lets late-arriving paths (e.g. CreatePlayers finishing
+        /// after the session already died) short-circuit instead of registering
+        /// engines into a torn-down director.</summary>
+        public bool SessionAbortedExternally { get; private set; }
+
+        // Tracks whether any local engine event fired before the session died, so
+        // bail-out callers can route partial-progress runs differently from a clean
+        // "session died before any play happened" abort.
+        private int _localEngineEventsObserved;
+
         /// <summary>Players for the current session in stable order: local first, remotes
         /// sorted by ascending peer id (so each peer's gameplay scene assigns the same
         /// highway slots).</summary>
@@ -191,6 +212,13 @@ namespace YARG.Online
 
             _session.StartCueReceived += OnStartCueReceived;
             _session.RemotePeerLeft   += OnRemotePeerLeftEvent;
+            // Mid-session death signals — server-broadcast GameEnd (straggler
+            // timeout, all-complete-broadcast, force-end) and UDP transport
+            // disconnect. Both fire SessionEndedExternally so GameManager can
+            // bail out of the gameplay scene gracefully instead of playing
+            // the song through as a fake-offline run.
+            _session.GameEnded    += OnGameSessionEnded;
+            _session.Disconnected += OnGameSessionDisconnected;
 
             // Prediction-event fanout: route inbound per-event packets and
             // the periodic EngineStateSnapshot to the matching peer's
@@ -226,6 +254,8 @@ namespace YARG.Online
 
             _session.StartCueReceived -= OnStartCueReceived;
             _session.RemotePeerLeft   -= OnRemotePeerLeftEvent;
+            _session.GameEnded        -= OnGameSessionEnded;
+            _session.Disconnected     -= OnGameSessionDisconnected;
             _session.NoteMissedReceived          -= OnWireNoteMissed;
             _session.NoteHitReceived             -= OnWireNoteHit;
             _session.StarPowerActivatedReceived  -= OnWireStarPowerActivated;
@@ -382,12 +412,55 @@ namespace YARG.Online
             engine.OnSyncSustainReleased    += OnLocalEngineSustainReleased;
             engine.OnSyncOverstrum          += OnLocalEngineOverstrum;
 
+            // Fresh sender for the new run — first hit/miss the engine reports will
+            // be emitted unconditionally (initial outcome state is null), every
+            // subsequent event is gated on outcome-flip below.
+            _lastSentNoteOutcome = null;
+
+            // Reset periodic-snapshot bookkeeping. -1 / -inf force the first
+            // post-attach call to MaybeSendPeriodicSnapshot to capture the
+            // initial NoteIndex transition and emit a snapshot immediately.
+            _lastSnapshotSongTime    = double.NegativeInfinity;
+            _lastNoteIndexSeen       = -1;
+            _lastNoteIndexChangeTime = double.NegativeInfinity;
+
+            // Fresh game = we have not yet sent GameComplete. This gates the
+            // "expected vs unexpected GameEnd" logic in OnGameSessionEnded /
+            // OnGameSessionDisconnected — without this reset, a previous
+            // game's flag would carry forward and suppress the bail-out toast
+            // even when the next game dies abnormally before we finish it.
+            _localGameCompleteSent = false;
+
             YargLogger.LogInfo(
                 $"Prediction[local-attach]: wired local engine — localPeerId={_localPeerId}, engine={engine.GetType().Name}");
         }
 
+        // Run-length-encoded note hit/miss wire protocol. The receiver fills in
+        // implicit-opposite-kind notes between transition packets (see
+        // RemotePlayerSimulator._nextExpectedNoteIndex). Initial null is treated
+        // as "no run started yet" so the very first event always sends — that
+        // anchors the receiver's cursor at the right index for the first run.
+        //   true  = last sent was a Hit
+        //   false = last sent was a Miss
+        //   null  = nothing sent yet (start of song / engine attach)
+        private bool? _lastSentNoteOutcome;
+
         private void OnLocalEngineNoteMissed(int noteIndex)
         {
+            // Track local progress for the session-ended bail flow.
+            _localEngineEventsObserved++;
+
+            // RLE gate: skip if we're already in a miss run. The receiver fills the
+            // in-between notes as implicit misses on the next Hit transition packet.
+            if (_lastSentNoteOutcome == false)
+            {
+                YargLogger.LogFormatTrace(
+                    "Prediction[local-send] NoteMissed (suppressed — same run): peer={0} noteIndex={1}",
+                    _localPeerId, noteIndex);
+                return;
+            }
+            _lastSentNoteOutcome = false;
+
             // Send the engine's CurrentTime as the wire songTime. For misses
             // it acts as the receiver's offset anchor — without it the remote
             // can't reconstruct the player's hit-timing histogram (offsets
@@ -395,16 +468,29 @@ namespace YARG.Online
             // at note.Time, not at the sender's actual input time).
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
             YargLogger.LogFormatDebug(
-                "Prediction[local-send] NoteMissed: peer={0} noteIndex={1} hitTime={2:0.000}",
+                "Prediction[local-send] NoteMissed (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
                 _localPeerId, noteIndex, hitTime);
             _session.SendNoteMissed(noteIndex, hitTime);
         }
 
         private void OnLocalEngineNoteHit(int noteIndex)
         {
+            // Track local progress for the session-ended bail flow.
+            _localEngineEventsObserved++;
+
+            // RLE gate: skip if we're already in a hit run.
+            if (_lastSentNoteOutcome == true)
+            {
+                YargLogger.LogFormatTrace(
+                    "Prediction[local-send] NoteHit (suppressed — same run): peer={0} noteIndex={1}",
+                    _localPeerId, noteIndex);
+                return;
+            }
+            _lastSentNoteOutcome = true;
+
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
             YargLogger.LogFormatDebug(
-                "Prediction[local-send] NoteHit: peer={0} noteIndex={1} hitTime={2:0.000}",
+                "Prediction[local-send] NoteHit (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
                 _localPeerId, noteIndex, hitTime);
             _session.SendNoteHit(noteIndex, hitTime);
         }
@@ -547,20 +633,6 @@ namespace YARG.Online
             {
                 sim.Update(localSongTime);
             }
-        }
-
-        /// <summary>
-        /// Total visual delay (in seconds) the remote player's highway should
-        /// apply. This is the simulator's <c>VisualDelaySeconds</c> —
-        /// transport-delay budget plus the scheduler's commit-window — so
-        /// strikeline crossing aligns with the engine event firing. Returns 0
-        /// if no simulator is registered.
-        /// </summary>
-        public double GetRemoteVisualDelay(int peerId)
-        {
-            return _remoteSimulators.TryGetValue(peerId, out var sim)
-                ? sim.VisualDelaySeconds
-                : 0.0;
         }
 
         /// <summary>
@@ -792,7 +864,16 @@ namespace YARG.Online
             // seeing the terminal state.
             SendSnapshotNow();
             _session.SendGameComplete();
+
+            // Mark that our side finished the song cleanly. Any GameEnd that
+            // arrives from the server after this is the expected "all peers
+            // done" broadcast — not an abnormal session death — so the
+            // SessionEndedExternally consumer should NOT fire the bail-out
+            // toast (which would kick us off the score screen).
+            _localGameCompleteSent = true;
         }
+
+        private bool _localGameCompleteSent;
 
         /// <summary>
         /// True once every connected remote peer has delivered a snapshot
@@ -822,7 +903,21 @@ namespace YARG.Online
         // anomalies are short-lived, and per-peer bandwidth stays modest
         // (a typical guitar snapshot is ~600 bytes, so ~1.2 KB/s/peer).
         public const double SnapshotIntervalSeconds = 0.5;
+
+        // Heartbeat cadence during breaks / quiet stretches. Below the active
+        // rate, but frequent enough to catch any state divergence that did
+        // creep in unnoticed (e.g. a wire event silently dropped).
+        private const double QuietHeartbeatSeconds = 5.0;
+
+        // Window after the last NoteIndex transition during which we treat
+        // the engine as "actively playing". Outside this window — and with
+        // no sustain or SP keeping per-tick state alive — periodic snapshots
+        // fall back to the heartbeat cadence.
+        private const double QuietZoneSeconds = 1.5;
+
         private double _lastSnapshotSongTime = double.NegativeInfinity;
+        private int    _lastNoteIndexSeen = -1;
+        private double _lastNoteIndexChangeTime = double.NegativeInfinity;
 
         /// <summary>
         /// Capture + send an authoritative engine-state snapshot if enough
@@ -840,7 +935,47 @@ namespace YARG.Online
             var engine = _localEngineForStats;
             if (engine == null) return;
             _ = localSongTime; // see comment above
+
+            // Guard against pre-tick snapshots. BaseEngine.Reset initialises
+            // CurrentTime to double.MinValue and leaves it there until the
+            // first Update tick. A snapshot captured in that window serialises
+            // -1.79e308 as the wire songTime; the receiver's RestoreSnapshot
+            // then sets _engine.CurrentTime = double.MinValue, corrupting the
+            // rollback anchor and surfacing as a "huge negative number" in
+            // wire logs. Wait until the engine has actually started ticking
+            // before emitting any snapshot.
+            if (engine.CurrentTime <= double.MinValue / 2) return;
+
             if (engine.CurrentTime - _lastSnapshotSongTime < SnapshotIntervalSeconds) return;
+
+            // Track NoteIndex transitions so we can detect active play vs
+            // breaks. A NoteIndex change is the cleanest cross-instrument
+            // proxy for "the engine just resolved something"; during breaks
+            // it sits unchanged for many seconds.
+            if (engine.NoteIndex != _lastNoteIndexSeen)
+            {
+                _lastNoteIndexSeen = engine.NoteIndex;
+                _lastNoteIndexChangeTime = engine.CurrentTime;
+            }
+
+            // Quiet-zone gate: skip the periodic snapshot if the engine isn't
+            // doing anything the receiver needs reconciled — no recent note
+            // resolution, no active sustain (StarPowerTickAmount changes per
+            // tick while sustaining), no SP active. We still send a
+            // heartbeat every QuietHeartbeatSeconds so the receiver isn't
+            // stranded indefinitely if a wire event was dropped. Without
+            // this, vocals' long inter-phrase gaps generate a 0.5s churn of
+            // identical snapshots that re-emit the same PredictedMiss on the
+            // receiver each cycle.
+            bool noteResolvedRecently = engine.CurrentTime - _lastNoteIndexChangeTime <= QuietZoneSeconds;
+            bool hasActiveState = engine.ActiveSustainCount > 0
+                || engine.BaseStats.IsStarPowerActive;
+            bool heartbeatDue = engine.CurrentTime - _lastSnapshotSongTime >= QuietHeartbeatSeconds;
+            if (!noteResolvedRecently && !hasActiveState && !heartbeatDue)
+            {
+                return;
+            }
+
             SendSnapshotNow();
         }
 
@@ -869,11 +1004,81 @@ namespace YARG.Online
             if (_peerToPlayer.TryGetValue(peerId, out var player))
             {
                 player.SittingOut = true;
-                YargLogger.LogInfo(
-                    $"OnlineSessionDirector: remote peer {peerId} ({player.Profile?.Name}) " +
-                    "left — marked SittingOut");
+                YargLogger.LogFormatWarning(
+                    "OnlineSessionDirector: remote peer {0} ({1}) left — marked SittingOut. " +
+                    "_remoteSimulatorsRegistered={2} _peerToPlayerCount={3}. If this fires before " +
+                    "CreatePlayers (GameManager.Loading._players null), the player would never tick " +
+                    "without the post-init defensive hide added in GameManager.Loading.CreatePlayers.",
+                    peerId, player.Profile?.Name, _remoteSimulators.Count, _peerToPlayer.Count);
+            }
+            else
+            {
+                YargLogger.LogFormatWarning(
+                    "OnlineSessionDirector: remote peer {0} left but no YargPlayer mapping; " +
+                    "RegisterSession may not have completed before the RemotePeerLeftPacket arrived.",
+                    peerId);
             }
             RemotePlayerLeft?.Invoke(peerId);
+
+            // NOTE: do NOT raise SessionEndedExternally just because all remote
+            // peers have left. The local player is still in the game and should
+            // be able to finish the song solo (their highway, their score, their
+            // GameComplete still goes through to the server). The earlier "fire
+            // bail-out on last-remote-left" logic was wrong — it ended the local
+            // player's session prematurely. RemotePlayerLeft handlers
+            // (GameManager hides the leaver's highway, etc.) are sufficient to
+            // surface the departure to the UI.
+        }
+
+        private void OnGameSessionEnded()
+        {
+            // Distinguish the two reasons the server broadcasts GameEnd:
+            //   1. Expected — every peer (including us) has sent GameComplete and
+            //      the server's "all done" path fired BroadcastGameEnd. We've
+            //      already transitioned (or are transitioning) to the results
+            //      screen and DO NOT want the session-ended bail flow to kick us
+            //      off it. Mark the session aborted internally (so subsequent
+            //      cleanup paths short-circuit) but skip the consumer event.
+            //   2. Unexpected — straggler timeout, force-end, or arriving while
+            //      we're still mid-song. Fire SessionEndedExternally so
+            //      GameManager bails out gracefully.
+            if (_localGameCompleteSent)
+            {
+                YargLogger.LogInfo("OnlineSessionDirector: GameEnded received (expected — we sent GameComplete); skipping bail-out signal.");
+                SessionAbortedExternally = true;
+                return;
+            }
+            YargLogger.LogInfo("OnlineSessionDirector: GameEnded received from server — firing SessionEndedExternally.");
+            RaiseSessionEndedExternally();
+        }
+
+        private void OnGameSessionDisconnected()
+        {
+            // Transport-level disconnect after a clean game completion is part of
+            // the normal teardown chain (BroadcastGameEnd → DisposeSession → UDP
+            // close). Same logic as GameEnded above: suppress the bail signal
+            // when we already sent GameComplete, so the results screen survives
+            // the transport's natural unwind.
+            if (_localGameCompleteSent)
+            {
+                YargLogger.LogInfo("OnlineSessionDirector: UDP disconnected (expected — we sent GameComplete); skipping bail-out signal.");
+                SessionAbortedExternally = true;
+                return;
+            }
+            YargLogger.LogInfo("OnlineSessionDirector: UDP transport disconnected — firing SessionEndedExternally.");
+            RaiseSessionEndedExternally();
+        }
+
+        // Idempotent — the GameEnded packet can race with the transport-level
+        // Disconnected callback (server disposes the session then closes the
+        // connection), and we'd be raising SessionEndedExternally twice. The
+        // SessionAbortedExternally latch makes the second raise a no-op.
+        private void RaiseSessionEndedExternally()
+        {
+            if (SessionAbortedExternally) return;
+            SessionAbortedExternally = true;
+            bool hadLocalProgress = _localEngineEventsObserved > 0;
+            SessionEndedExternally?.Invoke(hadLocalProgress);
         }
     }
 }

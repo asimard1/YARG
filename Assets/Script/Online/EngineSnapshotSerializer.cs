@@ -191,6 +191,17 @@ namespace YARG.Online
 
             w.Put(s.WhammyTicksRemainder);
 
+            // Per-solo accumulators (NotesHit + SoloBonus). Length matches the
+            // engine's Solos.Count on both sides (chart-derived). Encoded as a
+            // single count followed by paired ints so a malformed snapshot fails
+            // fast on the length read.
+            w.Put(s.SoloNotesHit.Length);
+            for (int i = 0; i < s.SoloNotesHit.Length; i++)
+            {
+                w.Put(s.SoloNotesHit[i]);
+                w.Put(s.SoloBonus[i]);
+            }
+
             // BaseStats subclass-typed. The shared block writes the common
             // fields; the Guitar layer adds GuitarStats fields after.
             WriteBaseStats(w, s.Stats ?? throw new InvalidOperationException(
@@ -262,6 +273,16 @@ namespace YARG.Online
             }
 
             s.WhammyTicksRemainder = r.GetDouble();
+
+            // Per-solo accumulators — paired (NotesHit, SoloBonus) entries.
+            int soloCount = r.GetInt();
+            s.SoloNotesHit = new int[soloCount];
+            s.SoloBonus    = new int[soloCount];
+            for (int i = 0; i < soloCount; i++)
+            {
+                s.SoloNotesHit[i] = r.GetInt();
+                s.SoloBonus[i]    = r.GetInt();
+            }
 
             // Stats are subclass-typed. Allocated by the Guitar layer
             // before calling ReadBaseStats.

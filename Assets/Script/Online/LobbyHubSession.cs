@@ -12,6 +12,7 @@ using UnityEngine;
 using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Menu.MusicLibrary;
+using YARG.Localization;
 using YARG.Menu.Persistent;
 using YARG.Online.Lobbies.Contracts.Enums;
 using YARG.Online.Lobbies.Contracts.Hubs;
@@ -101,6 +102,10 @@ namespace YARG.Online
 
         private LobbyRoomState _currentLobby;
         private LobbyGameOrchestrator _orchestrator;
+        // In-flight orchestrator disposal — StartOrchestratorAsync awaits this
+        // so a new song's NetManager doesn't spin up while the prior one is
+        // still tearing down. Null when no disposal is pending. Guarded by _lock.
+        private UniTask? _pendingOrchestratorDispose;
 
         private readonly CancellationTokenSource _lifetimeCts = new();
         private int _disposing; // 0 = alive, 1 = DisposeAsync in flight or finished
@@ -637,13 +642,43 @@ namespace YARG.Online
         }
 
         /// <summary>
-        /// Bail out of the in-flight game session entirely (used by the
-        /// in-gameplay Quit button). Tears down the UDP game session — the
-        /// game server detects the disconnect and broadcasts
-        /// <c>RemotePeerLeftPacket</c> to remaining peers, who hide the
-        /// leaver's track. Also fires <see cref="LeaveResults"/> against
-        /// the lobby hub so the leaver counts as back-in-lobby for the
-        /// host's Start gate. Safe to call when no game is active.
+        /// Push a freshly-scanned local library to the lobby so the server can
+        /// recompute the shared-library intersection. Called by the picker's
+        /// orange → ScanSongs flow after <c>SongContainer.RunRefresh</c>
+        /// completes. The server broadcasts the resulting delta via
+        /// <c>OnLobbySongLibraryUpdated</c>, which the existing handler folds
+        /// into <see cref="LobbyRoomState.LobbySongLibrary"/>. Safe to call
+        /// when no lobby is active — silently no-ops.
+        /// </summary>
+        public async UniTask UpdateLibraryAsync(SongLibraryDto library, CancellationToken ct = default)
+        {
+            var conn = _connection;
+            if (conn == null || _state != ConnectionState.Connected || _currentLobby == null)
+            {
+                return;
+            }
+            YargLogger.LogInfo(
+                $"LobbyHubSession[#{_instanceId}]: UpdateLibrary — hashes={library?.SongHashes?.Length ?? 0}");
+            await conn.InvokeAsync(nameof(ILobbyHub.UpdateLibrary), new UpdateLibraryArgs(library), ct);
+        }
+
+        /// <summary>
+        /// Bail out of the in-flight game session entirely. Tears down the UDP
+        /// game session — the game server detects the disconnect and broadcasts
+        /// <c>RemotePeerLeftPacket</c> to remaining peers, who hide the leaver's
+        /// track. Also fires <see cref="LeaveResults"/> against the lobby hub so
+        /// the leaver counts as back-in-lobby for the host's Start gate. Safe to
+        /// call when no game is active.
+        ///
+        /// Used by:
+        ///   - The in-gameplay Quit button (player leaves mid-song).
+        ///   - <c>ScoreScreenMenu.Continue</c> when transitioning back to the
+        ///     lobby after a normal song completion. Disposing the orchestrator
+        ///     at that point closes the UDP connection, so when all peers have
+        ///     reached Continue the game-side <c>GameSession</c> winds down via
+        ///     the last-peer-disconnect path (which cancels the straggler CTS)
+        ///     instead of waiting 30 s for the straggler timer to fire.
+        ///   - <see cref="GameManager.OnOnlineSessionEnded"/> abnormal-bail path.
         /// </summary>
         public void LeaveCurrentGame()
         {
@@ -702,7 +737,7 @@ namespace YARG.Online
 
             if (e.UserId != _tokenProvider.UserId)
             {
-                LobbyChatterToast($"{e.DisplayName} joined the lobby");
+                LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.PlayerJoined", e.DisplayName));
             }
         }
 
@@ -719,7 +754,7 @@ namespace YARG.Online
 
             if (e.UserId != _tokenProvider.UserId)
             {
-                LobbyChatterToast($"{displayName} left the lobby");
+                LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.PlayerLeft", displayName));
             }
         }
 
@@ -763,7 +798,7 @@ namespace YARG.Online
             else
             {
                 CurrentLobbyChanged?.Invoke();
-                LobbyChatterToast($"{displayName} was kicked from the lobby");
+                LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.PlayerKicked", displayName));
             }
         }
 
@@ -775,21 +810,26 @@ namespace YARG.Online
             var previous = _currentLobby.Status;
             _currentLobby.Status = e.Status;
             // Drive the in-progress flag off the actual status transitions: arming
-            // it on entry into GameStarted, clearing it when the lobby winds all the
-            // way back to SongSelect (everyone's back). The Played-removal handler
-            // owns the middle transition (song over → members are on results, not
-            // in-game) so we don't need to touch the flag here for that case.
+            // it on entry into GameStarted, clearing it when the lobby winds back
+            // to SongSelect. The Played-removal handler owns the middle transition
+            // (song over → members are on results, not in-game) so the flag may
+            // already be false by the time SongSelect arrives.
             //
-            // Also mirror the server's per-member IsBackInLobby flips. The hub
-            // does NOT emit OnPlayerLobbyReadyChanged for the flip-to-false at
-            // game start — it only broadcasts the status change — but the repo's
-            // ConfirmStartGameAsync flips every member's flag to false atomically
-            // with the GameStarted transition. Without mirroring here, the
-            // client's MemberIsBackInLobby dict stays stuck at "true" for the
-            // entire in-game + results window, the stage always resolves to
-            // InLobby, and the row never tints away from white. SongSelect is
-            // the inverse: the server only allows that transition when every
-            // member is back, so mirroring true here is just defensive resync.
+            // The GameStarted branch ALSO mirrors a per-member IsBackInLobby flip
+            // the server makes silently: ConfirmStartGameAsync flips every
+            // member's flag to false atomically with the GameStarted transition,
+            // but the hub only emits OnLobbyStatusChanged for that, not
+            // per-member OnPlayerLobbyReadyChanged events. Without mirroring
+            // here the client's MemberIsBackInLobby dict stays stuck at "true"
+            // for the entire in-game + results window, the stage always resolves
+            // to InLobby, and the row never tints away from white.
+            //
+            // SongSelect is NOT symmetric: FinishGameAsync flips the status but
+            // does NOT touch IsBackInLobby — members stay false because they're
+            // now on the results screen, and each member's flag flips to true
+            // individually via LeaveResults' OnPlayerLobbyReadyChanged broadcast
+            // when they hit Continue. Don't bulk-set true on SongSelect or the
+            // results-screen rows go white the instant the song ends.
             if (e.Status == LobbyStatus.GameStarted)
             {
                 _currentLobby.IsSongInProgress = true;
@@ -801,10 +841,6 @@ namespace YARG.Online
             else if (e.Status == LobbyStatus.SongSelect)
             {
                 _currentLobby.IsSongInProgress = false;
-                foreach (var uid in _currentLobby.Members)
-                {
-                    _currentLobby.MemberIsBackInLobby[uid] = true;
-                }
             }
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: OnLobbyStatusChanged -> {e.Status}");
             CurrentLobbyChanged?.Invoke();
@@ -817,7 +853,7 @@ namespace YARG.Online
             {
                 if (e.Status == LobbyStatus.Starting && previous != LobbyStatus.Starting)
                 {
-                    LobbyChatterToast("Host is starting the game…");
+                    LobbyChatterToast(Localize.Key("Menu.Online.Toast.HostStartingGame"));
                 }
                 else if (e.Status == LobbyStatus.SongSelect && previous == LobbyStatus.Starting)
                 {
@@ -865,23 +901,43 @@ namespace YARG.Online
             }
 
             CurrentLobbyChanged?.Invoke();
+
+            // If the picker is open with an active filter, re-derive it from the
+            // freshly-updated lobby library so newly-shared songs become queueable
+            // immediately (and newly-unshared songs drop out). Without this the
+            // picker's filter stays frozen at the snapshot it captured at open
+            // time, and the user has to close/reopen to see scan results. Skip
+            // when no filter is active (offline picker / picker not yet seeded).
+            if (MusicLibraryMenu.AllowedSongHashes != null)
+            {
+                var rebuilt = YARG.Menu.Online.LobbyViewMenu.BuildPlayableSongSet(_currentLobby);
+                if (rebuilt != null)
+                {
+                    MusicLibraryMenu.AllowedSongHashes = rebuilt;
+                }
+            }
             MusicLibraryMenu.NotifyAllowedSongsChanged();
 
             if (addedCount > 0 && removedCount > 0)
             {
                 int total = addedCount + removedCount;
-                LobbyChatterToast(
-                    $"Lobby library: +{addedCount} / -{removedCount} song{(total == 1 ? "" : "s")}");
+                LobbyChatterToast(Localize.KeyFormat(
+                    total == 1
+                        ? "Menu.Online.Toast.LibrarySongsBoth.Singular"
+                        : "Menu.Online.Toast.LibrarySongsBoth.Plural",
+                    addedCount, removedCount));
             }
             else if (addedCount > 0)
             {
-                LobbyChatterToast(
-                    $"{addedCount} song{(addedCount == 1 ? "" : "s")} added to lobby library");
+                LobbyChatterToast(addedCount == 1
+                    ? Localize.Key("Menu.Online.Toast.LibrarySongsAdded.Singular")
+                    : Localize.KeyFormat("Menu.Online.Toast.LibrarySongsAdded.Plural", addedCount));
             }
             else if (removedCount > 0)
             {
-                LobbyChatterToast(
-                    $"{removedCount} song{(removedCount == 1 ? "" : "s")} removed from lobby library");
+                LobbyChatterToast(removedCount == 1
+                    ? Localize.Key("Menu.Online.Toast.LibrarySongsRemoved.Singular")
+                    : Localize.KeyFormat("Menu.Online.Toast.LibrarySongsRemoved.Plural", removedCount));
             }
         }
 
@@ -904,7 +960,7 @@ namespace YARG.Online
                 // which keeps the toast useful even for users who joined after our
                 // session's MemberNames was last seeded.
                 string requesterName = _currentLobby.GetDisplayName(e.Song.RequesterId);
-                LobbyChatterToast($"{requesterName} queued {songLabel}");
+                LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.SongQueued", requesterName, songLabel));
             }
         }
 
@@ -943,7 +999,7 @@ namespace YARG.Online
                     // Score screen already communicates this — no toast.
                     break;
                 case SongRemovalReason.RequesterLeft:
-                    LobbyChatterToast($"{songLabel} was removed (requester left)");
+                    LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.SongRemovedRequesterLeft", songLabel));
                     break;
                 case SongRemovalReason.Removed:
                 default:
@@ -953,7 +1009,7 @@ namespace YARG.Online
                     string removerName = !string.IsNullOrEmpty(e.RemovedByUserId)
                         ? _currentLobby.GetDisplayName(e.RemovedByUserId)
                         : _currentLobby.HostName;
-                    LobbyChatterToast($"{removerName} removed {songLabel} from queue");
+                    LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.SongRemovedByPlayer", removerName, songLabel));
                     break;
             }
         }
@@ -1049,6 +1105,35 @@ namespace YARG.Online
                 return;
             }
 
+            // Wait for the previous orchestrator's dispose to actually finish.
+            // OnOrchestratorEnded fires the dispose via .Forget(), so the new
+            // OnGameStarted can land while the prior NetManager + GameClientSession
+            // are still tearing down. Without this await, two LiteNetLib logic
+            // threads briefly coexist, the prior one still holding a UDP socket
+            // and event subscriptions — extra GC pressure exactly during the
+            // window where the new NetManager needs to send its first pings.
+            UniTask? pendingDispose;
+            lock (_lock) pendingDispose = _pendingOrchestratorDispose;
+            if (pendingDispose.HasValue)
+            {
+                try { await pendingDispose.Value.SuppressCancellationThrow(); }
+                catch (Exception ex) { YargLogger.LogException(ex); }
+            }
+
+            // Run a full GC on the predictable boundary between songs. The Mono
+            // collector is stop-the-world, so the pause it produces will freeze
+            // the NetManager's logic thread; doing it here (before we connect
+            // the new game session) lets the pause happen while no keep-alive
+            // contract exists yet, instead of during the new song's load when
+            // the server's DisconnectTimeout would fire on the silence.
+            try
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
+            catch (Exception ex) { YargLogger.LogException(ex); }
+
             LobbyGameOrchestrator orch;
             try
             {
@@ -1072,9 +1157,25 @@ namespace YARG.Online
             _orchestrator.Ended += OnOrchestratorEnded;
         }
 
-        private void OnOrchestratorEnded() => EndOrchestratorAsync().Forget();
+        private void OnOrchestratorEnded()
+        {
+            // Capture the dispose task so the next OnGameStarted can await it
+            // (see StartOrchestratorAsync). Without this handoff, the next song
+            // can start spinning up a fresh NetManager while the previous one's
+            // logic thread is still draining, doubling GC pressure exactly when
+            // the new connection needs to send its first keep-alive pings.
+            //
+            // .Preserve() makes the UniTask multi-await: the .Forget() here and
+            // StartOrchestratorAsync's later await are two separate consumers.
+            // We don't bother clearing _pendingOrchestratorDispose after it
+            // completes — awaiting an already-finished preserved task is a
+            // no-op, and the next OnOrchestratorEnded overwrites it anyway.
+            var task = EndOrchestratorAsync().Preserve();
+            lock (_lock) _pendingOrchestratorDispose = task;
+            task.Forget();
+        }
 
-        private async UniTaskVoid EndOrchestratorAsync()
+        private async UniTask EndOrchestratorAsync()
         {
             var orch = _orchestrator;
             if (orch == null) return;

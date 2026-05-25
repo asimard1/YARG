@@ -346,10 +346,8 @@ namespace YARG.Menu.Online
                     Library:    LocalSongLibrary.BuildLocal())
                 {
                     Instrument = localInstrument,
+                    IsPublic   = _visibility == VisibilityChoice.Public,
                 };
-
-                // TODO: thread _visibility through CreateLobbyArgs once the
-                // server contract grows a visibility / private-code field.
 
                 await session.CreateLobbyAsync(args, CancellationToken.None);
 

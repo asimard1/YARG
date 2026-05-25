@@ -519,6 +519,22 @@ namespace YARG.Menu.MusicLibrary
 
             if (!_sortedSongs.Any(section => section.Songs.Length > 0))
             {
+                // Add the Playlists nav entry even when the filtered library is empty so the
+                // user can still reach Favorites / custom playlists. In lobby picker mode
+                // the AllowedSongHashes filter can legitimately reduce the library to zero
+                // (e.g. instrument combinations where no shared song is playable for all
+                // members) — without this, the only entry the player sees is
+                // "No Songs Match Criteria" and Favorites becomes unreachable. Gated on
+                // !IsSearching to match the normal-path placement below.
+                if (!_searchField.IsSearching)
+                {
+                    list.Add(new ButtonViewType(
+                        Localize.Key("Menu.MusicLibrary.Playlists"),
+                        "MusicLibraryIcons[Playlists]",
+                        EnterPlaylistSelectFromLibrary,
+                        PLAYLIST_ID,
+                        Localize.Key("Menu.MusicLibrary.PlaylistsHelp")));
+                }
                 list.Add(new SortHeaderViewType(Localize.Key("Menu.MusicLibrary.NoSongsMatchCriteria"), 0, null, Array.Empty<SongEntry>()));
                 return list;
             }
@@ -1406,6 +1422,28 @@ namespace YARG.Menu.MusicLibrary
             {
                 await SongContainer.RunRefresh(false, context);
                 RefreshAndReselect();
+
+                // If the user triggered this scan from the lobby picker, push the
+                // freshly-scanned library to the lobby hub so the server can
+                // recompute the shared intersection. Without this the local
+                // user's view of "what's queueable" diverges from what the
+                // server actually allows — they'd see new songs in the picker
+                // (AllowedSongHashes is reference-aliased to the live
+                // LobbySongLibrary, so it picks up local additions only after
+                // the server broadcasts them back), but QueueSong would reject
+                // any song the server doesn't think they have.
+                var lobbySession = LobbyHubSession.Current;
+                if (PickerMode && lobbySession?.CurrentLobby != null)
+                {
+                    try
+                    {
+                        await lobbySession.UpdateLibraryAsync(LocalSongLibrary.BuildLocal());
+                    }
+                    catch (Exception ex)
+                    {
+                        Core.Logging.YargLogger.LogException(ex);
+                    }
+                }
             }
             finally
             {

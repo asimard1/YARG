@@ -71,6 +71,36 @@ namespace YARG.Gameplay.Player
         // the lookup to O(1) per frame in steady state.
         private int _remoteTargetPhraseCursor;
 
+        // Running average of (sungPitch - chartTarget) measured each frame the
+        // remote is singing AND there's an active pitched chart target.
+        // Captures the singer's habitual offset (vocally flat by ~0.4 semitones
+        // is common; sharp is less common) so when we *predict* their next note
+        // we can place the needle at chartTarget + EWMA instead of leaving it
+        // wherever the previous phrase's last raw sample left it.
+        //
+        // Reset to zero when no samples have been folded in yet so the first
+        // phrase doesn't start with a stale bias; subsequent phrases keep the
+        // running value (the singer's offset tendency is stable across phrases).
+        private float _remotePitchOffsetEwma;
+        private int   _remotePitchOffsetSamples;
+        private const float RemotePitchOffsetEwmaAlpha = 0.20f;
+        private const float RemotePitchOffsetEwmaMaxSemitones = 2.0f;
+
+        // Tracks the needle's previous-frame visible state. We use the rising
+        // edge (hidden → visible) to *snap* localPosition.z directly to the
+        // predicted target, bypassing the gradual lerp that would otherwise
+        // drag the needle visibly from wherever the prior phrase hid it.
+        private bool _remoteNeedleWasVisible;
+
+        // Per-phrase tracking of whether we've received *any* singing sample
+        // since the current chart target began. Drives the predict-vs-follow
+        // toggle: before the first sample arrives we paint chartTarget + EWMA
+        // (the "predicted hit" position), after it arrives we follow the
+        // simulator's interpolated pitch (the actual singer's contour). Reset
+        // whenever _lastTargetNote changes (new chart phrase = new prediction).
+        private VocalNote _remotePhraseTrackedNote;
+        private bool      _remoteSamplesArrivedThisPhrase;
+
         /// <summary>
         /// Deactivate this vocalist's HUD card (player name + score + needle icon).
         /// The HUD GameObject is instantiated by <see cref="TrackViewManager.CreateVocalsPlayerHUD"/>
@@ -325,8 +355,19 @@ namespace YARG.Gameplay.Player
         // between samples, so 20 Hz is plenty. Singing-state transitions always send
         // (not gated by the rate limiter) so on/off snaps cleanly on the remote.
         private const double VocalPitchSendInterval = 0.05; // seconds (~20 Hz)
+        // Hold the wire state as "singing" for this long after IsInThreshold first goes
+        // false. Mic input occasionally has gaps wider than the IsInThreshold window
+        // (FFT/driver batching) — without the grace period the sender would emit a
+        // singing→silent transition every time, the receiver would hide the needle,
+        // and the next mic frame would re-emit singing→true, producing visible flicker.
+        // 150 ms is long enough to ride out typical mic batching but short enough that
+        // a real "stopped singing" still hides the needle within ~150 ms of silence.
+        private const double VocalPitchSilenceGraceSeconds = 0.15;
         private double _lastVocalPitchSendTime = double.NegativeInfinity;
         private bool   _lastVocalPitchIsSingingSent;
+        // Set to the engine time at which IsInThreshold first went false while the wire
+        // was reporting singing. NaN means no pending transition.
+        private double _vocalPitchSilencePendingAt = double.NaN;
 
         protected override void UpdateInputs(double time)
         {
@@ -347,18 +388,57 @@ namespace YARG.Gameplay.Player
             // Online: publish our pitch so remote peers can render the on-track blob.
             // Local + non-replay + non-remote only; the director's SendLocalVocalPitch
             // is a no-op when there's no session, so checking IsOnline here is the gate.
+            //
+            // isSinging tracks the recency window (IsInThreshold), not the bare
+            // _lastSingTime.HasValue: YargVocalsEngine.MutateStateWithInput fires
+            // OnSing(true) on every mic Pitch input but never OnSing(false), so HasValue
+            // stays true forever after the first sing. IsInThreshold is the same recency
+            // check the local needle uses for visibility.
+            //
+            // Singing→silent transitions are debounced by VocalPitchSilenceGraceSeconds.
+            // Brief mic input gaps (FFT batching, driver scheduling) make IsInThreshold
+            // false for one frame at a time; the grace period swallows those so the wire
+            // stays "singing" and the receiver doesn't flicker hide/show. Only an
+            // honest-to-goodness sustained silence (grace expired) actually emits the
+            // singing→false transition packet.
             if (GameManager.IsOnline && !Player.IsReplay && !Player.IsRemote)
             {
-                bool isSinging = _lastSingTime.HasValue;
-                bool stateChanged = isSinging != _lastVocalPitchIsSingingSent;
-                bool dueForSample = isSinging && (time - _lastVocalPitchSendTime) >= VocalPitchSendInterval;
+                bool isSinging = IsInThreshold(time, _lastSingTime);
+
+                if (isSinging)
+                {
+                    // Active sing — cancel any pending silence transition.
+                    _vocalPitchSilencePendingAt = double.NaN;
+                }
+                else if (_lastVocalPitchIsSingingSent && double.IsNaN(_vocalPitchSilencePendingAt))
+                {
+                    // First frame after wire-true that IsInThreshold flipped false; start
+                    // the grace timer. Wire continues to report true until it expires.
+                    _vocalPitchSilencePendingAt = time;
+                }
+
+                bool stillInGrace = !isSinging
+                    && _lastVocalPitchIsSingingSent
+                    && !double.IsNaN(_vocalPitchSilencePendingAt)
+                    && (time - _vocalPitchSilencePendingAt) < VocalPitchSilenceGraceSeconds;
+                bool effectiveIsSinging = isSinging || stillInGrace;
+
+                bool stateChanged = effectiveIsSinging != _lastVocalPitchIsSingingSent;
+                bool dueForSample = effectiveIsSinging
+                    && (time - _lastVocalPitchSendTime) >= VocalPitchSendInterval;
 
                 if (stateChanged || dueForSample)
                 {
                     YARG.Online.OnlineSessionDirector.Current?
-                        .SendLocalVocalPitch(time, Engine.PitchSang, isSinging);
+                        .SendLocalVocalPitch(time, Engine.PitchSang, effectiveIsSinging);
                     _lastVocalPitchSendTime       = time;
-                    _lastVocalPitchIsSingingSent  = isSinging;
+                    _lastVocalPitchIsSingingSent  = effectiveIsSinging;
+
+                    // Just sent the singing→silent transition — clear the pending marker.
+                    if (!effectiveIsSinging)
+                    {
+                        _vocalPitchSilencePendingAt = double.NaN;
+                    }
                 }
             }
         }
@@ -568,16 +648,66 @@ namespace YARG.Gameplay.Player
                 isHittingTarget      = false;
                 pitchSang            = remotePitch;
 
+                // Reset the per-phrase sample-arrival flag whenever the chart
+                // target changes (entering a new phrase / new note in a slide).
+                if (!ReferenceEquals(_remotePhraseTrackedNote, _lastTargetNote))
+                {
+                    _remotePhraseTrackedNote = _lastTargetNote;
+                    _remoteSamplesArrivedThisPhrase = false;
+                }
+
                 if (remoteSinging && hasActiveTarget)
                 {
                     float targetPitch = _lastTargetNote.PitchAtSongTime(GameManager.SongTime);
                     (float pitchDist, _) = GetPitchDistanceIgnoringOctave(targetPitch, remotePitch);
                     bool onPitch = Mathf.Abs(pitchDist) <= EngineParams.PitchWindow;
 
-                    if (onPitch && !_lastTargetNote.IsNonPitched)
+                    if (!_lastTargetNote.IsNonPitched)
                     {
-                        pitchSang       = targetPitch;
-                        isHittingTarget = true;
+                        // Update the EWMA of (sungPitch - chartTarget) when the singer
+                        // is actually hitting (within the pitch window). Off-pitch
+                        // samples (especially the voice trailing off at end of phrase)
+                        // are noise — folding them in would chase the tail-off, not
+                        // their true offset tendency.
+                        if (onPitch)
+                        {
+                            _remotePitchOffsetEwma =
+                                _remotePitchOffsetEwma * (1f - RemotePitchOffsetEwmaAlpha)
+                                + pitchDist * RemotePitchOffsetEwmaAlpha;
+                            if (_remotePitchOffsetEwma > RemotePitchOffsetEwmaMaxSemitones)
+                                _remotePitchOffsetEwma = RemotePitchOffsetEwmaMaxSemitones;
+                            else if (_remotePitchOffsetEwma < -RemotePitchOffsetEwmaMaxSemitones)
+                                _remotePitchOffsetEwma = -RemotePitchOffsetEwmaMaxSemitones;
+                            _remotePitchOffsetSamples++;
+                        }
+
+                        // Predict-then-sync model:
+                        //   - Before the first singing sample arrives for this phrase
+                        //     (just the brief gap at phrase entry while we wait for
+                        //     the first UDP pitch packet), render at chartTarget +
+                        //     EWMA — the "predicted hit" position. Combined with the
+                        //     hidden→visible snap below, this means the needle
+                        //     reappears AT the predicted hit instead of lerping in
+                        //     from wherever the previous phrase parked it.
+                        //   - Once samples have arrived, follow the simulator's
+                        //     interpolated pitch (`remotePitch`) — the actual singer
+                        //     contour. The needle tracks their real performance
+                        //     (vibrato, slides, off-pitch dips) just like the local
+                        //     needle, while the EWMA captures their offset tendency
+                        //     for *next* phrase's prediction baseline.
+                        if (_remoteSamplesArrivedThisPhrase)
+                        {
+                            pitchSang = remotePitch;
+                        }
+                        else
+                        {
+                            pitchSang = targetPitch + _remotePitchOffsetEwma;
+                        }
+                        isHittingTarget = onPitch;
+
+                        // Mark that this phrase has now seen its first singing sample,
+                        // so subsequent frames switch to the follow-samples branch.
+                        _remoteSamplesArrivedThisPhrase = true;
                     }
                 }
             }
@@ -597,6 +727,7 @@ namespace YARG.Gameplay.Player
                     _needleVisualContainer.SetActive(false);
                     _hittingParticleGroup.Stop();
                 }
+                _remoteNeedleWasVisible = false;
             }
             else
             {
@@ -610,6 +741,32 @@ namespace YARG.Gameplay.Player
                     // Lerp X times faster if we've just started showing the needle
                     lerpRate *= NEEDLE_POS_SNAP_MULTIPLIER;
                 }
+
+                // Remote rising edge (hidden → visible): snap the needle's z directly
+                // to the predicted-hit position (chart target + habitual EWMA offset)
+                // instead of letting it lerp from wherever the previous phrase parked
+                // it. Without this snap the needle visibly travels from the prior
+                // phrase's hide-z to the new phrase's target-z, which reads as the
+                // needle "jumping" at every phrase boundary — particularly bad when
+                // consecutive phrases have very different pitches (e.g. low verse →
+                // high chorus). Falls back to "no snap, let the lerp do it" when we
+                // don't have a chart target or haven't collected enough EWMA samples
+                // yet (first phrase of the song).
+                if (Player.IsRemote && !_remoteNeedleWasVisible
+                    && _lastTargetNote is { IsNonPitched: false })
+                {
+                    // EWMA is 0 with no samples yet — snap to exact chart target on the
+                    // first phrase. After the first phrase folds samples in, subsequent
+                    // phrases get the singer's habitual offset baked into the prediction.
+                    float predictedTarget =
+                        _lastTargetNote.PitchAtSongTime(GameManager.SongTime)
+                        + _remotePitchOffsetEwma;
+                    float predictedZ = GameManager.VocalTrack.GetPosForPitch(predictedTarget);
+                    var snapPos = transform.localPosition;
+                    snapPos.z = predictedZ;
+                    transform.localPosition = snapPos;
+                }
+                _remoteNeedleWasVisible = true;
 
                 var transformCache = transform;
                 float lastNotePitch = _lastTargetNote?.PitchAtSongTime(GameManager.SongTime) ?? -1f;

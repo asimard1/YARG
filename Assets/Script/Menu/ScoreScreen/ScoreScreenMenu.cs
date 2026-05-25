@@ -459,14 +459,20 @@ namespace YARG.Menu.ScoreScreen
                             if (lobbySession?.CurrentLobby != null)
                             {
                                 MenuManager.SetOverrideOpenMenu(MenuManager.Menu.LobbyView);
-                                // Tell the lobby that this player has returned to
-                                // the song-select view. The host's Start button is
-                                // gated on every member's flag being true; if we
-                                // skip this signal the host can never start the
-                                // next song. Fire-and-forget — load proceeds even
-                                // if the RPC is slow or fails (server enforces the
-                                // gate regardless).
-                                lobbySession.LeaveResultsAsync().Forget();
+                                // Returning to the lobby from the score screen means we're done
+                                // with the game session. Use LeaveCurrentGame (not just
+                                // LeaveResultsAsync) so both happen in one shot:
+                                //   1. SignalR LeaveResults — flips MemberIsBackInLobby for us
+                                //      so the host's Start gate unblocks.
+                                //   2. Orchestrator + GameClientSession dispose — closes our UDP
+                                //      connection to the game server. Without this the orchestrator
+                                //      outlives the song; the server's session waits on a peer that
+                                //      will never send another packet, and ~30 s later the straggler
+                                //      timer fires BroadcastGameEnd into a lobby where everyone is
+                                //      already on song-select. With both clients disposing on
+                                //      Continue, the game server's last-peer-disconnect path
+                                //      removes the session (and cancels the straggler CTS) cleanly.
+                                lobbySession.LeaveCurrentGame();
                             }
 
                             GlobalVariables.Instance.LoadScene(SceneIndex.Menu);

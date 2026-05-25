@@ -43,6 +43,11 @@ namespace YARG.Menu.Online
         private TextMeshProUGUI _headerMainText;
         [SerializeField]
         private TextMeshProUGUI _headerSubText;
+        // Header-row "Public Lobby" / "Private Lobby" label. Drag the new TMP into
+        // this slot in the Inspector. May be unwired on prefabs that haven't been
+        // updated yet; RefreshHeader silently skips in that case.
+        [SerializeField]
+        private TextMeshProUGUI _lobbyTypeText;
         [SerializeField]
         private Button _backButton;
 
@@ -114,6 +119,8 @@ namespace YARG.Menu.Online
             // scheme as soon as the CurrentLobbyChanged broadcast arrives.
             PushNavSchemeForRole(isHost: false);
             _schemePushedAsHost = false;
+
+            ConfigureChatScroll();
 
             // Child cards' OnDisable releases their album-art textures, so a
             // fresh enter must rebuild from scratch. CurrentLobbyChanged events
@@ -228,11 +235,29 @@ namespace YARG.Menu.Online
         /// Pops the current nav scheme (if one was pushed) and pushes the appropriate variant
         /// for the caller's role. Host gets AddSong + StartGame; non-host gets just AddSong.
         /// </summary>
+        // Blue press-and-hold threshold. Crossing this fires OnShowCodeHold instead
+        // of OnCopyCodeClicked. 0.5 s is long enough that a quick tap reliably maps
+        // to the copy action (typical click is <100 ms) but short enough that the
+        // "hold to show" affordance reveals quickly.
+        private const float CopyCodeHoldSeconds = 0.5f;
+
         private void PushNavSchemeForRole(bool isHost)
         {
             var entries = new List<NavigationScheme.Entry>
             {
                 new NavigationScheme.Entry(MenuAction.Yellow, "Menu.Online.AddSong", OnQueueSongClicked),
+                // Copy Code is available to host AND non-host — anyone in the lobby
+                // can pass the code along to a friend joining via JoinByCode. Tap
+                // copies the code silently to the clipboard; press-and-hold pops a
+                // dialog displaying the code so it can be read aloud / shown on
+                // stream without committing to clipboard. Nav-only — no on-screen
+                // button on the lobby header; the Blue action is the only entry point.
+                new NavigationScheme.Entry(
+                    MenuAction.Blue,
+                    "Menu.Online.CopyCode",
+                    handler:       OnCopyCodeClicked,
+                    onHoldHandler: OnShowCodeHold,
+                    holdSeconds:   CopyCodeHoldSeconds),
             };
             if (isHost)
             {
@@ -257,11 +282,17 @@ namespace YARG.Menu.Online
         {
             if (_headerMainText)
             {
-                _headerMainText.text = $"{lobby.LobbyName} #{lobby.LobbyId}";
+                _headerMainText.text = lobby.LobbyName;
             }
             if (_headerSubText)
             {
                 _headerSubText.text = Localize.Key("Menu.Online.LobbyHeaderSubText");
+            }
+            if (_lobbyTypeText)
+            {
+                _lobbyTypeText.text = Localize.Key(lobby.IsPublic
+                    ? "Menu.Online.LobbyType.Public"
+                    : "Menu.Online.LobbyType.Private");
             }
         }
 
@@ -402,17 +433,23 @@ namespace YARG.Menu.Online
             RemoveStale(_songCards, seen);
         }
 
+        private void ConfigureChatScroll()
+        {
+        }
+
+        // ---------- Chat scroll (standard ScrollRect) ----------
+
         private void RefreshChat(LobbyRoomState lobby)
         {
-            // Append-only: chat is monotonic. Walk new messages by Sequence and
-            // append a card for each one beyond what we've already rendered.
+            // verticalNormalizedPosition: 0 = bottom, 1 = top.
+            bool wasAtBottom = _chatScrollRect == null
+                || _lastChatSequenceRendered < 0
+                || _chatScrollRect.verticalNormalizedPosition <= 0.01f;
+
             bool anyAppended = false;
             foreach (var msg in lobby.ChatHistory)
             {
-                if (msg.Sequence <= _lastChatSequenceRendered)
-                {
-                    continue;
-                }
+                if (msg.Sequence <= _lastChatSequenceRendered) continue;
 
                 var card = Instantiate(_chatMessagePrefab, _chatContent);
                 card.Initialize(msg);
@@ -420,36 +457,19 @@ namespace YARG.Menu.Online
                 _lastChatSequenceRendered = msg.Sequence;
                 anyAppended = true;
             }
-            if (anyAppended)
+
+            if (anyAppended && wasAtBottom)
             {
-                ScrollChatToBottom();
+                ScrollChatToBottomDeferred().Forget();
             }
         }
 
-        private void ScrollChatToBottom()
+        private async UniTaskVoid ScrollChatToBottomDeferred()
         {
-            if (!_chatScrollRect)
-            {
-                return;
-            }
-
-            ScrollChatToBottomDeferredAsync().Forget();
-        }
-
-        private async UniTaskVoid ScrollChatToBottomDeferredAsync()
-        {
-            // TMP cells with wrapping don't finalize their height in the same frame they're
-            // instantiated — only the next layout pass. If we scroll immediately, the
-            // ScrollRect computes verticalNormalizedPosition against a Content height that's
-            // still missing the newest row, and the row ends up clipped below the viewport.
-            // Wait one frame so ContentSizeFitter sees the real per-row preferred sizes.
+            // Wait one frame so ContentSizeFitter / TMP finalize row heights.
             await UniTask.NextFrame();
-            if (!this || !_chatScrollRect)
-            {
-                return;
-            }
+            if (!this || _chatScrollRect == null) return;
 
-            LayoutRebuilder.ForceRebuildLayoutImmediate(_chatScrollRect.content);
             Canvas.ForceUpdateCanvases();
             _chatScrollRect.verticalNormalizedPosition = 0f;
         }
@@ -509,11 +529,65 @@ namespace YARG.Menu.Online
         private void OnKickedFromLobby(string reason)
         {
             YargLogger.LogInfo($"LobbyView: kicked from lobby — '{reason}'");
-            DialogManager.Instance.ShowMessage("Kicked from lobby", reason);
+            // The server's `reason` is a stable machine code (e.g. "kicked_by_host")
+            // intended for localization, not a user-facing string. Map known codes to
+            // their localized body; fall back to the raw reason on unknown codes so a
+            // future server-added reason at least shows *something* meaningful instead
+            // of an empty dialog.
+            var body = reason switch
+            {
+                "kicked_by_host" => Localize.Key("Menu.Online.KickDialog.Reason.KickedByHost"),
+                _                => Localize.KeyFormat("Menu.Online.KickDialog.Reason.Unknown", reason ?? string.Empty),
+            };
+            DialogManager.Instance.ShowMessage(
+                Localize.Key("Menu.Online.KickDialog.Title"),
+                body);
             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.Online);
         }
 
         public void OnLeaveClicked() => LeaveAsync().Forget();
+
+        /// <summary>
+        /// Copies the current lobby's 6-character code onto the system clipboard so the
+        /// user can paste it to a friend. Surfaces a confirmation toast on success
+        /// and an error toast if the lobby state isn't available yet (early click
+        /// before <see cref="Refresh"/> has bound _boundSession.CurrentLobby).
+        /// </summary>
+        private void OnCopyCodeClicked()
+        {
+            var lobbyId = _boundSession?.CurrentLobby?.LobbyId;
+            if (string.IsNullOrEmpty(lobbyId))
+            {
+                ToastManager.ToastError(Localize.Key("Menu.Online.Toast.CopyCode.NoLobby"));
+                return;
+            }
+
+            GUIUtility.systemCopyBuffer = lobbyId;
+            // Deliberately do NOT include the lobby code in the toast. The whole point of
+            // Copy (vs. Hold-to-Show) is that the code stays off-screen — surfacing it in
+            // a toast right after copying would defeat that for stream/screen-share users.
+            ToastManager.ToastSuccess(Localize.Key("Menu.Online.Toast.CopyCode.Success"));
+        }
+
+        /// <summary>
+        /// Press-and-hold Blue surfaces a modal dialog displaying the lobby code at
+        /// large size — handy for reading aloud, screen-sharing, or showing on
+        /// stream without committing the code to the clipboard. Tap copies (see
+        /// <see cref="OnCopyCodeClicked"/>); hold reveals.
+        /// </summary>
+        private void OnShowCodeHold()
+        {
+            var lobbyId = _boundSession?.CurrentLobby?.LobbyId;
+            if (string.IsNullOrEmpty(lobbyId))
+            {
+                ToastManager.ToastError(Localize.Key("Menu.Online.Toast.CopyCode.NoLobby"));
+                return;
+            }
+
+            DialogManager.Instance.ShowMessage(
+                Localize.Key("Menu.Online.ShowCode.Title"),
+                Localize.KeyFormat("Menu.Online.ShowCode.Body", lobbyId));
+        }
 
         private async UniTaskVoid LeaveAsync()
         {
@@ -580,9 +654,8 @@ namespace YARG.Menu.Online
         public void OnQueueSongClicked()
         {
             // Re-seed the lobby allow-list every time the picker opens. The
-            // filter is cleared in MusicLibraryMenu.OnDisable, so we own the
-            // seed here. Reference assignment to the lobby's HashSet means
-            // live updates from OnLobbySongLibraryUpdatedAsync still flow.
+            // filter is cleared in MusicLibraryMenu's exit funnel, so we own
+            // the seed here.
             var lobby = (_boundSession ?? LobbyHubSession.Current)?.CurrentLobby;
 
             // Client-side cap. Server-side limit may differ (or be absent); this is
@@ -591,15 +664,121 @@ namespace YARG.Menu.Online
             if (currentCount >= MaxQueueSize)
             {
                 DialogManager.Instance.ShowMessage(
-                    "Queue full",
-                    $"The song queue holds at most {MaxQueueSize} songs. Remove one before adding another.");
+                    Localize.Key("Menu.Online.QueueFull.Title"),
+                    Localize.KeyFormat("Menu.Online.QueueFull.Body", MaxQueueSize));
                 return;
             }
 
-            MusicLibraryMenu.AllowedSongHashes = lobby?.LobbySongLibrary;
+            MusicLibraryMenu.AllowedSongHashes = BuildPlayableSongSet(lobby);
 
             MusicLibraryMenu.SongPickedCallback = OnSongPicked;
             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.MusicLibrary);
+        }
+
+        /// <summary>
+        /// Intersect the lobby's shared song library (every member's local libraries
+        /// AND'd together server-side, mirrored into <see cref="LobbyRoomState.LobbySongLibrary"/>)
+        /// with the set of songs that have a track for every member's currently-selected
+        /// instrument. The result is what the picker can actually queue without leaving
+        /// some member with nothing to play.
+        ///
+        /// Unknown member instruments (a peer who just joined and hasn't sent theirs yet)
+        /// are skipped from the playability check — better to show too many songs for a
+        /// brief startup window than to flicker the picker as members report in.
+        ///
+        /// Snapshot semantics: the returned set is a NEW HashSet, not a live alias of
+        /// <c>LobbySongLibrary</c>. It's only valid for this picker open; library
+        /// add/remove broadcasts that arrive while the picker is open won't auto-fold
+        /// in (MusicLibraryMenu's allowed-hash filter is one-shot at activation). A
+        /// rare staleness window vs the silent broken queue we'd otherwise allow.
+        /// </summary>
+        /// <summary>
+        /// Builds the strict picker filter for a given lobby state. Internal so
+        /// <see cref="LobbyHubSession.OnLobbySongLibraryUpdatedAsync"/> can re-derive
+        /// it when the lobby's shared library changes mid-picker (e.g. after a
+        /// mid-lobby song scan triggers <see cref="ILobbyHub.UpdateLibrary"/>).
+        /// </summary>
+        internal static HashSet<HashWrapper> BuildPlayableSongSet(LobbyRoomState lobby)
+        {
+            if (lobby == null)
+            {
+                return null;
+            }
+
+            // Collect each known member's instrument; skip members we haven't received
+            // an instrument for yet (the safer side of the race).
+            var requiredInstruments = new List<Instrument>(lobby.Members.Count);
+            foreach (var uid in lobby.Members)
+            {
+                if (lobby.MemberInstruments.TryGetValue(uid, out var inst))
+                {
+                    requiredInstruments.Add(inst);
+                }
+            }
+
+            if (requiredInstruments.Count == 0)
+            {
+                // No member instruments known — fall back to the raw lobby library so
+                // we don't filter everything away. Reference-aliases the lobby's
+                // HashSet to preserve the live-update behavior the OLD path had.
+                return lobby.LobbySongLibrary;
+            }
+
+            // Pre-resolve each member's GameMode so the per-song hot loop can call
+            // PossibleInstrumentsForSong without re-deriving it for every song.
+            // Fully qualified because YARG.Online.Lobbies.Contracts.Enums.GameMode
+            // is also in scope via the lobby contracts using-block.
+            var memberGameModes = new YARG.Core.GameMode[requiredInstruments.Count];
+            for (int i = 0; i < requiredInstruments.Count; i++)
+            {
+                memberGameModes[i] = requiredInstruments[i].ToNativeGameMode();
+            }
+
+            var playable = new HashSet<HashWrapper>();
+            foreach (var hash in lobby.LobbySongLibrary)
+            {
+                if (!SongContainer.SongsByHash.TryGetValue(hash, out var entries) || entries.Count == 0)
+                {
+                    continue;
+                }
+
+                // SongsByHash groups entries by hash (re-encodes / multiple library locations
+                // can produce duplicates). Any one entry covers the chart's parts, so the
+                // first is sufficient.
+                var entry = entries[0];
+                bool playableForAll = true;
+                for (int i = 0; i < memberGameModes.Length; i++)
+                {
+                    // Mirror the MusicLibrary's "is this song playable for this profile" check
+                    // (ShowCategories.IsSongPlayable). A member's chosen Instrument maps to a
+                    // GameMode, and that GameMode exposes the set of Instruments any profile
+                    // in that mode could actually play on this song — for vocals that's
+                    // [Vocals, Harmony]; for drums it picks the right four/five/pro split
+                    // based on what the chart contains. We accept the song iff at least one
+                    // of those instruments is present (and a chart-aware HasInstrument check
+                    // catches custom songs whose vocal track is empty / missing entirely).
+                    var candidates = memberGameModes[i].PossibleInstrumentsForSong(entry);
+                    bool anyAvailable = false;
+                    foreach (var candidate in candidates)
+                    {
+                        if (entry.HasInstrument(candidate))
+                        {
+                            anyAvailable = true;
+                            break;
+                        }
+                    }
+                    if (!anyAvailable)
+                    {
+                        playableForAll = false;
+                        break;
+                    }
+                }
+                if (playableForAll)
+                {
+                    playable.Add(hash);
+                }
+            }
+            return playable;
         }
 
         private void OnSongPicked(HashWrapper hash)
@@ -667,7 +846,7 @@ namespace YARG.Menu.Online
             {
                 YargLogger.LogException(ex);
                 DialogManager.Instance.ShowMessage(
-                    "Could not kick player",
+                    Localize.Key("Menu.Online.HostActionError.KickTitle"),
                     TranslateHostActionError(ex.Message, isKick: true));
             }
         }
@@ -684,33 +863,30 @@ namespace YARG.Menu.Online
             {
                 YargLogger.LogException(ex);
                 DialogManager.Instance.ShowMessage(
-                    "Could not transfer host",
+                    Localize.Key("Menu.Online.HostActionError.TransferHostTitle"),
                     TranslateHostActionError(ex.Message, isKick: false));
             }
         }
 
-        // Translate the shared set of hub error tags (KickPlayer + TransferHost throw the
-        // same outcomes) into a friendly sentence. Mirrors the inline pattern used in
-        // StartGameAsync below — the raw HubException.Message is a stable contract
-        // identifier like "not_host" that's useless to surface verbatim. Unknown tags
-        // fall through to the raw message so genuinely-novel server errors still get
-        // reported instead of being swallowed.
+        // Translate the shared set of hub error tags (KickPlayer + TransferHost throw
+        // the same outcomes) into a localized sentence. The raw HubException.Message
+        // is a stable contract identifier like "not_host" that's useless to surface
+        // verbatim. Unknown tags fall through to the raw message so genuinely-novel
+        // server errors still get reported instead of being swallowed.
         private static string TranslateHostActionError(string msg, bool isKick)
         {
             if (string.IsNullOrEmpty(msg)) return msg;
-            string action = isKick ? "kick" : "make a new host";
+            string suffix = isKick ? "Kick" : "MakeHost";
             if (msg.Contains("not_host"))
-                return $"Only the lobby host can {action}.";
+                return Localize.Key($"Menu.Online.HostActionError.NotHost.{suffix}");
             if (msg.Contains("target_is_host"))
-                return isKick
-                    ? "You can't kick the host. Transfer host to someone else first."
-                    : "That player is already the host.";
+                return Localize.Key($"Menu.Online.HostActionError.TargetIsHost.{suffix}");
             if (msg.Contains("target_not_member"))
-                return "That player is no longer in the lobby.";
+                return Localize.Key("Menu.Online.HostActionError.TargetNotMember");
             if (msg.Contains("not_in_lobby"))
-                return "You're not in a lobby.";
+                return Localize.Key("Menu.Online.HostActionError.NotInLobby");
             if (msg.Contains("validation_failed"))
-                return $"Couldn't {action} — invalid request.";
+                return Localize.Key($"Menu.Online.HostActionError.ValidationFailed.{suffix}");
             return msg;
         }
 
@@ -767,25 +943,29 @@ namespace YARG.Menu.Online
                     string body;
                     if (inGame.Count > 0 && onResults.Count > 0)
                     {
-                        body = $"In-game: {string.Join(", ", inGame)}\n"
-                             + $"On the results screen: {string.Join(", ", onResults)}";
+                        body = Localize.KeyFormat("Menu.Online.WaitingForPlayers.Both",
+                            string.Join(", ", inGame),
+                            string.Join(", ", onResults));
                     }
                     else if (inGame.Count > 0)
                     {
-                        body = "Still in-game: " + string.Join(", ", inGame);
+                        body = Localize.KeyFormat("Menu.Online.WaitingForPlayers.InGame",
+                            string.Join(", ", inGame));
                     }
                     else if (onResults.Count > 0)
                     {
-                        body = "Still on the results screen: " + string.Join(", ", onResults);
+                        body = Localize.KeyFormat("Menu.Online.WaitingForPlayers.OnResults",
+                            string.Join(", ", onResults));
                     }
                     else
                     {
                         // AllMembersBackInLobby was false but our bucketing found
                         // nothing — only happens if the dictionary was mutated
                         // between the check and the loop. Fall back to a generic.
-                        body = "Some players haven't returned to the lobby yet.";
+                        body = Localize.Key("Menu.Online.WaitingForPlayers.Generic");
                     }
-                    DialogManager.Instance.ShowMessage("Waiting for players", body);
+                    DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Online.WaitingForPlayers.Title"), body);
                     return;
                 }
 
@@ -798,49 +978,30 @@ namespace YARG.Menu.Online
                 // game…" overlay instead of a frozen menu.
                 using (var loading = new LoadingContext())
                 {
-                    loading.SetLoadingText("Preparing game...");
+                    loading.SetLoadingText(Localize.Key("Menu.Online.PreparingGame"));
                     await session.StartGameAsync(CancellationToken.None);
                 }
             }
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
-                // Translate server-side hub-error strings into friendly text.
-                // Server tags are stable contract identifiers used across the
-                // new BeginStart / Confirm / Abort flow.
-                var msg = ex.Message;
-                if (msg != null)
+                // Translate server-side hub-error tags (stable contract identifiers
+                // across the BeginStart / Confirm / Abort flow) into a localized
+                // sentence. Unknown tags fall through to the raw message so any
+                // genuinely-novel error still surfaces.
+                string body = ex.Message;
+                if (body != null)
                 {
-                    if (msg.Contains("players_still_in_results"))
-                    {
-                        msg = "One or more players are still in-game or on the results screen. Wait for everyone to return to the lobby.";
-                    }
-                    else if (msg.Contains("already_starting"))
-                    {
-                        msg = "The game is already being prepared. Please wait.";
-                    }
-                    else if (msg.Contains("already_started"))
-                    {
-                        msg = "The game has already started.";
-                    }
-                    else if (msg.Contains("allocation_failed"))
-                    {
-                        msg = "No game servers are available right now. Please try again in a moment.";
-                    }
-                    else if (msg.Contains("start_aborted"))
-                    {
-                        msg = "Game start was aborted. Please try again.";
-                    }
-                    else if (msg.Contains("not_enough_players"))
-                    {
-                        msg = "You need at least two players in the lobby to start a game.";
-                    }
-                    else if (msg.Contains("queue_empty"))
-                    {
-                        msg = "The song queue is empty — add a song before starting the game.";
-                    }
+                    if      (body.Contains("players_still_in_results")) body = Localize.Key("Menu.Online.StartGameError.PlayersStillInResults");
+                    else if (body.Contains("already_starting"))         body = Localize.Key("Menu.Online.StartGameError.AlreadyStarting");
+                    else if (body.Contains("already_started"))          body = Localize.Key("Menu.Online.StartGameError.AlreadyStarted");
+                    else if (body.Contains("allocation_failed"))        body = Localize.Key("Menu.Online.StartGameError.AllocationFailed");
+                    else if (body.Contains("start_aborted"))            body = Localize.Key("Menu.Online.StartGameError.StartAborted");
+                    else if (body.Contains("not_enough_players"))       body = Localize.Key("Menu.Online.StartGameError.NotEnoughPlayers");
+                    else if (body.Contains("queue_empty"))              body = Localize.Key("Menu.Online.StartGameError.QueueEmpty");
                 }
-                DialogManager.Instance.ShowMessage("Could not start game", msg);
+                DialogManager.Instance.ShowMessage(
+                    Localize.Key("Menu.Online.StartGameError.Title"), body);
             }
         }
     }

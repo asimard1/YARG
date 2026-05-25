@@ -120,7 +120,11 @@ namespace YARG.Menu.Online
                 return;
             }
 
-            string code = _codeRow != null ? _codeRow.Text?.Trim() : null;
+            // Lobby codes are emitted from a fixed uppercase alphabet
+            // (ABCEFGHJKLMNPQRSTUVWXYZ01234579 — see LobbyId / LobbyIdGenerator),
+            // but users commonly type them in lowercase. Uppercase the trimmed input so
+            // the server-side LobbyId.IsValid regex matches regardless of casing.
+            string code = _codeRow != null ? _codeRow.Text?.Trim().ToUpperInvariant() : null;
             if (string.IsNullOrEmpty(code))
             {
                 DialogManager.Instance.ShowMessage("Could not join lobby",

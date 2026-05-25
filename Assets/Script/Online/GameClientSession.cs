@@ -163,6 +163,15 @@ namespace YARG.Online
                 {
                     UnconnectedMessagesEnabled = false,
                     UnsyncedEvents = true,
+                    // LiteNetLib defaults (1s ping / 5s disconnect-timeout) are too tight
+                    // for a Unity title — a single Mono stop-the-world GC pause during
+                    // scene load can run 5–10s on a memory-heavy second/third song and
+                    // freeze every thread, including this NetManager's logic thread.
+                    // With no pings emitted during the pause, the server's matching
+                    // 5s timeout fires and broadcasts GameEnd. Bump both sides to a
+                    // 15s tolerance (server-side mirror in GameNetworkService.cs).
+                    PingInterval = 1000,
+                    DisconnectTimeout = 15000,
                 };
                 _connectOutcome = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -224,7 +233,7 @@ namespace YARG.Online
             {
                 throw new InvalidOperationException("GameClientSession not connected; cannot send loadout.");
             }
-            if (chartHash == null || chartHash.Length != SetLoadoutPacket.ChartHashLength)
+            if (chartHash is not { Length: SetLoadoutPacket.ChartHashLength })
             {
                 throw new ArgumentException(
                     $"chartHash must be exactly {SetLoadoutPacket.ChartHashLength} bytes (got {chartHash?.Length ?? 0}).",

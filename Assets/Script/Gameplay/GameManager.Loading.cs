@@ -11,6 +11,7 @@ using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Player;
+using YARG.Localization;
 using YARG.Menu;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
@@ -329,7 +330,7 @@ namespace YARG.Gameplay
         {
             if (!IsOnline) return SONG_START_DELAY;
 
-            context.SetLoadingText("Synchronizing with peers...");
+            context.SetLoadingText(Localize.Key("Menu.Online.Handshake.SyncingPeers"));
 
             // Sync the local→server clock offset over UDP before announcing PeerReady.
             // The cue carries a wall-clock SongOriginUtcMs picked by the server; without
@@ -354,7 +355,7 @@ namespace YARG.Gameplay
                     "local wall clock.");
             }
 
-            context.SetLoadingText("Waiting for players...");
+            context.SetLoadingText(Localize.Key("Menu.Online.Handshake.WaitingForPlayers"));
             OnlineSession?.SendPeerReady();
             await OnlineSession.WaitForStartCueAsync();
 
@@ -524,10 +525,31 @@ namespace YARG.Gameplay
                         player.Bindings.Microphone?.Reset();
                     }
 
-                    // Skip if the player is sitting out
-                    if (player.SittingOut)
+                    // Skip if the player is sitting out — but ONLY for local players. A
+                    // remote can land in CreatePlayers with SittingOut=true if the game
+                    // server's RemotePeerLeftPacket arrived during the cue-handshake
+                    // window (OnRemotePeerLeftEvent flips SittingOut on receipt, and
+                    // RemotePlayerLeft fires before _players exists so the
+                    // HideRemotePlayerHighway subscriber no-ops). Skipping here would
+                    // leave the remote sim out of _players entirely, so its engine
+                    // never ticks and the wire-event pipeline never delivers anything
+                    // visible for the whole song. Create them anyway and hide
+                    // post-init below so the sim keeps draining + the score panel
+                    // still represents them.
+                    if (player.SittingOut && !player.IsRemote)
                     {
+                        YargLogger.LogFormatInfo(
+                            "CreatePlayers: skipping local player {0} (SittingOut)",
+                            player.Profile?.Name ?? "<null>");
                         continue;
+                    }
+                    if (player.SittingOut && player.IsRemote)
+                    {
+                        YargLogger.LogFormatWarning(
+                            "CreatePlayers: remote player {0} (peerId={1}) is SittingOut already — " +
+                            "creating anyway and will hide highway. RemotePeerLeftPacket likely arrived " +
+                            "during game-start before _players existed.",
+                            player.Profile?.Name ?? "<null>", player.RemotePeerId);
                     }
                     index++;
 
@@ -624,6 +646,23 @@ namespace YARG.Gameplay
                         state.Total += 2;
                         state.Audible += 2;
                     }
+                }
+
+                // Post-init pass: any remote player that was already SittingOut at the
+                // moment we entered CreatePlayers (because RemotePeerLeftPacket arrived
+                // during the cue handshake before _players existed) needs its highway
+                // hidden now that _players is populated — HideRemotePlayerHighway was a
+                // no-op when it fired. The sim is still in _remoteSimulators so wire
+                // events for that peer keep draining; we just don't render them.
+                foreach (var basePlayer in _players)
+                {
+                    if (basePlayer?.Player == null) continue;
+                    if (!basePlayer.Player.IsRemote) continue;
+                    if (!basePlayer.Player.SittingOut) continue;
+                    YargLogger.LogFormatInfo(
+                        "CreatePlayers: hiding pre-flagged-SittingOut remote {0} (peerId={1})",
+                        basePlayer.Player.Profile?.Name ?? "<null>", basePlayer.Player.RemotePeerId);
+                    HideRemotePlayerHighway(basePlayer.Player.RemotePeerId);
                 }
             }
             catch (Exception ex)

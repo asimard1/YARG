@@ -3,6 +3,7 @@ using TMPro;
 using UnityEngine;
 using YARG.Core.Input;
 using YARG.Core.Logging;
+using YARG.Localization;
 using YARG.Menu.MusicLibrary;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
@@ -90,8 +91,17 @@ namespace YARG.Menu.Main
             {
                 YargLogger.LogInfo("MainMenu: Online blocked — no profiles connected");
                 DialogManager.Instance.ShowMessage(
-                    "No Profile Connected",
-                    "Connect a profile before entering Online. Open the Profiles menu and pick one to play with.");
+                    Localize.Key("Menu.Main.OnlineRequiresProfile.Title"),
+                    Localize.Key("Menu.Main.OnlineRequiresProfile.Body"));
+                return;
+            }
+
+            if (PlayerContainer.HasAnyBotsActive())
+            {
+                YargLogger.LogInfo("MainMenu: Online blocked. At least one connected profile is a bot");
+                DialogManager.Instance.ShowMessage(
+                    Localize.Key("Menu.Main.OnlineNoBots.Title"),
+                    Localize.Key("Menu.Main.OnlineNoBots.Body"));
                 return;
             }
 

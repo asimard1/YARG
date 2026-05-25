@@ -62,14 +62,12 @@ namespace YARG.Gameplay.Player
 
         /// <summary>
         /// The visual-time clock to use when rendering this player's highway,
-        /// note positions, beatlines, and track effects. For the local player
-        /// (and replay / bot), this is just <see cref="GameManager.VisualTime"/>.
-        /// For a remote-peer mirror, it lags by the prediction layer's
-        /// combined transport+commit delay so the strikeline crossing aligns
-        /// with the moment the engine resolves the note. Updated each frame
-        /// in <see cref="GameplayUpdate"/> before <see cref="UpdateVisuals"/>
-        /// is called, so visual code may read it freely from any per-frame
-        /// rendering path (TrackElement, TrackEffectElement, etc.).
+        /// note positions, beatlines, and track effects. Equals
+        /// <see cref="GameManager.VisualTime"/> for both local and remote players —
+        /// remote mirror engines tick on local song time directly, so no per-player
+        /// shift applies. Updated each frame in <see cref="GameplayUpdate"/> before
+        /// <see cref="UpdateVisuals"/> so visual code (TrackElement, TrackEffectElement,
+        /// etc.) can read it freely from any per-frame rendering path.
         /// </summary>
         public double EffectiveVisualTime { get; private set; }
 
@@ -208,27 +206,12 @@ namespace YARG.Gameplay.Player
                 UpdateInputs(GameManager.InputTime);
             }
 
-            // Remote-peer highways must render on the same delayed clock that
-            // the mirror engine actually fires events on. That clock lags
-            // local song time by RemoteTrackDelay + CommitWindow:
-            //   - RemoteTrackDelay shifts the engine itself back in time.
-            //   - CommitWindow is how long the scheduler holds a note open
-            //     after note.Time before committing as a hit.
-            // The engine resolves note N at localSongTime = note.Time + this
-            // total, so the strikeline crossing must wait the same total
-            // before the hit/miss animation fires.
-            //
-            // Note: setting EffectiveVisualTime here so per-frame visual
-            // code (TrackElement, TrackEffectElement) reads the same delayed
-            // clock instead of GameManager.VisualTime directly. Reading the
-            // global VisualTime there is what previously caused the bug
-            // where notes reached the strikeline at local song time but the
-            // engine commit fired 100 ms later, making hits look delayed.
+            // Remote highways render on the same clock as local. The mirror engine
+            // ticks at local song time directly (no transport-delay budget), so the
+            // strikeline crossing and the engine's commit fire at the same instant
+            // without any shift. EffectiveVisualTime is kept as a passthrough so the
+            // visuals layer (TrackElement, TrackEffectElement) can keep reading it.
             double visualTime = GameManager.VisualTime;
-            if (Player.IsRemote && GameManager.OnlineSession != null)
-            {
-                visualTime -= GameManager.OnlineSession.GetRemoteVisualDelay(Player.RemotePeerId);
-            }
             EffectiveVisualTime = visualTime;
             UpdateVisuals(visualTime);
         }
@@ -300,10 +283,10 @@ namespace YARG.Gameplay.Player
                 //   1. We publish the current local song time so the
                 //      receive-thread event handlers know the "now" for
                 //      in-window-vs-rollback decisions.
-                //   2. The simulator advances the engine to
-                //      (time - RemoteTrackDelay), applying any due
-                //      predicted hits / confirmed misses / sustain releases
-                //      / SP activations / whammy samples in time order.
+                //   2. The simulator advances the engine to local song time,
+                //      applying any due predicted hits / confirmed misses /
+                //      sustain releases / SP activations / whammy samples
+                //      in time order.
                 var director = GameManager.OnlineSession;
                 if (director != null)
                 {
