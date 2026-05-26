@@ -231,12 +231,18 @@ namespace YARG.Online
             DifficultySelectMenu.OnLobbyLoadoutsConfirmed = null;
             DifficultySelectMenu.OnLobbyUnreadied = null;
 
+            // Deactivate MusicPlayer FIRST, before HideAllMenus. LobbyView's
+            // OnDisable calls MusicPlayer.SetLockedSong(null) which can kick
+            // off an async NextSong() if the player is still active -- and
+            // the activeSelf check inside that async load can read true
+            // before the orchestrator's SetActive(false) lands, racing the
+            // new mixer into Play() right as gameplay starts.
+            if (HelpBar.Instance != null && HelpBar.Instance.MusicPlayer != null)
+            {
+                HelpBar.Instance.MusicPlayer.gameObject.SetActive(false);
+            }
+
             // Hard invariant: from this point on, no MenuScene menu is loaded.
-            // HideAllMenus deactivates every registered menu and clears the stack.
-            // DifficultySelect.OnDisable runs synchronously, popping its scheme,
-            // and nothing pushes a new one until ScoreScreenMenu takes over in
-            // the Score scene. ScoreScreenMenu.Continue sets MenuManager's
-            // override-open-menu to land on LobbyView on the next MenuScene load.
             try
             {
                 MenuManager.Instance?.HideAllMenus();
@@ -244,14 +250,6 @@ namespace YARG.Online
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
-            }
-
-            // Belt-and-suspenders: even if a scheme pop above races with the
-            // scene swap, force the menu MusicPlayer off so it can't bleed into
-            // gameplay audio. HelpBar.MusicPlayer lives on PersistentScene.
-            if (HelpBar.Instance != null && HelpBar.Instance.MusicPlayer != null)
-            {
-                HelpBar.Instance.MusicPlayer.gameObject.SetActive(false);
             }
 
             // Hand off to the gameplay scene. GameManager.Awake reads
