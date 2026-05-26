@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using YARG.Online.Lobbies.Contracts.Enums;
 // Alias the contract enums so unqualified references below resolve to the
-// global YARG.Online.Lobbies.Contracts.Enums types — without these, the
+// global YARG.Online.Lobbies.Contracts.Enums types -- without these, the
 // `Online.Lobbies.*` paths in the switch arms get hijacked by the enclosing
 // YARG.Menu.Online namespace and fail to compile.
 using ContractGameMode = YARG.Online.Lobbies.Contracts.Enums.GameMode;
@@ -18,7 +18,7 @@ namespace YARG.Menu.Online
     }
 
     // UI-side filter enums with explicit "Any" sentinels so dropdown bindings
-    // can carry a single value (matches DropdownSetting<T>'s shape — nullables
+    // can carry a single value (matches DropdownSetting<T>'s shape -- nullables
     // don't play well with the IndexOf/Equals machinery in DropdownSetting).
     public enum LobbyGameModeFilter
     {
@@ -37,7 +37,7 @@ namespace YARG.Menu.Online
     public sealed class LobbyFilterSettings
     {
         public bool ShowFullLobbies = true;
-        public bool LanOnly         = false; // unused placeholder — LobbyData has no IsLan flag yet
+        public bool LanOnly         = false; // unused placeholder -- LobbyData has no IsLan flag yet
 
         public LobbyGameModeFilter GameModeFilter = LobbyGameModeFilter.Any;
         public LobbyStatusFilter   StatusFilter   = LobbyStatusFilter.Any;
@@ -46,7 +46,7 @@ namespace YARG.Menu.Online
         {
             if (!ShowFullLobbies && lobby.IsFull) return false;
 
-            // LAN filter has no LobbyData hook yet — gate here when
+            // LAN filter has no LobbyData hook yet -- gate here when
             // LobbyData grows an IsLan field.
 
             switch (GameModeFilter)
@@ -59,7 +59,7 @@ namespace YARG.Menu.Online
                     break;
             }
 
-            // Status filter rolls Starting in with GameStarted under "In-game" — both are
+            // Status filter rolls Starting in with GameStarted under "In-game" -- both are
             // post-song-select transient states users think of as "in a game".
             switch (StatusFilter)
             {

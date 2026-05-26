@@ -138,7 +138,7 @@ namespace YARG.Menu.MusicLibrary
         {
             if (MusicLibraryMenu.PickerMode)
             {
-                // Capture locally first — the exit fires OnDisable which clears
+                // Capture locally first -- the exit fires OnDisable which clears
                 // the static. Null the field before exiting so an exception in
                 // the callback can't leak state. The exit helper routes back to
                 // LobbyView via SetActiveMenuExclusive when invoked from an

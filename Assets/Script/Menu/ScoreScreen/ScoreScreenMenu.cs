@@ -462,9 +462,9 @@ namespace YARG.Menu.ScoreScreen
                                 // Returning to the lobby from the score screen means we're done
                                 // with the game session. Use LeaveCurrentGame (not just
                                 // LeaveResultsAsync) so both happen in one shot:
-                                //   1. SignalR LeaveResults — flips MemberIsBackInLobby for us
+                                //   1. SignalR LeaveResults -- flips MemberIsBackInLobby for us
                                 //      so the host's Start gate unblocks.
-                                //   2. Orchestrator + GameClientSession dispose — closes our UDP
+                                //   2. Orchestrator + GameClientSession dispose -- closes our UDP
                                 //      connection to the game server. Without this the orchestrator
                                 //      outlives the song; the server's session waits on a peer that
                                 //      will never send another packet, and ~30 s later the straggler

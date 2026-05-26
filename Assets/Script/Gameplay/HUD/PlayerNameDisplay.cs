@@ -29,10 +29,7 @@ namespace YARG.Gameplay.HUD
         public float DisplayTime = 3.0f;
         public float FadeDuration = 0.5f;
 
-        // Remote-player names settle to a partial alpha instead of fully fading out so
-        // the local user can always see who's playing what on each highway. Local
-        // players still fade to 0 (their own row is unambiguous — no need to crowd the
-        // HUD with their own name for the whole song).
+        // Remote names hold at partial alpha so the local user can identify each highway.
         public float RemoteHoldAlpha = 0.35f;
 
         protected override void GameplayAwake()
@@ -82,10 +79,7 @@ namespace YARG.Gameplay.HUD
         {
             _canvasGroup.alpha = 1f;
 
-            // ShowPlayer is invoked during TrackPlayer.Initialize, which runs while the
-            // LoadingScreen is still covering the gameplay scene. Counting DisplayTime
-            // from there would burn the visible window before the user can read the name
-            // — wait for the loading screen to drop before starting the display timer.
+            // Wait for loading screen to dismiss before starting the display timer.
             while (LoadingScreen.IsActive)
             {
                 yield return null;
@@ -97,9 +91,6 @@ namespace YARG.Gameplay.HUD
             float endAlpha = isRemote ? RemoteHoldAlpha : 0f;
             yield return _canvasGroup.DOFade(endAlpha, FadeDuration).WaitForCompletion();
 
-            // Remote rows keep the name component active at RemoteHoldAlpha for the rest
-            // of the song. Local rows tear the GameObject down so it can't accidentally
-            // intercept raycasts or eat draw-call budget.
             if (!isRemote)
             {
                 gameObject.SetActive(false);

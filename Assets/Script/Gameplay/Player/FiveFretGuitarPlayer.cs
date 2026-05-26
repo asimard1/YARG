@@ -296,18 +296,8 @@ namespace YARG.Gameplay.Player
                 }
             }
 
-            // Remote players: drive WhammyFactor from the prediction layer's
-            // latest applied sample, since they have no OnInputQueued path
-            // for the engine to surface whammy state.
-            //
-            // We gate on Engine.ActiveSustains.Count rather than the local
-            // _sustainCount field — _sustainCount is an event-driven mirror
-            // (OnSustainStart++ / OnSustainEnd--) and can drift on remotes
-            // because RestoreGenericSnapshot fires OnSustainEnd for sustains
-            // dropped during a snapshot apply but does NOT fire OnSustainStart
-            // for sustains added during one, so a snapshot-restored sustain
-            // leaves _sustainCount stuck at 0 and the bend visual never lights.
-            // Engine.ActiveSustains is the authoritative state — read from it.
+            // Remote whammy: read from prediction layer. Uses Engine.ActiveSustainCount
+            // instead of _sustainCount because snapshots can desync the event-driven counter.
             if (Player.IsRemote && GameManager.OnlineSession != null)
             {
                 float remoteWhammy = GameManager.OnlineSession.GetRemoteWhammyValue(Player.RemotePeerId);
@@ -570,9 +560,6 @@ namespace YARG.Gameplay.Player
                 return;
             }
 
-            // Skip the SFX for mirror-engine overstrums; otherwise every remote
-            // player's stick-noise on guitar adds to the local audio mix without
-            // giving the local user anything actionable.
             if (SettingsManager.Settings.OverstrumAndOverhitSoundEffects.Value && !Player.IsRemote)
             {
                 const int MIN = (int) SfxSample.Overstrum1;

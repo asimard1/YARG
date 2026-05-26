@@ -7,23 +7,8 @@ using YARG.Core.Logging;
 namespace YARG.Online
 {
     /// <summary>
-    /// Measures and tracks the offset between this client's wall clock and the game
-    /// server's wall clock via UDP Ping/Pong probes. Used by
-    /// <see cref="OnlineSessionDirector"/> to translate the server-issued
-    /// <c>SongOriginUtcMs</c> into a delay against the local clock without trusting
-    /// that the two clocks are in agreement.
-    ///
-    /// One instance per <see cref="GameClientSession"/>. Constructed by
-    /// <see cref="LobbyGameOrchestrator"/> alongside the session, disposed before
-    /// the session is torn down. <see cref="Current"/> is a handoff slot so the
-    /// gameplay scene's MonoBehaviours can read the synced offset without a ctor
-    /// dependency across the menu→gameplay scene boundary.
-    ///
-    /// Sample math (Cristian's algorithm — assumes symmetric latency):
-    ///   rtt    = receiveLocalUtcMs - clientTickMs
-    ///   offset = serverUtcMs + rtt/2 - receiveLocalUtcMs
-    /// Then estimated server time at any later instant is
-    ///   serverEstimatedUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ClockOffsetMs.
+    /// Measures client-to-server clock offset via Ping/Pong probes (Cristian's algorithm).
+    /// offset = serverUtcMs + rtt/2 - receiveLocalUtcMs; lowest-RTT sample wins.
     /// </summary>
     public sealed class ServerClockSync : IDisposable
     {
@@ -44,27 +29,19 @@ namespace YARG.Online
             public Sample(long rttMs, long offsetMs) { RttMs = rttMs; OffsetMs = offsetMs; }
         }
 
-        /// <summary>True once <see cref="RunSyncBurstAsync"/> has produced at least the
-        /// minimum number of usable samples.</summary>
+        /// <summary>True once sync has produced enough usable samples.</summary>
         public bool IsSynced { get { lock (_lock) return _isSynced; } }
 
-        /// <summary>Estimated <c>serverUtcMs - localUtcMs</c>. Add to a local wall-clock
-        /// reading to estimate the server's wall-clock at the same instant. Zero until
-        /// <see cref="IsSynced"/> is true.</summary>
+        /// <summary>Estimated serverUtcMs - localUtcMs. Zero until synced.</summary>
         public long ClockOffsetMs { get { lock (_lock) return _clockOffsetMs; } }
 
-        /// <summary>RTT of the sample that produced the current offset estimate.
-        /// Half of this is roughly the worst-case error bound on
-        /// <see cref="ClockOffsetMs"/>.</summary>
+        /// <summary>RTT of the best sample. Half is the approximate error bound.</summary>
         public long BestRttMs { get { lock (_lock) return _bestRttMs; } }
 
-        /// <summary>Estimated error bound on the offset, in milliseconds. Cristian's
-        /// algorithm bounds the error at RTT/2 under the symmetric-latency assumption.</summary>
+        /// <summary>Estimated error bound (RTT/2) in milliseconds.</summary>
         public double EstimatedErrorMs { get { lock (_lock) return _bestRttMs / 2.0; } }
 
-        /// <summary>Server's estimated wall-clock UTC ms at the moment of this call.
-        /// Reads the local clock and applies the cached offset; if <see cref="IsSynced"/>
-        /// is false the offset is zero and this degrades to the raw local clock.</summary>
+        /// <summary>Server's estimated wall-clock UTC ms right now.</summary>
         public long NowServerUtcMs => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ClockOffsetMs;
 
         public ServerClockSync(GameClientSession session)
@@ -89,12 +66,7 @@ namespace YARG.Online
             if (Current == this) Current = null;
         }
 
-        /// <summary>
-        /// Send a burst of pings and pick the sample with the lowest RTT as the
-        /// offset estimate. Returns true if at least <c>minSamples</c> pongs landed
-        /// within the burst window; false otherwise (callers should warn and fall
-        /// back to the raw local clock).
-        /// </summary>
+        /// <summary>Send a burst of pings and pick the lowest-RTT sample. Returns false if too few replies.</summary>
         public async UniTask<bool> RunSyncBurstAsync(
             int samples = 8,
             int spacingMs = 50,
@@ -112,7 +84,7 @@ namespace YARG.Online
             }
 
             YargLogger.LogFormatInfo(
-                "ServerClockSync: starting burst — samples={0}, spacingMs={1}", samples, spacingMs);
+                "ServerClockSync: starting burst -- samples={0}, spacingMs={1}", samples, spacingMs);
 
             for (int i = 0; i < samples; i++)
             {
@@ -124,9 +96,6 @@ namespace YARG.Online
                 }
             }
 
-            // Wait for replies. Budget is the burst length plus enough slack for the last
-            // pong to come back over a typical WAN — 500ms is generous for the usual case
-            // and not painful when sync genuinely fails.
             int waitBudgetMs = samples * spacingMs + 500;
             int waitedMs = 0;
             const int pollMs = 20;
@@ -154,8 +123,6 @@ namespace YARG.Online
                 return false;
             }
 
-            // Cristian's algorithm: take the lowest-RTT sample. Network jitter only ever
-            // inflates RTT, so the minimum is closest to the true symmetric-latency case.
             int bestIdx = 0;
             for (int i = 1; i < snapshot.Length; i++)
             {
@@ -182,24 +149,18 @@ namespace YARG.Online
             }
 
             YargLogger.LogFormatInfo(
-                "ServerClockSync: synced — offsetMs={0}, bestRttMs={1}, rtt(min/avg/max)={2}/{3}/{4}, samples={5}",
+                "ServerClockSync: synced -- offsetMs={0}, bestRttMs={1}, rtt(min/avg/max)={2}/{3}/{4}, samples={5}",
                 best.OffsetMs, best.RttMs, minRtt, avgRtt, maxRtt, snapshot.Length);
 
             return true;
         }
 
-        // Called on the LiteNetLib poll thread. Cheap and lock-only — must not block.
         private void OnPongReceived(long clientTickMs, long serverUtcMs, long receiveLocalUtcMs)
         {
             if (Volatile.Read(ref _disposed) != 0) return;
 
             long rtt = receiveLocalUtcMs - clientTickMs;
-            if (rtt < 0)
-            {
-                // Local clock went backwards mid-burst (NTP step or manual change). The sample
-                // is unusable; drop it rather than poisoning the burst.
-                return;
-            }
+            if (rtt < 0) return; // clock went backwards -- unusable sample
             long offset = serverUtcMs + rtt / 2 - receiveLocalUtcMs;
 
             lock (_lock)

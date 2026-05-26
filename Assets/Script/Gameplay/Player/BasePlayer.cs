@@ -61,13 +61,8 @@ namespace YARG.Gameplay.Player
         public abstract BaseEngine BaseEngine { get; }
 
         /// <summary>
-        /// The visual-time clock to use when rendering this player's highway,
-        /// note positions, beatlines, and track effects. Equals
-        /// <see cref="GameManager.VisualTime"/> for both local and remote players —
-        /// remote mirror engines tick on local song time directly, so no per-player
-        /// shift applies. Updated each frame in <see cref="GameplayUpdate"/> before
-        /// <see cref="UpdateVisuals"/> so visual code (TrackElement, TrackEffectElement,
-        /// etc.) can read it freely from any per-frame rendering path.
+        /// Visual-time clock for rendering this player's highway. Equals GameManager.VisualTime
+        /// for both local and remote players. Updated each frame before UpdateVisuals.
         /// </summary>
         public double EffectiveVisualTime { get; private set; }
 
@@ -75,9 +70,8 @@ namespace YARG.Gameplay.Player
         public BaseEngineParameters BaseParameters => BaseEngine.BaseParameters;
 
         /// <summary>
-        /// <p> Star thresholds, from 1 to 5 stars, then gold stars. </p>
-        /// <p> These values represent multiples of the score if you were to FC, hold all sustains fully, hit no dynamics, and use no star power. </p>
-        /// <p> Multiplying these by the max multiplier of the instrument will also roughly give you the average multiplier needed for that star. </p>
+        /// Star thresholds (1-5 stars, then gold) as multiples of the base FC score.
+        /// Multiply by max instrument multiplier to approximate the average multiplier needed.
         /// </summary>
         protected abstract float[] StarMultiplierThresholds { get; set; }
 
@@ -206,11 +200,6 @@ namespace YARG.Gameplay.Player
                 UpdateInputs(GameManager.InputTime);
             }
 
-            // Remote highways render on the same clock as local. The mirror engine
-            // ticks at local song time directly (no transport-delay budget), so the
-            // strikeline crossing and the engine's commit fire at the same instant
-            // without any shift. EffectiveVisualTime is kept as a passthrough so the
-            // visuals layer (TrackElement, TrackEffectElement) can keep reading it.
             double visualTime = GameManager.VisualTime;
             EffectiveVisualTime = visualTime;
             UpdateVisuals(visualTime);
@@ -254,8 +243,6 @@ namespace YARG.Gameplay.Player
 
         protected override void GameplayDestroy()
         {
-            // Mirror the gating in Start() — UnsubscribeFromInputEvents touches Player.Bindings
-            // which is null for both replay and remote players.
             if (!Player.IsReplay && !Player.IsRemote)
             {
                 UnsubscribeFromInputEvents();
@@ -276,17 +263,7 @@ namespace YARG.Gameplay.Player
 
             if (Player.IsRemote)
             {
-                // Remote player: drive the mirror engine via the prediction
-                // layer. The simulator wraps this engine + chart projection
-                // and was registered with OnlineSessionDirector when this
-                // TrackPlayer's CreateEngine ran. Each tick:
-                //   1. We publish the current local song time so the
-                //      receive-thread event handlers know the "now" for
-                //      in-window-vs-rollback decisions.
-                //   2. The simulator advances the engine to local song time,
-                //      applying any due predicted hits / confirmed misses /
-                //      sustain releases / SP activations / whammy samples
-                //      in time order.
+                // Drive the mirror engine via the prediction layer.
                 var director = GameManager.OnlineSession;
                 if (director != null)
                 {
@@ -295,21 +272,13 @@ namespace YARG.Gameplay.Player
                 }
                 else
                 {
-                    // No online director in scope but a remote player is
-                    // present — should never happen in real lobbies; advance
-                    // engine raw as a defensive fallback.
+                    // Defensive fallback -- should not happen in real lobbies.
                     BaseEngine.Update(time);
                 }
                 return;
             }
 
-            // Local-player path: piggyback on the per-frame UpdateInputs to
-            // periodically push an authoritative engine-state snapshot. The
-            // snapshot is the canonical source of truth for remote receivers
-            // — they restore their mirror engine to it, eliminating any
-            // drift accumulated from independent per-event simulation. One
-            // call per frame is overkill; the director throttles to the
-            // SnapshotIntervalSeconds cadence internally.
+            // Periodically push engine snapshots to remote peers (throttled by director).
             if (!Player.IsRemote && GameManager.IsOnline)
             {
                 GameManager.OnlineSession?.MaybeSendPeriodicSnapshot(time);

@@ -23,35 +23,26 @@ using YARG.Song;
 namespace YARG.Menu.Online
 {
     /// <summary>
-    /// In-lobby (room) view. The local player gets here after creating or
-    /// joining a lobby; the source of truth for the lobby's state is
-    /// <see cref="LobbyHubSession.CurrentLobby"/>, refreshed on every
-    /// <see cref="LobbyHubSession.CurrentLobbyChanged"/>.
+    /// In-lobby view. Source of truth is <see cref="LobbyHubSession.CurrentLobby"/>.
     /// </summary>
     public class LobbyViewMenu : MonoBehaviour
     {
-        // Client-side cap on the queue length. Server may or may not enforce its own limit;
-        // this is the friendly UI gate. Bump or remove once the server contract settles.
+        // Client-side cap on the queue length.
         private const int MaxQueueSize = 6;
 
 
-        // Header (standard YARG Header prefab dragged in via Editor).
-        // Drag the Header's main TMP into _headerMainText, sub TMP into _headerSubText,
-        // and its Button into _backButton — OnEnable wires the click to OnLeaveClicked,
-        // so no UnityEvent setup is needed in the inspector.
+        // Header elements (wired via Inspector).
         [SerializeField]
         private TextMeshProUGUI _headerMainText;
         [SerializeField]
         private TextMeshProUGUI _headerSubText;
-        // Header-row "Public Lobby" / "Private Lobby" label. Drag the new TMP into
-        // this slot in the Inspector. May be unwired on prefabs that haven't been
-        // updated yet; RefreshHeader silently skips in that case.
+        // "Public Lobby" / "Private Lobby" label. May be unwired on older prefabs.
         [SerializeField]
         private TextMeshProUGUI _lobbyTypeText;
         [SerializeField]
         private Button _backButton;
 
-        // Section headers — text is set every Refresh to reflect counts.
+        // Section headers -- updated every Refresh.
         [SerializeField]
         private TextMeshProUGUI _playersHeaderText;
         [SerializeField]
@@ -61,11 +52,7 @@ namespace YARG.Menu.Online
         private Transform _playersContent;
         [SerializeField]
         private LobbyPlayer _playerPrefab;
-        // Single shared popup for host actions (Make Host / Kick). Hosted on
-        // the menu prefab as an inactive child; each player card invokes it
-        // via Initialize with the appropriate target's name + callbacks.
-        // May be unwired on prefabs that haven't been updated — the player
-        // card logs a warning and no-ops the edit button click in that case.
+        // Shared popup for host actions (Make Host / Kick). May be unwired on older prefabs.
         [SerializeField]
         private LobbyPlayerActionsPopup _playerActionsPopup;
 
@@ -83,27 +70,18 @@ namespace YARG.Menu.Online
         [SerializeField]
         private ScrollRect _chatScrollRect;
 
-        // Diff-based: keyed by userId for players and Sequence for songs so a
-        // refresh only destroys/creates cards that actually changed. Song cards
-        // in particular do an async album-art load on first init — we don't
-        // want to re-trigger that on every chat message or host-toggle.
+        // Diff-based card tracking to avoid re-creating unchanged cards.
         private readonly Dictionary<string, LobbyPlayer> _playerCards = new();
         private readonly Dictionary<long, QueuedSong>    _songCards   = new();
 
-        // Chat is monotonic — append-only with a high-water mark on Sequence.
+        // Chat is append-only with a high-water mark on Sequence.
         private readonly List<ChatMessageCard> _chatCards = new();
         private long _lastChatSequenceRendered = -1;
 
-        // Top-of-queue song preview, driven through the persistent MusicPlayer (the
-        // pausable audio player on the menu's bottom bar). _previewSongHash tracks the
-        // hash we last asked the player to lock onto, so re-renders for unrelated
-        // refreshes (chat/players) don't restart the audio mid-play. Released in
-        // OnDisable — which also fires when LobbyGameOrchestrator hides all menus on
-        // game start, so the lock won't bleed past the lobby's lifecycle.
+        // Locks MusicPlayer to the top-of-queue song. Released in OnDisable.
         private string _previewSongHash;
 
-        // Tracks which nav scheme is currently pushed: the host variant includes a Start
-        // entry, the non-host one does not. Repushed only on actual host transitions.
+        // Tracks whether the host or non-host nav scheme is currently pushed.
         private bool _schemePushedAsHost;
 
         // Cached session reference for safe unsubscribe even if Current changes.
@@ -111,25 +89,18 @@ namespace YARG.Menu.Online
 
         private void OnEnable()
         {
-            // Back is handled by the on-screen header button (_backButton → OnLeaveClicked, wired below).
-            // Intentionally no Red entry here — the header button is the sole exit.
-            // Initial scheme is the non-host variant (no Start). Refresh() promotes it to the
-            // host scheme once the lobby's IsLocalHost is known. Doing it this way means a
-            // joiner never sees the Start entry, and a host-transfer mid-session swaps the
-            // scheme as soon as the CurrentLobbyChanged broadcast arrives.
+            // Start with non-host scheme; Refresh() promotes to host scheme if needed.
             PushNavSchemeForRole(isHost: false);
             _schemePushedAsHost = false;
 
             ConfigureChatScroll();
 
-            // Child cards' OnDisable releases their album-art textures, so a
-            // fresh enter must rebuild from scratch. CurrentLobbyChanged events
-            // arriving while we're visible still take the cheap diff path.
+            // Rebuild from scratch since child cards release textures on disable.
             ClearAllCards();
 
             if (_chatInputField != null)
             {
-                // Matches server validator: trimmed length must be <= 256.
+                // Matches server validator limit.
                 _chatInputField.characterLimit = 256;
                 _chatInputField.onSubmit.RemoveListener(OnChatSubmit);
                 _chatInputField.onSubmit.AddListener(OnChatSubmit);
@@ -164,31 +135,27 @@ namespace YARG.Menu.Online
             }
             if (_chatInputField != null) _chatInputField.onSubmit.RemoveListener(OnChatSubmit);
             if (_backButton != null) _backButton.onClick.RemoveListener(OnLeaveClicked);
-            // Releases the MusicPlayer lock so it returns to random rotation. Fires whether
-            // the user navigates back to the lobby browser or LobbyGameOrchestrator hides all
-            // menus on game start. (In the game-start case the orchestrator also hard-hides
-            // the MusicPlayer GameObject, but unlocking first keeps the next re-enable clean.)
+            // Release MusicPlayer lock so it returns to random rotation.
             ReleasePreviewLock();
             if (Navigator.Instance != null) Navigator.Instance.PopScheme();
         }
 
         /// <summary>
-        /// Reads the latest <see cref="LobbyHubSession.CurrentLobby"/> and
-        /// diffs its members + song queue into the scroll containers.
+        /// Diffs the current lobby state into the scroll containers.
         /// </summary>
         private void Refresh()
         {
             var lobby = _boundSession?.CurrentLobby;
             if (lobby == null)
             {
-                YargLogger.LogInfo("LobbyView: refresh — no current lobby");
+                YargLogger.LogInfo("LobbyView: refresh -- no current lobby");
                 ClearAllCards();
                 ReleasePreviewLock();
                 return;
             }
 
             YargLogger.LogInfo(
-                $"LobbyView: refresh — id={lobby.LobbyId}, name='{lobby.LobbyName}', "
+                $"LobbyView: refresh -- id={lobby.LobbyId}, name='{lobby.LobbyName}', "
                 + $"host={lobby.HostName}, status={lobby.Status}, "
                 + $"members={lobby.Members.Count}/{lobby.MaxPlayers}, "
                 + $"queue={lobby.SongQueue.Count}, chat={lobby.ChatHistory.Count}, "
@@ -203,10 +170,7 @@ namespace YARG.Menu.Online
         }
 
         /// <summary>
-        /// Locks the persistent MusicPlayer onto the song at the head of the queue
-        /// (looped via SongEnd → NextSong → same locked song). When the queue is empty
-        /// or the local library can't resolve the hash, releases the lock so the player
-        /// falls back to its normal random rotation.
+        /// Locks MusicPlayer to the top-of-queue song, or releases if queue is empty.
         /// </summary>
         private void RefreshTopSongPreview(LobbyRoomState lobby)
         {
@@ -232,13 +196,8 @@ namespace YARG.Menu.Online
         }
 
         /// <summary>
-        /// Pops the current nav scheme (if one was pushed) and pushes the appropriate variant
-        /// for the caller's role. Host gets AddSong + StartGame; non-host gets just AddSong.
+        /// Pushes the nav scheme for the given role. Host gets StartGame; both get AddSong.
         /// </summary>
-        // Blue press-and-hold threshold. Crossing this fires OnShowCodeHold instead
-        // of OnCopyCodeClicked. 0.5 s is long enough that a quick tap reliably maps
-        // to the copy action (typical click is <100 ms) but short enough that the
-        // "hold to show" affordance reveals quickly.
         private const float CopyCodeHoldSeconds = 0.5f;
 
         private void PushNavSchemeForRole(bool isHost)
@@ -246,12 +205,7 @@ namespace YARG.Menu.Online
             var entries = new List<NavigationScheme.Entry>
             {
                 new NavigationScheme.Entry(MenuAction.Yellow, "Menu.Online.AddSong", OnQueueSongClicked),
-                // Copy Code is available to host AND non-host — anyone in the lobby
-                // can pass the code along to a friend joining via JoinByCode. Tap
-                // copies the code silently to the clipboard; press-and-hold pops a
-                // dialog displaying the code so it can be read aloud / shown on
-                // stream without committing to clipboard. Nav-only — no on-screen
-                // button on the lobby header; the Blue action is the only entry point.
+                // Tap copies code to clipboard; hold shows it in a dialog.
                 new NavigationScheme.Entry(
                     MenuAction.Blue,
                     "Menu.Online.CopyCode",
@@ -267,8 +221,7 @@ namespace YARG.Menu.Online
         }
 
         /// <summary>
-        /// Swaps the pushed nav scheme on a host transition. No-op when the role is
-        /// unchanged, so repeated Refresh calls for chat/players don't churn the stack.
+        /// Swaps the nav scheme on host transitions. No-op when the role is unchanged.
         /// </summary>
         private void RefreshNavSchemeForRole(bool isHost)
         {
@@ -307,22 +260,16 @@ namespace YARG.Menu.Online
                     "Menu.Online.PlayersHeader", lobby.Members.Count, lobby.MaxPlayers);
             }
 
-            // Local profile is read live from PlayerContainer (most up-to-date).
-            // Remote rows read from LobbyRoomState.MemberInstruments, which is populated by
-            // FromEnter and OnPlayerJoined as the server reports each member's instrument.
+            // Local instrument from PlayerContainer; remote from LobbyRoomState.MemberInstruments.
             Instrument? localInstrument = PlayerContainer.Players.Count > 0
                 ? PlayerContainer.Players[0].Profile.CurrentInstrument
                 : null;
 
-            // Static (non-card) children of the content — e.g., a header label authored
-            // into the prefab. Snapshot before instantiating so card siblings sit AFTER
-            // those static children regardless of how many you've added.
+            // Offset past any static (non-card) children in the prefab.
             int staticChildCount = _playersContent.childCount - _playerCards.Count;
             int memberCount      = lobby.Members.Count;
 
-            // Host pinned to sibling 0; everyone else ranked by their position in
-            // lobby.Members, which the session appends in join order (FromEnter seeds
-            // the snapshot order, OnPlayerJoined appends new arrivals at the tail).
+            // Host pinned to sibling 0; others in join order.
             int nonHostRank = 0;
 
             var seen = new HashSet<string>();
@@ -353,12 +300,9 @@ namespace YARG.Menu.Online
                 }
                 string instrumentSprite = memberInstrument?.ToResourceName();
 
-                // Stage derivation lives on LobbyRoomState so the dialog text and
-                // the row colour stay in sync. Missing IsBackInLobby entries are
-                // treated as InLobby — see LobbyRoomState.ResolveMemberStage.
+                // Stage derivation lives on LobbyRoomState.
                 var stage = lobby.ResolveMemberStage(userId);
 
-                // Cheap to re-init: just text + button visibility + click listeners.
                 card.Initialize(
                     userId,
                     lobby.GetDisplayName(userId),
@@ -390,9 +334,7 @@ namespace YARG.Menu.Online
                     : Localize.KeyFormat("Menu.Online.SongsQueued.Plural", count);
             }
 
-            // Static (non-card) children of the song content — e.g., a header label
-            // authored into the prefab. Snapshot before instantiating so card siblings
-            // sit AFTER those static children regardless of how many you've added.
+            // Offset past any static (non-card) children in the prefab.
             int staticChildCount = _songsContent.childCount - _songCards.Count;
 
             var seen = new HashSet<long>();
@@ -401,19 +343,13 @@ namespace YARG.Menu.Online
                 var dto = lobby.SongQueue[i];
                 seen.Add(dto.Sequence);
 
-                // A song's remove button shows if the local user is host
-                // (host can clear anyone's pick) or if the local user is the
-                // requester (you can take back your own pick). RequesterId
-                // is server-authoritative — the hub re-checks this on the
-                // RemoveSongFromQueue RPC and rejects if neither condition
-                // holds, so toggling the button doesn't widen permissions.
+                // Remove visible for host or the song's requester. Server re-validates.
                 bool canRemove = isLocalHost
                     || (!string.IsNullOrEmpty(localUserId) && dto.RequesterId == localUserId);
 
                 if (_songCards.TryGetValue(dto.Sequence, out var card))
                 {
-                    // Existing card — host status may have changed but the
-                    // hash/sequence pairing is immutable, so skip the album load.
+                    // Existing card -- just update remove-button visibility.
                     card.SetRemoveButtonVisible(canRemove);
                 }
                 else
@@ -477,7 +413,6 @@ namespace YARG.Menu.Online
         private static void RemoveStale<TKey, TCard>(Dictionary<TKey, TCard> cards, HashSet<TKey> seen)
             where TCard : Component
         {
-            // Two-pass to avoid mutating during enumeration.
             List<TKey> toRemove = null;
             foreach (var key in cards.Keys)
             {
@@ -528,12 +463,8 @@ namespace YARG.Menu.Online
 
         private void OnKickedFromLobby(string reason)
         {
-            YargLogger.LogInfo($"LobbyView: kicked from lobby — '{reason}'");
-            // The server's `reason` is a stable machine code (e.g. "kicked_by_host")
-            // intended for localization, not a user-facing string. Map known codes to
-            // their localized body; fall back to the raw reason on unknown codes so a
-            // future server-added reason at least shows *something* meaningful instead
-            // of an empty dialog.
+            YargLogger.LogInfo($"LobbyView: kicked from lobby -- '{reason}'");
+            // Map stable server codes to localized strings; fall back to raw reason.
             var body = reason switch
             {
                 "kicked_by_host" => Localize.Key("Menu.Online.KickDialog.Reason.KickedByHost"),
@@ -548,10 +479,7 @@ namespace YARG.Menu.Online
         public void OnLeaveClicked() => LeaveAsync().Forget();
 
         /// <summary>
-        /// Copies the current lobby's 6-character code onto the system clipboard so the
-        /// user can paste it to a friend. Surfaces a confirmation toast on success
-        /// and an error toast if the lobby state isn't available yet (early click
-        /// before <see cref="Refresh"/> has bound _boundSession.CurrentLobby).
+        /// Copies the lobby code to the clipboard and shows a confirmation toast.
         /// </summary>
         private void OnCopyCodeClicked()
         {
@@ -563,17 +491,12 @@ namespace YARG.Menu.Online
             }
 
             GUIUtility.systemCopyBuffer = lobbyId;
-            // Deliberately do NOT include the lobby code in the toast. The whole point of
-            // Copy (vs. Hold-to-Show) is that the code stays off-screen — surfacing it in
-            // a toast right after copying would defeat that for stream/screen-share users.
+            // Don't show the code in the toast -- keeps it off-screen for streamers.
             ToastManager.ToastSuccess(Localize.Key("Menu.Online.Toast.CopyCode.Success"));
         }
 
         /// <summary>
-        /// Press-and-hold Blue surfaces a modal dialog displaying the lobby code at
-        /// large size — handy for reading aloud, screen-sharing, or showing on
-        /// stream without committing the code to the clipboard. Tap copies (see
-        /// <see cref="OnCopyCodeClicked"/>); hold reveals.
+        /// Hold-to-show: displays the lobby code in a dialog without copying it.
         /// </summary>
         private void OnShowCodeHold()
         {
@@ -612,13 +535,12 @@ namespace YARG.Menu.Online
         public void OnReadyToggleClicked()
         {
             // TODO: ready-state isn't part of the lobby contract yet.
-            YargLogger.LogWarning("LobbyView: OnReadyToggleClicked — not yet wired");
+            YargLogger.LogWarning("LobbyView: OnReadyToggleClicked -- not yet wired");
         }
 
         public void OnSendChatClicked() => SendChatAsync().Forget();
 
-        // TMP's onSubmit fires with the submitted text on Enter; route both
-        // entry points through the same coroutine.
+        // Route Enter-key submit through the same path as the Send button.
         private void OnChatSubmit(string _) => OnSendChatClicked();
 
         private async UniTaskVoid SendChatAsync()
@@ -653,13 +575,10 @@ namespace YARG.Menu.Online
 
         public void OnQueueSongClicked()
         {
-            // Re-seed the lobby allow-list every time the picker opens. The
-            // filter is cleared in MusicLibraryMenu's exit funnel, so we own
-            // the seed here.
+            // Re-seed the lobby allow-list every time the picker opens.
             var lobby = (_boundSession ?? LobbyHubSession.Current)?.CurrentLobby;
 
-            // Client-side cap. Server-side limit may differ (or be absent); this is
-            // a friendly gate so the user can't even open the picker when full.
+            // Client-side cap -- friendly gate before opening the picker.
             int currentCount = lobby?.SongQueue.Count ?? 0;
             if (currentCount >= MaxQueueSize)
             {
@@ -676,27 +595,8 @@ namespace YARG.Menu.Online
         }
 
         /// <summary>
-        /// Intersect the lobby's shared song library (every member's local libraries
-        /// AND'd together server-side, mirrored into <see cref="LobbyRoomState.LobbySongLibrary"/>)
-        /// with the set of songs that have a track for every member's currently-selected
-        /// instrument. The result is what the picker can actually queue without leaving
-        /// some member with nothing to play.
-        ///
-        /// Unknown member instruments (a peer who just joined and hasn't sent theirs yet)
-        /// are skipped from the playability check — better to show too many songs for a
-        /// brief startup window than to flicker the picker as members report in.
-        ///
-        /// Snapshot semantics: the returned set is a NEW HashSet, not a live alias of
-        /// <c>LobbySongLibrary</c>. It's only valid for this picker open; library
-        /// add/remove broadcasts that arrive while the picker is open won't auto-fold
-        /// in (MusicLibraryMenu's allowed-hash filter is one-shot at activation). A
-        /// rare staleness window vs the silent broken queue we'd otherwise allow.
-        /// </summary>
-        /// <summary>
-        /// Builds the strict picker filter for a given lobby state. Internal so
-        /// <see cref="LobbyHubSession.OnLobbySongLibraryUpdatedAsync"/> can re-derive
-        /// it when the lobby's shared library changes mid-picker (e.g. after a
-        /// mid-lobby song scan triggers <see cref="ILobbyHub.UpdateLibrary"/>).
+        /// Builds the set of songs playable by all lobby members (shared library intersected
+        /// with per-member instrument availability). Snapshot semantics -- valid for one picker open.
         /// </summary>
         internal static HashSet<HashWrapper> BuildPlayableSongSet(LobbyRoomState lobby)
         {
@@ -705,8 +605,7 @@ namespace YARG.Menu.Online
                 return null;
             }
 
-            // Collect each known member's instrument; skip members we haven't received
-            // an instrument for yet (the safer side of the race).
+            // Skip members whose instrument hasn't been received yet.
             var requiredInstruments = new List<Instrument>(lobby.Members.Count);
             foreach (var uid in lobby.Members)
             {
@@ -718,16 +617,11 @@ namespace YARG.Menu.Online
 
             if (requiredInstruments.Count == 0)
             {
-                // No member instruments known — fall back to the raw lobby library so
-                // we don't filter everything away. Reference-aliases the lobby's
-                // HashSet to preserve the live-update behavior the OLD path had.
+                // No instruments known yet -- fall back to the raw lobby library.
                 return lobby.LobbySongLibrary;
             }
 
-            // Pre-resolve each member's GameMode so the per-song hot loop can call
-            // PossibleInstrumentsForSong without re-deriving it for every song.
-            // Fully qualified because YARG.Online.Lobbies.Contracts.Enums.GameMode
-            // is also in scope via the lobby contracts using-block.
+            // Pre-resolve GameModes. Fully qualified to avoid conflict with the contract enum.
             var memberGameModes = new YARG.Core.GameMode[requiredInstruments.Count];
             for (int i = 0; i < requiredInstruments.Count; i++)
             {
@@ -742,21 +636,11 @@ namespace YARG.Menu.Online
                     continue;
                 }
 
-                // SongsByHash groups entries by hash (re-encodes / multiple library locations
-                // can produce duplicates). Any one entry covers the chart's parts, so the
-                // first is sufficient.
                 var entry = entries[0];
                 bool playableForAll = true;
                 for (int i = 0; i < memberGameModes.Length; i++)
                 {
-                    // Mirror the MusicLibrary's "is this song playable for this profile" check
-                    // (ShowCategories.IsSongPlayable). A member's chosen Instrument maps to a
-                    // GameMode, and that GameMode exposes the set of Instruments any profile
-                    // in that mode could actually play on this song — for vocals that's
-                    // [Vocals, Harmony]; for drums it picks the right four/five/pro split
-                    // based on what the chart contains. We accept the song iff at least one
-                    // of those instruments is present (and a chart-aware HasInstrument check
-                    // catches custom songs whose vocal track is empty / missing entirely).
+                    // Accept the song if the member's GameMode has at least one playable instrument.
                     var candidates = memberGameModes[i].PossibleInstrumentsForSong(entry);
                     bool anyAvailable = false;
                     foreach (var candidate in candidates)
@@ -783,7 +667,7 @@ namespace YARG.Menu.Online
 
         private void OnSongPicked(HashWrapper hash)
         {
-            YargLogger.LogInfo($"LobbyView: song picked for queue — hash={hash}");
+            YargLogger.LogInfo($"LobbyView: song picked for queue -- hash={hash}");
             QueueSongAsync(hash).Forget();
         }
 
@@ -811,7 +695,7 @@ namespace YARG.Menu.Online
 
         private async UniTaskVoid RemoveQueuedSongAsync(long sequence)
         {
-            YargLogger.LogInfo($"LobbyView: remove queued song — sequence={sequence}");
+            YargLogger.LogInfo($"LobbyView: remove queued song -- sequence={sequence}");
             try
             {
                 var session = _boundSession ?? LobbyHubSession.Current;
@@ -822,7 +706,6 @@ namespace YARG.Menu.Online
                     return;
                 }
                 await session.RemoveQueuedSongAsync(sequence, CancellationToken.None);
-                // Server broadcasts OnSongDequeued → CurrentLobbyChanged → Refresh handles the card removal.
             }
             catch (Exception ex)
             {
@@ -868,11 +751,7 @@ namespace YARG.Menu.Online
             }
         }
 
-        // Translate the shared set of hub error tags (KickPlayer + TransferHost throw
-        // the same outcomes) into a localized sentence. The raw HubException.Message
-        // is a stable contract identifier like "not_host" that's useless to surface
-        // verbatim. Unknown tags fall through to the raw message so genuinely-novel
-        // server errors still get reported instead of being swallowed.
+        // Translate hub error tags to localized strings. Unknown tags fall through raw.
         private static string TranslateHostActionError(string msg, bool isKick)
         {
             if (string.IsNullOrEmpty(msg)) return msg;
@@ -904,16 +783,11 @@ namespace YARG.Menu.Online
                     return;
                 }
 
-                // Client-side preflight on the same gates the server enforces.
-                // Catching them here gives the host immediate feedback without
-                // burning an RPC. The server still re-validates everything.
+                // Client-side preflight. Server still re-validates.
                 var lobby = session.CurrentLobby;
                 if (lobby != null && lobby.Status == LobbyStatus.Starting)
                 {
-                    // The host hit Start, the server already transitioned us
-                    // to Starting, but the LoadingContext from the original
-                    // press hasn't ended yet. Silently ignore the second
-                    // press rather than show "already_starting" mid-flight.
+                    // Already transitioning -- ignore duplicate press.
                     return;
                 }
                 if (lobby != null && lobby.Status == LobbyStatus.GameStarted)
@@ -924,12 +798,7 @@ namespace YARG.Menu.Online
                 }
                 if (lobby != null && !lobby.AllMembersBackInLobby)
                 {
-                    // Bucket the not-back members into the two real-world states
-                    // (still playing the song vs. sitting on the results screen)
-                    // using LobbyRoomState.IsSongInProgress, which the session
-                    // flips on the LobbyStatus + Played-removal events. Names
-                    // appear in only one bucket so the host can tell at a glance
-                    // who they're waiting on for which reason.
+                    // Bucket not-ready members into InGame vs OnResults for the dialog.
                     var inGame    = new List<string>();
                     var onResults = new List<string>();
                     foreach (var userId in lobby.Members)
@@ -959,9 +828,7 @@ namespace YARG.Menu.Online
                     }
                     else
                     {
-                        // AllMembersBackInLobby was false but our bucketing found
-                        // nothing — only happens if the dictionary was mutated
-                        // between the check and the loop. Fall back to a generic.
+                        // Race condition fallback.
                         body = Localize.Key("Menu.Online.WaitingForPlayers.Generic");
                     }
                     DialogManager.Instance.ShowMessage(
@@ -969,13 +836,7 @@ namespace YARG.Menu.Online
                     return;
                 }
 
-                // The server's new StartGame flow blocks the RPC across two
-                // phases: BeginStartGame (state -> Starting + broadcast) and,
-                // after the game server allocator returns, ConfirmStartGame
-                // (mint per-member tokens + state -> GameStarted + broadcast
-                // OnGameStarted). Allocation can take seconds, so wrap the
-                // await in a LoadingContext to show the host a "Preparing
-                // game…" overlay instead of a frozen menu.
+                // Allocation can take seconds -- show a loading overlay.
                 using (var loading = new LoadingContext())
                 {
                     loading.SetLoadingText(Localize.Key("Menu.Online.PreparingGame"));
@@ -985,10 +846,7 @@ namespace YARG.Menu.Online
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
-                // Translate server-side hub-error tags (stable contract identifiers
-                // across the BeginStart / Confirm / Abort flow) into a localized
-                // sentence. Unknown tags fall through to the raw message so any
-                // genuinely-novel error still surfaces.
+                // Translate server error tags to localized strings.
                 string body = ex.Message;
                 if (body != null)
                 {

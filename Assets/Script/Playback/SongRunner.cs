@@ -314,13 +314,13 @@ namespace YARG.Playback
         /// Deterministic kick for playback. Called by <see cref="GameManager"/> immediately
         /// before flipping <c>IsSongStarted = true</c>. Spawns the sync thread and rebases
         /// the time reference so the sync thread ramps SyncVisualTime from
-        /// <c>-preRollSeconds</c> up to 0 before the mixer plays — i.e. <paramref name="preRollSeconds"/>
+        /// <c>-preRollSeconds</c> up to 0 before the mixer plays -- i.e. <paramref name="preRollSeconds"/>
         /// of visible track-scrolling animation before audio starts.
         ///
         /// Solo passes <see cref="SONG_START_DELAY"/>. Online absorbs the wall-clock-alignment
         /// wait into the pre-roll by passing <c>secondsUntilOrigin + SONG_START_DELAY</c>, so
         /// the highway-scrolling animation is what the user sees during the wait instead of
-        /// the loading screen — audio still lands exactly at <c>SongOriginUtcMs + SONG_START_DELAY</c>
+        /// the loading screen -- audio still lands exactly at <c>SongOriginUtcMs + SONG_START_DELAY</c>
         /// on every peer.
         /// </summary>
         public void BeginPlayback(double preRollSeconds = SONG_START_DELAY)

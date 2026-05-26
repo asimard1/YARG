@@ -19,19 +19,13 @@ using YARG.Player;
 namespace YARG.Menu.Online
 {
     /// <summary>
-    /// Lobby browser. Modeled after <c>MusicLibraryMenu</c> but stripped down
-    /// to just rows-of-lobbies with sort/filter — no playlists, recommendations,
-    /// shows, previews, scoring, stars or difficulty. Source of truth for the
-    /// list is <see cref="LobbyHubSession"/>; we re-seed on every
-    /// <c>LobbiesChanged</c> event.
+    /// Lobby browser. Re-seeds the list on every <c>LobbiesChanged</c> event from <see cref="LobbyHubSession"/>.
     /// </summary>
     public class OnlineMenu : ListMenu<LobbyViewType, LobbyView>
     {
         protected override int ExtraListViewPadding => 12;
 
-        // Tracks whether OnLobbiesChanged has run at least once during this
-        // OnEnable cycle, so the initial population can force SelectedIndex
-        // back to 0.
+        // Gates the one-shot scroll-to-top on initial population.
         private bool _initialLobbyLoadDone;
 
         [SerializeField]
@@ -48,22 +42,16 @@ namespace YARG.Menu.Online
         [SerializeField]
         private LobbyFiltersMenu _filtersMenu;
 
-        // Dedicated sort button + its current-state label, modeled on
-        // MusicLibrary's NextSort flow. Lives at the top of the lobby
-        // browser as a standalone affordance (not bundled into the filters
-        // popup) since sort is one-click-cycles and benefits from being
-        // permanently visible.
+        // Dedicated sort button + label. Clicking cycles through sort attributes.
         [SerializeField]
         private Button _sortButton;
         [SerializeField]
         private TextMeshProUGUI _sortButtonLabel;
 
-        // Master list of lobbies derived from the hub cache. Re-derived whenever
-        // LobbyHubSession.LobbiesChanged fires (always on the main thread).
+        // Master lobby list, re-derived on LobbiesChanged.
         private List<LobbyData> _allLobbies = new();
 
-        // Active sort/filter state. Survives only for the lifetime of the
-        // browser; persist via SettingsManager later if needed.
+        // Active sort/filter state for this browser session.
         private LobbySortAttribute  _sortAttribute = LobbySortAttribute.LobbyName;
         private LobbyFilterSettings _filters       = new();
 
@@ -79,28 +67,20 @@ namespace YARG.Menu.Online
         }
         public LobbyFilterSettings Filters       => _filters;
 
-        // Cached session reference so we can unsubscribe at OnDisable even if
-        // LobbyHubSession.Current has been replaced/nulled by then.
+        // Cached for safe unsubscribe even if Current changes.
         private LobbyHubSession _boundSession;
 
         protected override void Awake()
         {
             base.Awake();
-            // Hook the dedicated sort button (if wired) — clicking cycles
-            // through the sort attributes and re-renders the list. The
-            // SortAttribute property's setter handles the refresh, so the
-            // click just advances the enum and lets the property do the
-            // work.
+            // Sort button cycles through sort attributes.
             if (_sortButton != null)
             {
                 _sortButton.onClick.RemoveAllListeners();
                 _sortButton.onClick.AddListener(CycleSort);
             }
 
-            // Search field is wired in the prefab; subscribe here so any text
-            // change re-derives the rendered list. No debounce needed — the
-            // lobby list is short and CreateViewList is O(n) on a few hundred
-            // entries at most.
+            // Re-derive the list on any text change.
             if (_searchField != null)
             {
                 _searchField.onValueChanged.RemoveListener(OnSearchTextChanged);
@@ -118,11 +98,7 @@ namespace YARG.Menu.Online
         }
 
         /// <summary>
-        /// Advance the active sort attribute one step. Wired to the on-screen
-        /// Sort button; also callable from code if a future surface wants
-        /// to drive sort without going through the button. SortAttribute's
-        /// setter triggers RefreshLobbyList + UpdateSortButtonLabel, so the
-        /// list and the label update together.
+        /// Advance the active sort attribute one step.
         /// </summary>
         public void CycleSort()
         {
@@ -156,25 +132,14 @@ namespace YARG.Menu.Online
             base.OnEnable();
             PushNavigationScheme();
 
-            // Reset the "have we received an initial lobby list yet?" gate so
-            // the first OnLobbiesChanged of this OnEnable cycle (or the LAN-
-            // only RefreshLobbyList below) snaps SelectedIndex back to the
-            // top. Without this, returning to the browser keeps the cursor
-            // at whatever row was last selected — visually jarring after a
-            // full list refresh.
+            // Reset so the first lobby load snaps SelectedIndex to 0.
             _initialLobbyLoadDone = false;
 
             _boundSession = LobbyHubSession.Current;
             if (_boundSession == null)
             {
-                // LAN-only mode — MainMenu.Online couldn't reach the matchmaking
-                // server (auth or SignalR connect failed) and surfaced a warning
-                // dialog explaining as much. We still want the menu to render so
-                // the user can host/join a LAN game; the public lobby list will
-                // just be empty since no session is feeding it. Earlier this
-                // path forced a kick back to MainMenu, which made it look like
-                // the Online button itself was broken.
-                YargLogger.LogWarning("OnlineMenu: opened without an active session — rendering in LAN-only mode (empty lobby list)");
+                // LAN-only mode -- no session, but still render so the user can host/join LAN.
+                YargLogger.LogWarning("OnlineMenu: opened without an active session -- rendering in LAN-only mode (empty lobby list)");
                 RefreshLobbyList();
                 ScrollToTopOnInitialLoad();
                 return;
@@ -207,24 +172,13 @@ namespace YARG.Menu.Online
         {
             if (_boundSession == null) return;
             _allLobbies = _boundSession.Lobbies.Select(LobbyMapper.FromDto).ToList();
-            YargLogger.LogInfo($"OnlineMenu: lobby list updated — {_allLobbies.Count} lobbies");
+            YargLogger.LogInfo($"OnlineMenu: lobby list updated -- {_allLobbies.Count} lobbies");
             RefreshLobbyList();
             ScrollToTopOnInitialLoad();
         }
 
-        // One-shot: the first OnLobbiesChanged of an OnEnable cycle forces
-        // SelectedIndex back to the top of the freshly-rebuilt list.
-        // Subsequent updates (a new lobby joining the cache, a song change,
-        // etc.) preserve whatever the user is currently looking at.
-        //
-        // Deferred by one frame so Unity's layout pass has a chance to size
-        // the just-instantiated row RectTransforms before
-        // RealignParentViewObject reads their .rect.height values — without
-        // the defer, the heights all measure zero on the first synchronous
-        // call, the OnlineMenu's GetViewParentOffsetY override falls back
-        // to a centered offset, and the list visibly snaps to the top only
-        // once the user starts scrolling (which triggers another re-align
-        // pass against now-valid heights).
+        // One-shot: first load forces SelectedIndex to 0. Deferred one frame
+        // so Unity's layout pass sizes the row RectTransforms before we read heights.
         private void ScrollToTopOnInitialLoad()
         {
             if (_initialLobbyLoadDone) return;
@@ -234,12 +188,7 @@ namespace YARG.Menu.Online
 
         private async UniTaskVoid ScrollToTopNextFrameAsync()
         {
-            // One frame is enough for Unity to run a layout pass + give the
-            // row RectTransforms valid sizes. We use the unscaled clock so
-            // the defer still resolves if SongSpeed is < 1x somewhere up
-            // the stack (defensive — the lobby browser doesn't see song
-            // speed today, but the cancellation token threading needs a
-            // clock that always advances).
+            // Wait one frame for layout pass.
             await UniTask.NextFrame(PlayerLoopTiming.LastPostLateUpdate);
             if (this == null) return;
             SelectedIndex = 0;
@@ -248,7 +197,7 @@ namespace YARG.Menu.Online
         private async UniTaskVoid EnsureConnectedAsync()
         {
             using var context = new LoadingContext();
-            context.SetLoadingText("Loading lobbies…");
+            context.SetLoadingText("Loading lobbies...");
             try
             {
                 if (_boundSession == null) return;
@@ -286,18 +235,14 @@ namespace YARG.Menu.Online
                 new NavigationScheme.Entry(MenuAction.Green, "Menu.Common.Confirm", () => CurrentSelection?.PrimaryButtonClick(), hide: true),
                 new NavigationScheme.Entry(MenuAction.Red,   "Menu.Common.Back",    Back, hide: true),
 
-                // Bottom-row action buttons (UI matches Y/B/O button colors).
+                // Bottom-row action buttons.
                 new NavigationScheme.Entry(MenuAction.Yellow, "Menu.Online.CreateLobby",  CreateLobby),
                 new NavigationScheme.Entry(MenuAction.Blue,   "Menu.Online.Filters",      OpenFilters),
                 new NavigationScheme.Entry(MenuAction.Orange, "Menu.Online.JoinByCode",   JoinByCode),
             }, true));
         }
 
-        // Top-align the list instead of centering the selected row. The lobby
-        // browser usually has few entries, so anchoring the selection to the
-        // top reads better than MusicLibrary's centered selection. The offset
-        // is mask-relative so the selected row sits flush with the mask top
-        // regardless of how tall the visible window actually is.
+        // Top-align the list instead of centering the selected row.
         protected override float GetViewParentOffsetY(float topHeight, float bottomHeight)
         {
             var maskRect = (RectTransform) _viewObjectParent.parent;
@@ -310,9 +255,7 @@ namespace YARG.Menu.Online
             var list = new List<LobbyViewType>();
             if (_allLobbies == null) return list;
 
-            // Filter, then search-match, then sort, then wrap as view rows.
-            // Search runs on the post-filter pool so an active filter never
-            // surfaces hidden lobbies just because their name matched.
+            // Filter → search → sort → wrap as view rows.
             IEnumerable<LobbyData> filtered = _allLobbies.Where(_filters.Passes);
             if (!string.IsNullOrWhiteSpace(_searchQuery))
             {
@@ -336,14 +279,13 @@ namespace YARG.Menu.Online
 
         private async UniTaskVoid JoinLobbyAsync(LobbyData lobby)
         {
-            YargLogger.LogInfo($"OnlineMenu: join lobby — host={lobby.HostName}, song={lobby.SongName}");
+            YargLogger.LogInfo($"OnlineMenu: join lobby -- host={lobby.HostName}, song={lobby.SongName}");
 
             using var context = new LoadingContext();
-            context.SetLoadingText("Joining lobby…");
+            context.SetLoadingText("Joining lobby...");
             try
             {
-                // Sent so the server can broadcast our instrument to other members for
-                // display in their player lists. Defaults to 0 if no local profile is active.
+                // Send local instrument for other members' player lists.
                 byte localInstrument = PlayerContainer.Players.Count > 0
                     ? (byte) PlayerContainer.Players[0].Profile.CurrentInstrument
                     : (byte) 0;
@@ -377,10 +319,8 @@ namespace YARG.Menu.Online
                 _createLobbyPopup.gameObject.SetActive(true);
                 return;
             }
-            // Fallback for prefabs that haven't been re-wired to host the
-            // inline popup yet. The Menu.CreateLobby entry remains in
-            // MenuManager so legacy navigation keeps working.
-            YargLogger.LogWarning("OnlineMenu: _createLobbyPopup is unwired — falling back to legacy menu transition");
+            // Fallback for prefabs that haven't been re-wired to host the inline popup.
+            YargLogger.LogWarning("OnlineMenu: _createLobbyPopup is unwired -- falling back to legacy menu transition");
             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.CreateLobby);
         }
 
@@ -391,11 +331,7 @@ namespace YARG.Menu.Online
         }
 
         /// <summary>
-        /// External hook for the filters popup: re-derive the rendered list
-        /// after a filter / sort change. The popup writes directly to the
-        /// owner's <see cref="Filters"/> object (so any update is already
-        /// visible to <see cref="CreateViewList"/>), then calls this to
-        /// trigger the refresh.
+        /// Re-derive the rendered list after a filter/sort change from the popup.
         /// </summary>
         public void RequestRefreshAfterFilterChange()
         {

@@ -44,7 +44,7 @@ namespace YARG.Online
         private int _disposed;
 
         /// <summary>
-        /// Fired (Unity main thread) when the per-game flow has finished — server
+        /// Fired (Unity main thread) when the per-game flow has finished -- server
         /// GameEnded, UDP disconnected, or an unrecoverable error during the
         /// loadout step. The owner disposes this instance in response.
         /// </summary>
@@ -160,7 +160,7 @@ namespace YARG.Online
         {
             // Best-effort retraction. SendUnready is a no-op when disconnected and the
             // server's ClearLoadout handler ignores the request after the game has started,
-            // so the worst case is "the user clicked Unready a hair too late" — the next
+            // so the worst case is "the user clicked Unready a hair too late" -- the next
             // GameStarted callback will still fire and transition them into gameplay.
             try
             {
@@ -215,7 +215,7 @@ namespace YARG.Online
             foreach (var l in loadouts)
             {
                 YargLogger.LogInfo(
-                    $"LobbyGameOrchestrator[#{_instanceId}]: peer {l.DisplayName} ({l.UserId}) peerId={l.PeerId} — "
+                    $"LobbyGameOrchestrator[#{_instanceId}]: peer {l.DisplayName} ({l.UserId}) peerId={l.PeerId} -- "
                     + $"{l.Instrument}/{l.Difficulty} preset={l.EnginePreset}");
             }
 
@@ -224,7 +224,7 @@ namespace YARG.Online
             _director.RegisterSession(loadouts);
             GameManager.IsOnline = true;
 
-            // We no longer need the lobby-mode DifficultySelect overlay — the gameplay scene
+            // We no longer need the lobby-mode DifficultySelect overlay -- the gameplay scene
             // is about to take over. Clear the static flags so a future solo DifficultySelect
             // doesn't inherit lobby behaviour.
             DifficultySelectMenu.LobbyMode = false;
@@ -276,7 +276,7 @@ namespace YARG.Online
             DifficultySelectMenu.LobbyMode = false;
             DifficultySelectMenu.OnLobbyLoadoutsConfirmed = null;
             DifficultySelectMenu.OnLobbyUnreadied = null;
-            // ScoreScreenMenu no longer keeps a per-game flag — it reads lobby state from
+            // ScoreScreenMenu no longer keeps a per-game flag -- it reads lobby state from
             // LobbyHubSession.Current directly, so there's nothing to clear here.
 
             // Failure-recovery: if we're still in MenuScene with DifficultySelect

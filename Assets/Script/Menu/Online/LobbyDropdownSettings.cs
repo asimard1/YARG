@@ -6,7 +6,7 @@ using YARG.Settings.Types;
 namespace YARG.Menu.Online
 {
     // Three DropdownSetting<T> subclasses that back the lobby browser's filter
-    // dropdowns through DropdownSettingVisual — same pattern as MusicLibrary's
+    // dropdowns through DropdownSettingVisual -- same pattern as MusicLibrary's
     // FilterSortDropdownSetting. Each is constructed fresh per BuildLayout
     // with the owner's current value, and writes back via the onChange action.
     //

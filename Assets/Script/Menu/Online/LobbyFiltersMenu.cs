@@ -12,11 +12,7 @@ using YARG.Settings.Types;
 namespace YARG.Menu.Online
 {
     /// <summary>
-    /// Sort + filter popup for the lobby browser. Mirrors MusicLibrary's FiltersMenu
-    /// structure: header → row(...) with a reset rowIndex per section so alternating
-    /// backgrounds restart. Dropdowns use the common DropdownSelection prefab via
-    /// <see cref="DropdownSettingVisual"/> + <see cref="DropdownSetting{T}"/>, the same
-    /// path as FiltersMenu's sort dropdown.
+    /// Sort + filter popup for the lobby browser. Mirrors MusicLibrary's FiltersMenu structure.
     /// </summary>
     public class LobbyFiltersMenu : MonoBehaviour
     {
@@ -28,19 +24,16 @@ namespace YARG.Menu.Online
         private Transform _container;
         [SerializeField]
         private NavigationGroup _navGroup;
-        // Section header — matches FiltersMenu._leftHeaderPrefab (label-only).
+        // Section header (label-only).
         [SerializeField]
         private RectTransform _headerPrefab;
-        // Same prefabs MusicLibrary's FiltersMenu uses, so row heights and
-        // alternating backgrounds stay consistent across both row types.
+        // Same prefabs as MusicLibrary's FiltersMenu for visual consistency.
         [SerializeField]
         private ToggleSettingVisual _togglePrefab;
         [SerializeField]
         private DropdownSettingVisual _dropdownPrefab;
 
-        // Owner provides the canonical SortAttribute + Filters state and
-        // the refresh hook; the popup reads + writes through it so
-        // changes apply live without an explicit "apply" step.
+        // Owner provides the sort/filter state; changes apply live.
         private OnlineMenu _owner;
 
         public void Bind(OnlineMenu owner)
@@ -50,9 +43,7 @@ namespace YARG.Menu.Online
 
         private void OnEnable()
         {
-            // Toggle / dropdown rows push their own NavigationScheme via BaseSettingNavigatable
-            // when focused (the focused row's GetNavigationScheme overlays this one), so
-            // popup-level entries only need Back + the Up/Down between rows.
+            // Rows push their own scheme when focused; popup only needs Back + Up/Down.
             Navigator.Instance.PushScheme(new NavigationScheme(new()
             {
                 new NavigationScheme.Entry(MenuAction.Red, "Menu.Common.Back", Close, hide: true),
@@ -67,14 +58,8 @@ namespace YARG.Menu.Online
 
             BuildLayout();
 
-            // Mirror MusicLibrary's FiltersMenu.FocusLeft: SelectFirst alone
-            // does NOT register this group as the active one — SelectAt sets
-            // SelectedIndex before firing SetSelected(true), so the
-            // OnSelectionStateChanged callback short-circuits and
-            // PushNavGroupToStack never runs. Without the explicit push here
-            // the NavigateUp/NavigateDown scheme entries resolve against
-            // whichever group was current before the popup opened, so the
-            // popup looks "frozen" — visible but unnavigable.
+            // SelectFirst alone doesn't register this group as active --
+            // explicit push is needed or Up/Down resolves against the parent group.
             if (_navGroup != null)
             {
                 _navGroup.SelectFirst();
@@ -84,30 +69,19 @@ namespace YARG.Menu.Online
 
         private void OnDisable()
         {
-            // Pop ourselves off the nav stack before the parent menu's
-            // navigation entries start trying to resolve through us. The
-            // NavigationGroup component's own OnDisable also removes it from
-            // the stack, but that fires after the scheme pop here and only
-            // when the component itself disables — calling SelectLastNavGroup
-            // explicitly keeps the stack tidy even if the prefab structure
-            // changes so the NavigationGroup outlives this MonoBehaviour.
+            // Pop ourselves off the nav stack before the parent menu resumes.
             if (_navGroup != null) _navGroup.SelectLastNavGroup();
             if (Navigator.Instance != null) Navigator.Instance.PopScheme();
         }
 
-        // Mirror FiltersMenu.BuildLeftPanel: AddHeader → AddRow sequence,
-        // resetting rowIndex per section so the alternating-background
-        // visuals from FilterRowBackgroundVisual still alternate cleanly.
+        // AddHeader + AddRow sequence; rowIndex resets per section for alternating backgrounds.
         private void BuildLayout()
         {
-            // Prefab wiring guard — without _navGroup or _container we can't
-            // populate anything and the previous code would NullRef on the
-            // first line. Log loudly so a missing reference is obvious in
-            // the editor instead of throwing through OnEnable.
+            // Guard against missing prefab references.
             if (_navGroup == null || _container == null)
             {
                 YargLogger.LogWarning(
-                    "LobbyFiltersMenu: _navGroup or _container is not wired on the prefab — skipping BuildLayout");
+                    "LobbyFiltersMenu: _navGroup or _container is not wired on the prefab -- skipping BuildLayout");
                 return;
             }
 
@@ -152,8 +126,7 @@ namespace YARG.Menu.Online
                 }))?.AssignIndex(rowIndex++);
         }
 
-        // Parity with FiltersMenu.AddDropdown / AddToggle. Returns the visual so
-        // the caller can AssignIndex for the alternating row background.
+        // Returns the visual so the caller can AssignIndex for alternating backgrounds.
         private DropdownSettingVisual AddDropdown(string unlocalizedName, ISettingType setting)
         {
             if (_dropdownPrefab == null) return null;

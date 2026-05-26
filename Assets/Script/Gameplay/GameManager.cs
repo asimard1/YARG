@@ -172,11 +172,7 @@ namespace YARG.Gameplay
         private bool _breBoxActive;
         private bool _gameCompleteSent;
         private double _gameCompleteRealtime;
-        // Upper bound on how long EndSong waits for every remote peer's
-        // final EngineStateSnapshot before falling back to the results
-        // screen. 3s is comfortable under typical network conditions and
-        // short enough that a disconnected straggler doesn't pin players
-        // at the end-of-song screen.
+        // Max wait for remote peers' final snapshots before proceeding to results.
         private const double FINAL_SNAPSHOT_TIMEOUT_SECONDS = 3.0;
 
         private StemMixer _mixer;
@@ -220,20 +216,13 @@ namespace YARG.Gameplay
                     return;
                 }
                 YargPlayers = OnlineSession.Players;
-                // Hide a peer's highway on RemotePeerLeft — fires when their
-                // UDP session drops (either explicit Quit via
-                // LobbyHubSession.LeaveCurrentGame, or a network failure).
-                // Without this the track keeps rendering empty.
                 OnlineSession.RemotePlayerLeft += HideRemotePlayerHighway;
 
-                // If the session is already dead by the time we attach (e.g.
-                // GameEnd raced ahead of GameManager.Start) we still want to
-                // bail rather than play through. Otherwise we wire the live
-                // signal and let the next external death route us out.
+                // Bail if the session died before we could subscribe.
                 if (OnlineSession.SessionAbortedExternally)
                 {
                     YargLogger.LogWarning(
-                        "GameManager: OnlineSession already aborted before Start subscribed — bailing.");
+                        "GameManager: OnlineSession already aborted before Start subscribed -- bailing.");
                     BailOutToMenu();
                     return;
                 }
@@ -313,15 +302,10 @@ namespace YARG.Gameplay
                 OnlineSession.SessionEndedExternally -= OnOnlineSessionEnded;
             }
 
-            // Clear the online flag.
-            // The orchestrator sets this back to true before each online scene load.
             IsOnline = false;
         }
 
-        // Find the BasePlayer mirroring the given remote peer and disable its
-        // GameObject so the highway, score box, and per-frame Update logic
-        // all stop. _players still contains the entry (the results screen
-        // iterates it) but with the GameObject inactive nothing renders.
+        // Disable the remote peer's player GameObject so their highway stops rendering.
         private void HideRemotePlayerHighway(int peerId)
         {
             if (_players == null) return;
@@ -336,30 +320,17 @@ namespace YARG.Gameplay
                     $"GameManager: hiding remote player highway for peerId={peerId} ({player.Player.Profile?.Name})");
                 player.gameObject.SetActive(false);
 
-                // Vocals' player HUD card (name + score + needle icon) lives under a
-                // shared HUD canvas, not as a child of the player transform, so the
-                // SetActive above doesn't reach it. Tear it down explicitly so a
-                // vocalist who quits mid-song actually disappears from the screen.
+                // Vocal HUD lives on a shared canvas, not under the player transform.
                 if (player is VocalsPlayer vocals)
                 {
                     vocals.HideHud();
-                    // If the leaver was the last active vocalist, demote the vocal
-                    // highway to the lyric bar so the remaining instrument players
-                    // aren't staring at an empty vocal track for the rest of the song.
                     TrySwitchToLyricBarIfNoVocalists();
                 }
                 return;
             }
         }
 
-        // Walks _players for any still-active VocalsPlayer (local or remote). When
-        // none remain — i.e. every vocalist either never existed or has been hidden
-        // via HideRemotePlayerHighway — disables the vocal highway and falls back
-        // to the lyric bar at the bottom of the screen, mirroring the load-time
-        // selection at GameManager.Loading.cs:580/592. The bar's phrase objects
-        // were already instantiated under it during OnChartLoaded (which fires
-        // regardless of active state), so a SetActive(true) + SetSongTime is
-        // enough to bring it up to date mid-song.
+        // If no vocalists remain active, hide the vocal highway and fall back to the lyric bar.
         private void TrySwitchToLyricBarIfNoVocalists()
         {
             if (!VocalTrack.gameObject.activeSelf) return;
@@ -376,11 +347,7 @@ namespace YARG.Gameplay
             YargLogger.LogInfo("GameManager: last vocalist left, hiding vocal highway and falling back to lyric bar");
             VocalTrack.gameObject.SetActive(false);
 
-            // Only re-enable the lyric bar under the same conditions LyricBar's own
-            // OnChartLoaded would have used to keep itself active: the chart must
-            // have lyrics, we're not in practice mode (lyric bar is hidden during
-            // practice by design), and the user hasn't disabled lyric display.
-            // Otherwise leave both off — better an empty area than an empty bar.
+            // Only re-enable the lyric bar if lyrics exist, not in practice, and display is enabled.
             if (_lyricBar != null
                 && Chart?.Lyrics?.Phrases.Count > 0
                 && !IsPractice
@@ -543,7 +510,6 @@ namespace YARG.Gameplay
                 }
             }
 
-            // Pause the background/venue. Skipped entirely during online play.
             if (!IsOnline)
             {
                 Time.timeScale = 0f;
@@ -582,8 +548,7 @@ namespace YARG.Gameplay
 
         public async void Resume(double? rewindDuration = null)
         {
-            // Online mode: nothing was actually paused. Just dismiss the
-            // menu and return.
+            // Online: nothing is actually paused, just dismiss the menu.
             if (IsOnline)
             {
                 _pauseMenu.PopAllMenus();
@@ -755,11 +720,7 @@ namespace YARG.Gameplay
                 return true;
             }
 
-            // Notify the relay that this peer's song is over. The server holds GameEnd until
-            // every peer reports (or the straggler timer fires), so other clients keep
-            // receiving any remaining inputs from us in flight. SendGameComplete also
-            // broadcasts this peer's final authoritative engine-state snapshot so
-            // receivers can snap their mirror engines before rendering results.
+            // Notify the server this peer finished; broadcasts our final engine snapshot.
             if (IsOnline && !_gameCompleteSent)
             {
                 _gameCompleteSent = true;
@@ -767,16 +728,7 @@ namespace YARG.Gameplay
                 OnlineSession?.SendGameComplete();
             }
 
-            // Wait for every remote peer's FINAL authoritative snapshot
-            // (snapshotSongTime >= SongLength) to be applied before
-            // transitioning to the results screen. Without this gate the
-            // remote players' stat cards would render before the terminal
-            // mirror state has been snapped, showing stale mid-song values.
-            //
-            // Bounded by FINAL_SNAPSHOT_TIMEOUT_SECONDS so a disconnected
-            // straggler doesn't pin us at the end-of-song screen forever —
-            // when the timeout fires we proceed with whatever stats the
-            // last snapshot left on each mirror engine.
+            // Wait for all remote peers' final snapshots before showing results (with timeout).
             if (IsOnline && OnlineSession != null
                 && !OnlineSession.AllRemoteFinalSnapshotsReceived(SongLength))
             {
@@ -786,7 +738,7 @@ namespace YARG.Gameplay
                     return false;
                 }
                 YargLogger.LogFormatWarning(
-                    "GameManager: final-snapshot gate timed out after {0:0.0}s — proceeding to results.",
+                    "GameManager: final-snapshot gate timed out after {0:0.0}s -- proceeding to results.",
                     elapsed);
             }
 #nullable enable
@@ -841,14 +793,11 @@ namespace YARG.Gameplay
             {
                 var profile = player.Player.Profile;
 
-                // Remote players' scores belong to other users. Never write them to our
-                // local score store.
                 if (player.Player.IsRemote)
                 {
                     continue;
                 }
 
-                // Skip bots and anyone that's obviously cheating.
                 if (!ScoreContainer.IsSoloScoreValid(SongSpeed, player.Player))
                 {
                     continue;
@@ -949,15 +898,9 @@ namespace YARG.Gameplay
             }, playerEntries);
         }
 
-        // Latches so the session-ended toast / scene transition fires exactly once
-        // even if both GameEnded and Disconnected race in.
         private bool _onlineSessionEndedHandled;
 
-        /// <summary>Invoked on the Unity main thread when the underlying online
-        /// session dies mid-load or mid-song (server-broadcast GameEnd, transport
-        /// disconnect, or last remote leaving). Bails out of the gameplay scene
-        /// gracefully — without this, the song plays through as a fake-offline
-        /// run with frozen remote highways.</summary>
+        /// <summary>Handles online session death mid-song by bailing to the menu.</summary>
         private void OnOnlineSessionEnded(bool hadLocalProgress)
         {
             if (_onlineSessionEndedHandled) return;
@@ -967,8 +910,6 @@ namespace YARG.Gameplay
                 "GameManager: online session ended externally (hadLocalProgress={0}); bailing out of gameplay.",
                 hadLocalProgress);
 
-            // User-visible feedback. Toast survives the scene transition because
-            // ToastManager lives on the persistent scene.
             try
             {
                 ToastManager.ToastWarning(
@@ -976,23 +917,12 @@ namespace YARG.Gameplay
             }
             catch (Exception ex) { YargLogger.LogException(ex); }
 
-            // Clear the IsOnline flag and any pending engine work so the bail
-            // path doesn't try to send a final snapshot through a dead session.
-            // ForceQuitSong handles the LeaveCurrentGame call (harmless if the
-            // session is already torn down server-side — the LobbyHub call
-            // tolerates a no-op).
             ForceQuitSong();
         }
 
         public void ForceQuitSong()
         {
-            // Mid-song bail-out: tear down the UDP game session so the relay
-            // tells remaining peers we left (they hide our highway) and
-            // flip our lobby-side IsBackInLobby flag so the host's Start
-            // gate ungates promptly. Skipping this would leave a phantom
-            // track on every remaining peer's screen for the rest of the
-            // song. Must run BEFORE we reset PersistentState — IsOnline
-            // is read from the gameplay-scope flag, not GlobalVariables.
+            // Leave the game session before resetting state so peers see us disconnect.
             if (IsOnline)
             {
                 LobbyHubSession.Current?.LeaveCurrentGame();
@@ -1001,12 +931,7 @@ namespace YARG.Gameplay
             BailOutToMenu();
         }
 
-        /// <summary>
-        /// Common Gameplay -> Menu exit path. When we're in an online lobby
-        /// session, sets MenuManager's override so the next MenuScene Start
-        /// lands the user on LobbyView. Otherwise behaves identically to a
-        /// plain <c>LoadScene(Menu)</c>.
-        /// </summary>
+        /// <summary>Returns to the menu, routing to LobbyView if in an online lobby.</summary>
         internal static void BailOutToMenu()
         {
             if (IsOnline && LobbyHubSession.Current?.CurrentLobby != null)

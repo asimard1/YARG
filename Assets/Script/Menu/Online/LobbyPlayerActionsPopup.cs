@@ -10,16 +10,8 @@ using YARG.Menu.Navigation;
 
 namespace YARG.Menu.Online
 {
-    // Host-only popup invoked from a LobbyPlayer card's edit button. Lists
-    // the host actions (Make Host, Kick) for the targeted member. Reuses
-    // the MusicLibrary PopupMenuItem prefab — same look + NavigatableButton
-    // wiring as the rest of the menu's popups, but standalone (no
-    // dependency on MusicLibraryMenu's selection state machine).
-    //
-    // The LobbyViewMenu prefab hosts a single inactive instance; each
-    // LobbyPlayer card calls Show(...) with the target's name + action
-    // callbacks. Navigation: Up/Down move between rows, Green confirms
-    // the highlighted row and closes, Red closes without acting.
+    // Host-only popup for Make Host / Kick actions on a targeted member.
+    // LobbyViewMenu hosts a single inactive instance; each player card calls Show().
     public class LobbyPlayerActionsPopup : MonoBehaviour
     {
         [SerializeField]
@@ -38,11 +30,7 @@ namespace YARG.Menu.Online
         private Action _onKick;
 
         /// <summary>
-        /// Activate the popup, populate its header with <paramref name="playerName"/>,
-        /// and bind the Make Host / Kick rows to the given callbacks. Either
-        /// callback may be null to suppress that row (e.g. self-targeting
-        /// shouldn't happen at the call site but defending here keeps the
-        /// popup safe to reuse).
+        /// Show the popup for <paramref name="playerName"/>. Null callbacks suppress that row.
         /// </summary>
         public void Show(string playerName, Action onMakeHost, Action onKick)
         {
@@ -91,8 +79,7 @@ namespace YARG.Menu.Online
 
         private void OnDisable()
         {
-            // Guard against pop on a never-pushed scheme (e.g. domain reload
-            // disables the GameObject before OnEnable ran).
+            // Guard against pop on a never-pushed scheme.
             if (Navigator.Instance != null)
             {
                 Navigator.Instance.PopScheme();

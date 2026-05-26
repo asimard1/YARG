@@ -14,80 +14,44 @@ using YARG.Menu.Persistent;
 using YARG.Online;
 using YARG.Online.Lobbies.Contracts.Hubs;
 using YARG.Player;
-// YARG.Core.GameMode (the per-instrument game-mode enum used by profiles)
-// collides with the lobby contract's GameMode. Alias to the contract type;
-// keep `using YARG.Core` for `Instrument` etc.
+// Alias to avoid collision with YARG.Core.GameMode.
 using GameMode = YARG.Online.Lobbies.Contracts.Enums.GameMode;
 using Region   = YARG.Online.Lobbies.Contracts.Enums.Region;
 
 namespace YARG.Menu.Online
 {
     /// <summary>
-    /// Popup-style create-lobby form. Each option group is rendered as a
-    /// vertical stack of radio-style toggle rows (one row per possible
-    /// value) — clicking a row checks it and unchecks its siblings, the
-    /// same UX shape as DifficultySelect's instrument / difficulty pickers.
-    /// The green "Create" row at the top of the list submits with the
-    /// currently-checked values; Red closes the popup.
-    ///
-    /// Localization keys live under <c>Menu.Online.CreateLobbyMenu.*</c>
-    /// (NOT <c>Menu.Online.CreateLobby</c> — that one's the lobby-browser
-    /// nav-scheme label for the Yellow "Create Lobby" button).
-    ///
-    /// Visibility is exposed in the UI but doesn't yet hit the wire —
-    /// the contract's <see cref="CreateLobbyArgs"/> has no visibility
-    /// field. Selection is stored locally so when the contract grows the
-    /// field this menu can ship it straight through.
+    /// Popup-style create-lobby form with cycling option rows and a green "Create" action.
+    /// Localization keys live under <c>Menu.Online.CreateLobbyMenu.*</c>.
     /// </summary>
     public class CreateLobbyMenu : MonoBehaviour
     {
-        // Server contract clamps the upper bound at 8; we expose 2-4 here
-        // since 5+ is rarely a useful YARG lobby size.
+        // Expose 2-4; server caps at 8.
         private const int MinPlayers       = 2;
         private const int MaxPlayersCap    = 4;
         private const int DefaultMaxPlayers = 4;
 
-        // Region's been pulled from the UI per design — the contract still
-        // requires a value in CreateLobbyArgs, so we ship this default. If
-        // the matchmaker grows region-aware routing later, surface it back
-        // as a row group alongside the others.
+        // Region pulled from UI but still required by CreateLobbyArgs.
         private const Region DefaultRegion = Region.UsEast;
 
-        // Local-only until the contract grows a field. See class docstring.
+        // Local-only until the contract adds a visibility field.
         private enum VisibilityChoice
         {
             Public,
             Private,
         }
 
-        // Single text element at the top of the popup. Renders as
-        //     "<sprite name=\"{gameMode}\"> {profileName}"
-        // matching DifficultySelectMenu's _text field — confirms the
-        // creator's identity + active instrument before they hit Create.
+        // Renders "<sprite name='{gameMode}'> {profileName}" at the top of the popup.
         [SerializeField]
         private TextMeshProUGUI _headerText;
 
         [Space]
         [SerializeField]
         private Transform _container;
-        // NavigationGroup is used ONLY for selection-state coordination
-        // (so clicking a row deactivates the previously-selected row's
-        // _selectedVisual). No nav scheme is pushed — the popup is
-        // pointer-driven content. Without this, every row that gets
-        // clicked has NavigatableBehaviour.OnPointerDown call
-        // SetSelected(true) and the group-managed "only one selected
-        // at a time" invariant never fires, so the selection visual
-        // sticks on every clicked row.
+        // Selection-state coordination only -- ensures only one row is highlighted at a time.
         [SerializeField]
         private NavigationGroup _navGroup;
-        // Three prefab slots:
-        //   - _itemPrefab: header + body cycling row used for every
-        //     option (Game Mode, Max Players, Visibility). Click advances
-        //     the value; SetBody updates the body text in place.
-        //   - _itemGreenPrefab: green-styled action row for "Create" at
-        //     the top of the list.
-        //   - _itemInputPrefab: inline TMP_InputField row for the lobby
-        //     name.
+        // Cycling row, green action row, and inline input row prefabs.
         [SerializeField]
         private CreateLobbyMenuItem _itemPrefab;
         [SerializeField]
@@ -99,10 +63,7 @@ namespace YARG.Menu.Online
         private int              _maxPlayers  = DefaultMaxPlayers;
         private VisibilityChoice _visibility  = VisibilityChoice.Public;
 
-        // Live references for in-place body updates. Every option is a
-        // cycling row (header label + body showing the current value);
-        // SetBody on click writes the new body text directly so the
-        // row's TMP refreshes without re-instantiating.
+        // Live references for in-place body text updates on click.
         private CreateLobbyMenuItem      _gameModeRow;
         private CreateLobbyMenuItem      _maxPlayersRow;
         private CreateLobbyMenuItem      _visibilityRow;
@@ -110,13 +71,7 @@ namespace YARG.Menu.Online
 
         private void OnEnable()
         {
-            // Push a nav scheme so keyboard / gamepad can drive the popup:
-            // Up/Down walks the rows, Green confirms the selected row
-            // (advances a cycle / focuses the name input / submits Create),
-            // Red closes the popup. NavigateSelect routes Green through
-            // CurrentNavigationGroup.ConfirmSelection(), so we also push
-            // _navGroup onto the nav-group stack below to make it the
-            // active target.
+            // Keyboard / gamepad: Up/Down walks rows, Green confirms, Red closes.
             Navigator.Instance.PushScheme(new NavigationScheme(new()
             {
                 NavigationScheme.Entry.NavigateUp,
@@ -140,11 +95,7 @@ namespace YARG.Menu.Online
             if (Navigator.Instance != null) Navigator.Instance.PopScheme();
         }
 
-        // Mirror DifficultySelectMenu's _text rendering:
-        //   <sprite name="{profile.GameMode}"> {profile.Name}
-        // Falls back to the session's sanitized display name when no local
-        // profile exists, then to a generic "Host" so the header never
-        // renders blank.
+        // Shows instrument sprite + profile name; falls back to display name or "Host".
         private void RefreshHeader()
         {
             if (_headerText == null) return;
@@ -167,37 +118,28 @@ namespace YARG.Menu.Online
             _visibilityRow = null;
             _nameRow       = null;
 
-            // Top of the list: the submit action, rendered with the green-
-            // styled prefab variant. Pre-selected when the popup opens so
-            // the host can mash Green to ship with the current config.
+            // Green "Create" action at the top.
             CreateActionRow(
                 _itemGreenPrefab,
                 Localize.Key("Menu.Online.CreateLobbyMenu.Create"),
                 Confirm);
 
-            // Inline lobby-name row sits just below Create. Pre-populated
-            // with "{ProfileName}'s Room" so the host doesn't have to type
-            // anything for the common case; they can still focus the row
-            // (Green) and edit if they want a custom name.
+            // Inline lobby-name row, pre-populated with "{ProfileName}'s Room".
             _nameRow = CreateNameRow();
 
-            // Game Mode — cycling row (Band ↔ Quickplay). Body shows the
-            // current value; clicking advances and re-renders the body.
+            // Game Mode cycling row.
             _gameModeRow = CreateCycleRow(
                 Localize.Key("Menu.Online.CreateLobbyMenu.GameMode"),
                 FormatGameMode(_gameMode),
                 CycleGameMode);
 
-            // Max Players — cycling row over 2..MaxPlayersCap (2 → 3 → 4 → 2).
+            // Max Players cycling row.
             _maxPlayersRow = CreateCycleRow(
                 Localize.Key("Menu.Online.CreateLobbyMenu.MaxPlayers"),
                 FormatMaxPlayers(_maxPlayers),
                 CycleMaxPlayers);
 
-            // Visibility — cycling row (Public ↔ Private With Code). Same
-            // shape as the other option rows for consistency; the user
-            // moved away from the ModifierItem-toggle UX to keep every
-            // option using one prefab type.
+            // Visibility cycling row.
             _visibilityRow = CreateCycleRow(
                 Localize.Key("Menu.Online.CreateLobbyMenu.Visibility"),
                 FormatVisibility(_visibility),
@@ -212,9 +154,7 @@ namespace YARG.Menu.Online
             return row;
         }
 
-        // Instantiate the inline name-input row + seed it with the default
-        // lobby name. Registered with the nav group so its selection
-        // visual clears when the user clicks something else.
+        // Instantiate the inline name-input row with the default lobby name.
         private CreateLobbyMenuItemInput CreateNameRow()
         {
             var row = Instantiate(_itemInputPrefab, _container);
@@ -226,9 +166,7 @@ namespace YARG.Menu.Online
             return row;
         }
 
-        // Cycling row: header label + body showing the current value.
-        // Clicking the button advances the value and the handler updates
-        // the body text in place via SetBody.
+        // Cycling row: click advances the value and updates the body text.
         private CreateLobbyMenuItem CreateCycleRow(string header, string body, Action onClick)
         {
             var row = Instantiate(_itemPrefab, _container);
@@ -284,9 +222,7 @@ namespace YARG.Menu.Online
             _                        => v.ToString(),
         };
 
-        // Lobby name default — prefilled into the input row on each enable.
-        // Falls back through profile.Name → session display name → a
-        // static placeholder so the field never starts empty.
+        // Falls back through profile name, session display name, or "YARG Room".
         private string DefaultLobbyName()
         {
             string source;
@@ -319,10 +255,7 @@ namespace YARG.Menu.Online
                 return;
             }
 
-            // Read the (possibly-edited) name from the inline input row.
-            // Trim then fall back to the auto-derived default if the user
-            // emptied the input — better than rejecting the submit with
-            // an error.
+            // Fall back to the default name if the user cleared the input.
             string name = _nameRow != null ? _nameRow.Text?.Trim() : null;
             if (string.IsNullOrEmpty(name))
             {
@@ -330,7 +263,7 @@ namespace YARG.Menu.Online
             }
 
             using var context = new LoadingContext();
-            context.SetLoadingText("Creating lobby…");
+            context.SetLoadingText("Creating lobby...");
             try
             {
                 byte localInstrument = PlayerContainer.Players.Count > 0
@@ -351,8 +284,7 @@ namespace YARG.Menu.Online
 
                 await session.CreateLobbyAsync(args, CancellationToken.None);
 
-                // Pop the popup; the lobby session will report the new
-                // lobby and the LobbyView take over.
+                // Close popup and navigate to the new lobby.
                 gameObject.SetActive(false);
                 MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);
             }

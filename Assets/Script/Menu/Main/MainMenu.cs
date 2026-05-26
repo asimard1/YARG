@@ -89,7 +89,7 @@ namespace YARG.Menu.Main
             // with a dialog rather than let them stumble in.
             if (PlayerContainer.Players.Count == 0)
             {
-                YargLogger.LogInfo("MainMenu: Online blocked — no profiles connected");
+                YargLogger.LogInfo("MainMenu: Online blocked -- no profiles connected");
                 DialogManager.Instance.ShowMessage(
                     Localize.Key("Menu.Main.OnlineRequiresProfile.Title"),
                     Localize.Key("Menu.Main.OnlineRequiresProfile.Body"));
@@ -105,9 +105,9 @@ namespace YARG.Menu.Main
                 return;
             }
 
-            YargLogger.LogInfo("MainMenu: Online button pressed — authenticating before push");
+            YargLogger.LogInfo("MainMenu: Online button pressed -- authenticating before push");
             using var context = new LoadingContext();
-            context.SetLoadingText("Signing in…");
+            context.SetLoadingText("Signing in...");
 
             // Auth + connect are both treated as soft failures: if either
             // step throws, we still navigate into the Online menu so the
@@ -130,7 +130,7 @@ namespace YARG.Menu.Main
 
             if (serverReachable)
             {
-                context.SetLoadingText("Connecting…");
+                context.SetLoadingText("Connecting...");
                 try
                 {
                     await LobbyHubSession.InitializeAsync(provider);
@@ -144,7 +144,7 @@ namespace YARG.Menu.Main
 
             // Transition to the Online menu FIRST, then surface any error
             // dialog. The dialog needs to render on top of the destination
-            // menu's UI — if we show it before the menu switch, the menu
+            // menu's UI -- if we show it before the menu switch, the menu
             // transition tears down the dialog's parent canvas (or steals
             // focus) and the user lands on the Online menu with no
             // explanation for why the lobby browser is empty.
@@ -152,14 +152,14 @@ namespace YARG.Menu.Main
 
             if (!serverReachable)
             {
-                YargLogger.LogWarning("MainMenu: online server unavailable — proceeded to Online menu in LAN-only mode");
+                YargLogger.LogWarning("MainMenu: online server unavailable -- proceeded to Online menu in LAN-only mode");
                 DialogManager.Instance.ShowMessage(
                     YARG.Localization.Localize.Key("Menu.Online.ServerUnavailable.Title"),
                     YARG.Localization.Localize.Key("Menu.Online.ServerUnavailable.Body"));
             }
             else
             {
-                YargLogger.LogInfo("MainMenu: connected — opened Online menu");
+                YargLogger.LogInfo("MainMenu: connected -- opened Online menu");
             }
         }
 

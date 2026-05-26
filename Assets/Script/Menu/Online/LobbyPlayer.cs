@@ -9,12 +9,7 @@ namespace YARG.Menu.Online
 {
     public class LobbyPlayer : MonoBehaviour
     {
-        // Stage → name tint. Three distinct colours so observers in the lobby can
-        // read the active members' status at a glance:
-        //   White  = InLobby   (back in the lobby / song-select screen).
-        //   Yellow = InGame    (song actively playing).
-        //   Orange = OnResults (song finished, viewing the per-player results).
-        // The host's Start button is gated on everyone being InLobby.
+        // Stage → name tint: White = InLobby, Yellow = InGame, Orange = OnResults.
         private static readonly Color ReadyColor    = Color.white;
         private static readonly Color InGameColor   = new(1f, 0.85f, 0.2f, 1f);
         private static readonly Color OnResultsColor = new(1f, 0.55f, 0.15f, 1f);
@@ -22,10 +17,7 @@ namespace YARG.Menu.Online
         [SerializeField]
         private TextMeshProUGUI _playerNameText;
 
-        // Single host-action entry point. Hidden for non-hosts and for the
-        // host's own row (you can't kick yourself / re-host yourself).
-        // Clicking opens a shared LobbyPlayerActionsPopup that lists Make
-        // Host + Kick targeting this row's member.
+        // Host-action button. Hidden for non-hosts and the host's own row.
         [SerializeField]
         private IconButton _editButton;
 
@@ -40,18 +32,12 @@ namespace YARG.Menu.Online
             Action onKick, Action onMakeHost,
             LobbyPlayerActionsPopup actionsPopup)
         {
-            // Caller resolves the sprite name (self → local profile's CurrentInstrument; remote → fallback)
-            // because the lobby contract doesn't yet expose per-member instrument data.
             if (_playerNameText != null)
             {
                 _playerNameText.text = string.IsNullOrEmpty(instrumentSpriteName)
                     ? displayName
                     : $"<sprite name=\"{instrumentSpriteName}\"> {displayName}";
-                // tintAllSprites makes inline <sprite> glyphs (the instrument icon)
-                // pick up the text's vertex color — otherwise the icon stays at
-                // its default colour and the row's stage tint only applies to the
-                // name, making the status change look like a subtle font recolour
-                // instead of the intended whole-row shift.
+                // tintAllSprites so the instrument icon picks up the stage colour too.
                 _playerNameText.tintAllSprites = true;
                 _playerNameText.color = stage switch
                 {
@@ -62,9 +48,8 @@ namespace YARG.Menu.Online
             }
             else
             {
-                // Helps debug prefab redesigns where the TMP got renamed/unwired.
                 YargLogger.LogWarning(
-                    $"LobbyPlayer: _playerNameText is unwired — name '{displayName}' (userId={userId}) won't render. Re-link in the prefab inspector.");
+                    $"LobbyPlayer: _playerNameText is unwired -- name '{displayName}' (userId={userId}) won't render. Re-link in the prefab inspector.");
             }
 
             _onKick       = onKick;
@@ -72,8 +57,6 @@ namespace YARG.Menu.Online
             _displayName  = displayName;
             _actionsPopup = actionsPopup;
 
-            // Hidden when the local user isn't host (nothing useful to do)
-            // or on their own row (Make Host / Kick on self are nonsensical).
             bool showHostControls = isLocalHost && !isSelf;
             if (_editButton != null)
             {
@@ -88,7 +71,7 @@ namespace YARG.Menu.Online
             if (_actionsPopup == null)
             {
                 YargLogger.LogWarning(
-                    "LobbyPlayer: edit button clicked but no LobbyPlayerActionsPopup was wired — falling back to direct invocation order (make host, then kick) is unsafe; ignoring.");
+                    "LobbyPlayer: edit button clicked but no LobbyPlayerActionsPopup was wired -- falling back to direct invocation order (make host, then kick) is unsafe; ignoring.");
                 return;
             }
             _actionsPopup.Show(_displayName, _onMakeHost, _onKick);

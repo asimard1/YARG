@@ -16,8 +16,7 @@ namespace YARG.Menu.Online
 {
     public class QueuedSong : MonoBehaviour
     {
-        // Renamed from _albumArt — semantic: this is the card's main background image, set
-        // to the song's album-art sprite on load. FormerlySerializedAs preserves existing wiring.
+        // FormerlySerializedAs preserves existing wiring from the old _albumArt name.
         [SerializeField]
         [FormerlySerializedAs("_albumArt")]
         private Image _songBackground;
@@ -44,10 +43,7 @@ namespace YARG.Menu.Online
             ClearOwnedTexture();
 
             _onRemove = onRemove;
-            // Remove button is optional in the prefab (redesign in progress) — null-guard
-            // so a stripped-down card layout doesn't NRE.
-            // OnClick is wired in the prefab inspector → InvokeRemove. We only toggle
-            // visibility here based on host status.
+            // Remove button is optional in the prefab -- just toggle visibility.
             if (_removeButton != null)
             {
                 _removeButton.gameObject.SetActive(isLocalHost);
@@ -59,7 +55,6 @@ namespace YARG.Menu.Online
                 _songBackground.sprite = _placeholder;
                 if (_artistText  != null) _artistText.text  = string.Empty;
                 if (_charterText != null) _charterText.text = string.Empty;
-                // Difficulty ring left at its default state — no song to query parts from.
                 return;
             }
 
@@ -68,9 +63,7 @@ namespace YARG.Menu.Online
             if (_artistText  != null) _artistText.text  = song.Artist.ToString();
             if (_charterText != null) _charterText.text = song.Charter.ToString();
 
-            // Difficulty ring is per-viewer: shows the local player's selected instrument.
-            // PartValues for an absent instrument come back with SubTracks==0 and the ring
-            // renders inactive — no HasInstrument check needed.
+            // Shows difficulty for the local player's selected instrument.
             if (_difficultyRing != null && PlayerContainer.Players.Count > 0)
             {
                 var instrument = PlayerContainer.Players[0].Profile.CurrentInstrument;
@@ -87,8 +80,7 @@ namespace YARG.Menu.Online
         {
             Texture2D texture = null;
 
-            // Matches Sidebar.LoadAlbumCover: don't pass the token into RunOnThreadPool, because we
-            // need to resume on this method to dispose the YARGImage (backed by a FixedArray).
+            // Don't pass token to RunOnThreadPool -- we need to resume here to dispose the YARGImage.
             // ReSharper disable once MethodSupportsCancellation
             using var image = await UniTask.RunOnThreadPool(song.LoadAlbumData);
             if (image != null)

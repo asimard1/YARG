@@ -326,7 +326,7 @@ namespace YARG.Menu.MusicLibrary
             // Picker mode (e.g. opened from an online lobby to queue a song): use a
             // simplified scheme that drops Play-A-Show / setlist controls and exposes
             // only navigate + confirm + filters + more options. Green is a plain confirm
-            // — SongViewType.PrimaryButtonClick already routes through SongPickedCallback
+            // -- SongViewType.PrimaryButtonClick already routes through SongPickedCallback
             // and ExitFromPickerConfirm back to the lobby.
             if (PickerMode)
             {
@@ -420,7 +420,7 @@ namespace YARG.Menu.MusicLibrary
                     ) :
                     PickerMode ?
                     // Lobby picker: the green button is purely "add this song
-                    // to the setlist for the host" — there's no immediate-play
+                    // to the setlist for the host" -- there's no immediate-play
                     // action available, so don't render the "Play Song / hold
                     // Add to Setlist" two-line label that implies one. Drop
                     // the hold handler too; tap is the only meaningful action.
@@ -523,7 +523,7 @@ namespace YARG.Menu.MusicLibrary
                 // user can still reach Favorites / custom playlists. In lobby picker mode
                 // the AllowedSongHashes filter can legitimately reduce the library to zero
                 // (e.g. instrument combinations where no shared song is playable for all
-                // members) — without this, the only entry the player sees is
+                // members) -- without this, the only entry the player sees is
                 // "No Songs Match Criteria" and Favorites becomes unreachable. Gated on
                 // !IsSearching to match the normal-path placement below.
                 if (!_searchField.IsSearching)
@@ -927,7 +927,7 @@ namespace YARG.Menu.MusicLibrary
             base.OnDisable();
 
             // NOTE: do NOT clear SongPickedCallback / AllowedSongHashes here.
-            // OnDisable also fires for transient deactivations — opening and closing
+            // OnDisable also fires for transient deactivations -- opening and closing
             // the Filters submenu routes through MenuManager.ReactivateCurrentMenu,
             // which SetActive(false)→SetActive(true)'s this menu, and a clear here
             // would silently drop the lobby picker session every time the user
@@ -1152,7 +1152,7 @@ namespace YARG.Menu.MusicLibrary
 
         private void RefreshForAllowedSongsChange()
         {
-            // Capture BEFORE Refresh — that rebuilds ViewList and may invalidate CurrentSelection.
+            // Capture BEFORE Refresh -- that rebuilds ViewList and may invalidate CurrentSelection.
             var currentSongHash = (CurrentSelection as SongViewType)?.SongEntry.Hash;
             var snapshot = CaptureSelectionSnapshot();
             Refresh();
@@ -1427,7 +1427,7 @@ namespace YARG.Menu.MusicLibrary
                 // freshly-scanned library to the lobby hub so the server can
                 // recompute the shared intersection. Without this the local
                 // user's view of "what's queueable" diverges from what the
-                // server actually allows — they'd see new songs in the picker
+                // server actually allows -- they'd see new songs in the picker
                 // (AllowedSongHashes is reference-aliased to the live
                 // LobbySongLibrary, so it picks up local additions only after
                 // the server broadcasts them back), but QueueSong would reject

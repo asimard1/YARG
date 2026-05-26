@@ -49,7 +49,7 @@ namespace YARG.Menu.MusicLibrary
             // "playable for every member" intersection) so the count badge and
             // category preview reflect what the user will actually see when they
             // open the playlist. Without this filter the badge said "50 songs"
-            // but the playlist view rendered 0 — looked like favorites failed
+            // but the playlist view rendered 0 -- looked like favorites failed
             // to load. Falls through to "no filter" when AllowedSongHashes is
             // null (the non-lobby callers).
             var allow = MusicLibraryMenu.AllowedSongHashes;

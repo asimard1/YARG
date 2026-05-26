@@ -15,11 +15,7 @@ using YARG.Player;
 namespace YARG.Online
 {
     /// <summary>
-    /// Per-session auth state for talking to the YARG server: caches a dev-auth
-    /// bearer token plus the identity it minted, refreshes on demand, and feeds
-    /// <see cref="LobbyHubSession"/>'s SignalR <c>AccessTokenProvider</c>.
-    /// One instance is created when the player enters the online flow and held
-    /// by the active <see cref="LobbyHubSession"/>.
+    /// Caches a dev-auth bearer token and identity for the YARG server, refreshing on demand.
     /// </summary>
     public sealed class OnlineAccessTokenProvider
     {
@@ -28,8 +24,7 @@ namespace YARG.Online
 
         private const string DevAuthPath = "/api/v1/auth/dev";
 
-        // Refresh a little before the server-declared expiry so an in-flight
-        // request never lands with an expired token.
+        // Refresh before server-declared expiry to avoid in-flight token expiration.
         private static readonly TimeSpan ExpiryGrace = TimeSpan.FromSeconds(30);
 
         private static readonly JsonSerializerSettings JsonSettings = new()
@@ -70,11 +65,7 @@ namespace YARG.Online
             return SanitizeAuthName(name);
         }
 
-        // Server-side validation rejects names with anything outside
-        // [A-Za-z0-9 _-].
-        // Replace each disallowed char with an underscore so the player's
-        // profile name still resolves to a recognizable identity rather than
-        // silently falling back to "YARG-Player".
+        // Server rejects names outside [A-Za-z0-9 _-]; replace disallowed chars with underscore.
         private static readonly Regex DisallowedAuthNameChars = new(@"[^A-Za-z0-9 _-]", RegexOptions.Compiled);
 
         private static string SanitizeAuthName(string name)
@@ -87,10 +78,7 @@ namespace YARG.Online
             return string.IsNullOrEmpty(sanitized) ? "YARG-Player" : sanitized;
         }
 
-        /// <summary>
-        /// Acquire a token if none is cached or the cached one has (nearly) expired.
-        /// No-op when <see cref="HasValidToken"/> is true. Throws on failure.
-        /// </summary>
+        /// <summary>Acquire a token if needed. No-op when <see cref="HasValidToken"/> is true.</summary>
         public async UniTask EnsureAuthenticatedAsync(CancellationToken ct = default)
         {
             if (HasValidToken)
@@ -101,11 +89,7 @@ namespace YARG.Online
             await DevAuthAndCacheAsync(ct);
         }
 
-        /// <summary>
-        /// Returns a non-expired bearer token, re-authenticating if needed.
-        /// Assigned directly to SignalR's <c>options.AccessTokenProvider</c>
-        /// so reconnects automatically pick up a fresh token.
-        /// </summary>
+        /// <summary>Returns a non-expired bearer token, re-authenticating if needed.</summary>
         public async Task<string> GetAccessTokenAsync()
         {
             if (!HasValidToken)
@@ -128,11 +112,11 @@ namespace YARG.Online
                     UserId = response.UserId;
                     DisplayName = response.DisplayName;
                 }
-                YargLogger.LogInfo($"OnlineAccessTokenProvider: dev auth ok — userId={UserId}, expires={_expiresAt}");
+                YargLogger.LogInfo($"OnlineAccessTokenProvider: dev auth ok -- userId={UserId}, expires={_expiresAt}");
             }
             catch (Exception ex)
             {
-                YargLogger.LogError($"OnlineAccessTokenProvider: dev auth failed — {ex.Message}");
+                YargLogger.LogError($"OnlineAccessTokenProvider: dev auth failed -- {ex.Message}");
                 throw;
             }
         }

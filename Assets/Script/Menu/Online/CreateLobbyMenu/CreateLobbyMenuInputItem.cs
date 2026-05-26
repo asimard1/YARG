@@ -7,14 +7,14 @@ namespace YARG.Menu.Online
 {
     // Inline text-input row for the create-lobby popup, dropped in
     // alongside the ModifierItem rows. Sits in the NavigationGroup like
-    // any other row — Confirm (Green / pointer click) focuses the inner
+    // any other row -- Confirm (Green / pointer click) focuses the inner
     // TMP_InputField so the user can type without leaving the keyboard
     // navigation flow. Reading the typed value happens through
     // <see cref="Text"/>; the CreateLobbyMenu calls that at submit time.
     public class CreateLobbyMenuItemInput : NavigatableBehaviour
     {
         // Optional header label that sits above (or beside) the input
-        // field — e.g. "Lobby Name". Hidden via prefab if a row doesn't
+        // field -- e.g. "Lobby Name". Hidden via prefab if a row doesn't
         // need it. Caller-localized; this component just renders the
         // string it's handed.
         [SerializeField]
@@ -26,7 +26,7 @@ namespace YARG.Menu.Online
         public string Text => _input != null ? _input.text : string.Empty;
 
         /// <summary>Seed the row with a header label, initial value, and
-        /// placeholder. All three are localized by the caller — this
+        /// placeholder. All three are localized by the caller -- this
         /// component knows nothing about the loc map. Pass null for any
         /// piece to leave it untouched (header) or empty (text fields).</summary>
         public void Initialize(string headerText, string initialText, string placeholderText)
@@ -59,7 +59,7 @@ namespace YARG.Menu.Online
             }
         }
 
-        // Clicking the row directly should also focus the input — even if
+        // Clicking the row directly should also focus the input -- even if
         // the click landed on the row background rather than the inner
         // input rect, the user's intent is to type.
         public override void OnPointerDown(PointerEventData eventData)

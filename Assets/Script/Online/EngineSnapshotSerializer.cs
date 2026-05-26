@@ -12,7 +12,7 @@ namespace YARG.Online
     /// Wire format for an <see cref="EngineSnapshot"/>. Encodes / decodes the
     /// snapshot's fields field-by-field through a <see cref="NetDataWriter"/>
     /// / <see cref="NetDataReader"/> pair. The byte blob is opaque to the
-    /// server — only the sender and receiver agree on the layout.
+    /// server -- only the sender and receiver agree on the layout.
     ///
     /// SnapshotKind discriminates subclass-specific extensions:
     ///   0 = invalid
@@ -171,7 +171,7 @@ namespace YARG.Online
             // time. Since we send snapshots at quiet moments (between events)
             // they're almost always empty; even when non-empty, dropping
             // them just means the receiver may need one additional tick of
-            // engine.Update() to converge — corrected by the next snapshot.
+            // engine.Update() to converge -- corrected by the next snapshot.
             // Excluding them keeps the wire format simple and small.
 
             w.Put(s.NoteFlagStartIndex);
@@ -251,7 +251,7 @@ namespace YARG.Online
             s.NextTrillNote = r.GetInt();
             s.LaneExpireTime = r.GetDouble();
 
-            // PendingInputs / PendingUpdates aren't on the wire — see comment
+            // PendingInputs / PendingUpdates aren't on the wire -- see comment
             // in WriteBase. Leave the snapshot's defaults (empty arrays).
 
             s.NoteFlagStartIndex = r.GetInt();
@@ -274,7 +274,7 @@ namespace YARG.Online
 
             s.WhammyTicksRemainder = r.GetDouble();
 
-            // Per-solo accumulators — paired (NotesHit, SoloBonus) entries.
+            // Per-solo accumulators -- paired (NotesHit, SoloBonus) entries.
             int soloCount = r.GetInt();
             s.SoloNotesHit = new int[soloCount];
             s.SoloBonus    = new int[soloCount];
@@ -437,7 +437,7 @@ namespace YARG.Online
 
         private static void WriteDrums(NetDataWriter w, DrumsEngineSnapshot s)
         {
-            // DrumsEngineSnapshot adds no fields of its own — drums have no
+            // DrumsEngineSnapshot adds no fields of its own -- drums have no
             // button-mask / leniency / sustain state that survives a tick.
             // Only DrumsStats-specific stats need to be appended.
             var ds = s.Stats as DrumsStats
@@ -451,7 +451,7 @@ namespace YARG.Online
             w.Put(ds.DynamicsBonus);
 
             // OverhitsByAction is a Dictionary<int, int>. Write as (count,
-            // (key,value) pairs). Usually short — at most a few entries per
+            // (key,value) pairs). Usually short -- at most a few entries per
             // distinct pad that's been overhit.
             w.Put(ds.OverhitsByAction.Count);
             foreach (var kv in ds.OverhitsByAction)

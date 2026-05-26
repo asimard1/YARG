@@ -13,13 +13,7 @@ using YARG.Online.Game.Contracts.Packets;
 namespace YARG.Online
 {
     /// <summary>
-    /// LiteNetLib UDP client for the in-game session. Lifetime is short — created by
-    /// <see cref="LobbyGameOrchestrator"/> when the lobby hub broadcasts game start,
-    /// and disposed by it on <see cref="GameEnded"/>/<see cref="Disconnected"/> or when
-    /// the orchestrator itself is torn down. All public events are raised on the Unity
-    /// main thread — each LiteNetLib callback hops via <see cref="UniTask.SwitchToMainThread()"/>
-    /// inside a tracked fire-and-forget body so <see cref="DisposeAsync"/> can wait for
-    /// in-flight dispatches to drain.
+    /// LiteNetLib UDP client for an in-game session. Events are raised on the Unity main thread.
     /// </summary>
     public sealed class GameClientSession
     {
@@ -33,11 +27,7 @@ namespace YARG.Online
 
         private readonly CancellationTokenSource _lifetimeCts = new();
         private int _disposed; // 0 = alive, 1 = disposing/disposed
-
-        // Count of fire-and-forget Track() bodies currently in flight. DisposeAsync
-        // waits for this to drain to zero before tearing down the NetManager, so a
-        // callback racing with shutdown can't fire an event after disposal.
-        private int _inflightHandlers;
+        private int _inflightHandlers; // Track() bodies in flight; DisposeAsync drains to zero
 
         public GameClientSession()
         {
@@ -49,100 +39,51 @@ namespace YARG.Online
             get { lock (_lock) return _manager != null && _serverPeer != null; }
         }
 
-        /// <summary>Fired on the Unity main thread when the server broadcasts
-        /// <see cref="PacketOpcode.GameStart"/>. Payload contains every peer's loadout —
-        /// enough to instantiate one engine per player.</summary>
+        /// <summary>Fired (main thread) when GameStart is received with peer loadouts.</summary>
         public event Action<PeerLoadout[]> GameStarted;
 
-        /// <summary>Fired on the Unity main thread when the server broadcasts
-        /// <see cref="PacketOpcode.GameStartCue"/>. Carries the wall-clock instant where
-        /// each client should align its <c>songTime=0</c>.</summary>
+        /// <summary>Fired (main thread) when GameStartCue arrives with the song origin timestamp.</summary>
         public event Action<long, int> StartCueReceived;
 
-        /// <summary>Fired on the LiteNetLib poll thread (NOT the main thread) when a
-        /// <see cref="PacketOpcode.Pong"/> arrives. Args: <c>clientTickMs</c> (echoed from
-        /// the originating ping), <c>serverUtcMs</c> (server's wall-clock at reply),
-        /// <c>receiveLocalUtcMs</c> (this client's wall-clock at packet arrival, sampled
-        /// before deserialization). Stays on the poll thread because clock-sync wants the
-        /// arrival timestamp as close to the wire as possible — a main-thread hop adds
-        /// frame-time jitter to the very thing we're measuring.</summary>
+        /// <summary>Fired (receive thread) on Pong. Args: clientTickMs, serverUtcMs, receiveLocalUtcMs.
+        /// Stays on receive thread to avoid adding frame-time jitter to clock-sync measurements.</summary>
         public event Action<long, long, long> PongReceived;
 
-        /// <summary>Fired on the Unity main thread when a remote peer drops mid-session.
-        /// Receivers should mark that <c>YargPlayer</c> DNF and stop expecting more inputs
-        /// for that peer id.</summary>
+        /// <summary>Fired (main thread) when a remote peer drops mid-session.</summary>
         public event Action<int> RemotePeerLeft;
 
-        /// <summary>Fired on the Unity main thread when the server broadcasts
-        /// <see cref="PacketOpcode.GameEnd"/> (all peers complete or straggler-timed-out).</summary>
+        /// <summary>Fired (main thread) when the server broadcasts GameEnd.</summary>
         public event Action GameEnded;
 
-        /// <summary>Fired on the Unity main thread when the UDP connection drops for any
-        /// reason (server stop, idle timeout, network error).</summary>
+        /// <summary>Fired (main thread) when the UDP connection drops.</summary>
         public event Action Disconnected;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer reports a
-        /// missed note. Args: <c>peerId</c>, <c>noteIndex</c> (into the chart's flattened
-        /// note list for the remote peer's instrument+difficulty), <c>songTime</c>.
-        /// Stays on the receive thread because the prediction layer needs the lowest
-        /// possible event-arrival latency to decide whether a miss lands inside the
-        /// commit window or triggers a rollback.</summary>
+        /// <summary>Fired (receive thread) on remote NoteMissed. Args: peerId, noteIndex, songTime.</summary>
         public event Action<int, int, double> NoteMissedReceived;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer activates
-        /// star power. Args: <c>peerId</c>, <c>songTime</c> at which activation occurred.
-        /// Stays on the receive thread for the same latency reason as
-        /// <see cref="NoteMissedReceived"/>.</summary>
+        /// <summary>Fired (receive thread) on remote StarPowerActivated. Args: peerId, songTime.</summary>
         public event Action<int, double> StarPowerActivatedReceived;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer's whammy
-        /// axis changes. Args: <c>peerId</c>, <c>songTime</c>, <c>value</c> in [0,1].
-        /// Stays on the receive thread for the same latency reason as
-        /// <see cref="NoteMissedReceived"/>.</summary>
+        /// <summary>Fired (receive thread) on remote Whammy. Args: peerId, songTime, value [0,1].</summary>
         public event Action<int, double, float> WhammyReceived;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
-        /// emits a vocal pitch sample. Args: <c>peerId</c>, <c>songTime</c>,
-        /// <c>pitchMidi</c>, <c>isSinging</c>. The director's per-peer simulator
-        /// buffers samples and the visual layer interpolates between them so
-        /// the on-track pitch blob slides smoothly between packets.</summary>
+        /// <summary>Fired (receive thread) on remote VocalPitch. Args: peerId, songTime, pitchMidi, isSinging.</summary>
         public event Action<int, double, float, bool> VocalPitchReceived;
         public event Action<int, double, int, float>  FreePlayInputReceived;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
-        /// releases a sustain early. Args: <c>peerId</c>, <c>noteIndex</c>
-        /// (root note of the sustain), <c>songTime</c> at which release
-        /// happened. Stays on the receive thread because the prediction
-        /// layer keys its rollback decision off event-arrival time.</summary>
+        /// <summary>Fired (receive thread) on remote SustainReleased. Args: peerId, noteIndex, songTime.</summary>
         public event Action<int, int, double> SustainReleasedReceived;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
-        /// overstrums. Args: <c>peerId</c>, <c>songTime</c> at which the
-        /// overstrum fired. Stays on the receive thread for the same
-        /// rationale as <see cref="SustainReleasedReceived"/>.</summary>
+        /// <summary>Fired (receive thread) on remote Overstrum. Args: peerId, songTime.</summary>
         public event Action<int, double> OverstrumReceived;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
-        /// reports a hit. Paired with <see cref="NoteMissedReceived"/> —
-        /// together they form the per-note outcome stream used by the
-        /// prediction layer's Markov-1 model.</summary>
+        /// <summary>Fired (receive thread) on remote NoteHit. Args: peerId, noteIndex, songTime.</summary>
         public event Action<int, int, double> NoteHitReceived;
 
-        /// <summary>Fired on the LiteNetLib receive thread when a remote peer
-        /// delivers a periodic authoritative engine-state snapshot. Args:
-        /// <c>peerId</c>, <c>songTime</c> (sender's engine time at capture),
-        /// <c>snapshotKind</c> (1=Guitar, ...), <c>snapshotData</c> (opaque
-        /// bytes, deserialized by <see cref="EngineSnapshotSerializer"/>).
-        /// The receiver restores the mirror engine to the sender's exact
-        /// state, eliminating any drift accumulated since the previous
-        /// snapshot.</summary>
+        /// <summary>Fired (receive thread) on remote EngineStateSnapshot. Args: peerId, songTime, kind, data.</summary>
         public event Action<int, double, byte, byte[]> EngineStateSnapshotReceived;
 
-        /// <summary>Connect to the game server. Single-shot — throws if called on a
-        /// session whose <see cref="NetManager"/> is already started. The game
-        /// server gates admission on the per-member JWT alone; the legacy
-        /// shared connection key was removed when the lobby allocator moved
-        /// to per-allocation tokens.</summary>
+        /// <summary>Connect to the game server. Single-shot; throws if already started.</summary>
         public async UniTask<bool> ConnectAsync(IPEndPoint endpoint, string jwt, CancellationToken ct = default)
         {
             lock (_lock)
@@ -150,26 +91,16 @@ namespace YARG.Online
                 if (_manager != null)
                 {
                     throw new InvalidOperationException(
-                        "GameClientSession already has an active NetManager — call DisposeAsync first.");
+                        "GameClientSession already has an active NetManager -- call DisposeAsync first.");
                 }
 
                 _listener = new EventBasedNetListener();
-                // UnsyncedEvents: LiteNetLib fires every callback directly on its
-                // receive thread instead of buffering for PollEvents(). Removes
-                // the per-tick latency floor between packet arrival and our
-                // handler. We already marshal to the Unity main thread via
-                // Track + SwitchToMainThread for handlers that need it.
                 _manager = new NetManager(_listener)
                 {
                     UnconnectedMessagesEnabled = false,
                     UnsyncedEvents = true,
-                    // LiteNetLib defaults (1s ping / 5s disconnect-timeout) are too tight
-                    // for a Unity title — a single Mono stop-the-world GC pause during
-                    // scene load can run 5–10s on a memory-heavy second/third song and
-                    // freeze every thread, including this NetManager's logic thread.
-                    // With no pings emitted during the pause, the server's matching
-                    // 5s timeout fires and broadcasts GameEnd. Bump both sides to a
-                    // 15s tolerance (server-side mirror in GameNetworkService.cs).
+                    // 15s tolerance so Mono stop-the-world GC pauses during scene
+                    // load don't trigger server disconnect (mirrors GameNetworkService).
                     PingInterval = 1000,
                     DisconnectTimeout = 15000,
                 };
@@ -178,12 +109,12 @@ namespace YARG.Online
                 _listener.PeerConnectedEvent += peer =>
                 {
                     _serverPeer = peer;
-                    YargLogger.LogInfo($"GameClientSession: connected — peerId={peer.Id}");
+                    YargLogger.LogInfo($"GameClientSession: connected -- peerId={peer.Id}");
                     _connectOutcome.TrySetResult(true);
                 };
                 _listener.PeerDisconnectedEvent += (peer, info) =>
                 {
-                    YargLogger.LogInfo($"GameClientSession: disconnected — reason={info.Reason}");
+                    YargLogger.LogInfo($"GameClientSession: disconnected -- reason={info.Reason}");
                     _serverPeer = null;
                     _connectOutcome.TrySetResult(false);
                     Track(async () =>
@@ -194,7 +125,7 @@ namespace YARG.Online
                 };
                 _listener.NetworkReceiveEvent += OnNetworkReceive;
                 _listener.NetworkErrorEvent += (ep, err) =>
-                    YargLogger.LogWarning($"GameClientSession: network error from {ep} — {err}");
+                    YargLogger.LogWarning($"GameClientSession: network error from {ep} -- {err}");
             }
 
             if (!_manager.Start())
@@ -208,7 +139,7 @@ namespace YARG.Online
             writer.Put(jwt);
             _manager.Connect(endpoint, writer);
 
-            YargLogger.LogInfo($"GameClientSession: connecting to {endpoint}…");
+            YargLogger.LogInfo($"GameClientSession: connecting to {endpoint}...");
 
             try
             {
@@ -254,11 +185,7 @@ namespace YARG.Online
             YargLogger.LogInfo($"GameClientSession: SendLoadout instrument={instrument} difficulty={difficulty} noteSpeed={noteSpeed} modifiers=0x{modifiers:X}");
         }
 
-        /// <summary>
-        /// Retract a previously-sent loadout (DifficultySelect "Unready"). Server drops
-        /// the stored loadout if the game hasn't started yet; otherwise the request is a
-        /// silent no-op (you can't unready once the game is in progress).
-        /// </summary>
+        /// <summary>Retract a previously-sent loadout (Unready). No-op if game already started.</summary>
         public void SendUnready()
         {
             var peer = _serverPeer;
@@ -288,9 +215,7 @@ namespace YARG.Online
             YargLogger.LogInfo("GameClientSession: SendPeerReady");
         }
 
-        /// <summary>Send a clock-sync probe. <paramref name="clientTickMs"/> is opaque to the
-        /// server — it is echoed back verbatim so the caller can pair the reply with the
-        /// request and measure RTT. Safe to call from any thread once connected.</summary>
+        /// <summary>Send a clock-sync ping. <paramref name="clientTickMs"/> is echoed back for RTT measurement.</summary>
         public void SendPing(long clientTickMs)
         {
             var peer = _serverPeer;
@@ -304,10 +229,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Send a single missed-note event to the server for fan-out. Called
-        /// the instant the local engine reports a miss — NOT batched, because the
-        /// receivers' prediction layer is sensitive to event arrival time. Safe to
-        /// call from any thread.</summary>
+        /// <summary>Send a missed-note event for fan-out. Not batched -- latency-sensitive.</summary>
         public void SendNoteMissed(int noteIndex, double songTime)
         {
             var peer = _serverPeer;
@@ -323,8 +245,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Send a star-power activation event to the server for fan-out.
-        /// Called when the local player activates SP. Safe to call from any thread.</summary>
+        /// <summary>Send a star-power activation event for fan-out.</summary>
         public void SendStarPowerActivated(double songTime)
         {
             var peer = _serverPeer;
@@ -339,10 +260,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Send a whammy axis sample to the server for fan-out. Called from
-        /// the local engine's whammy input handler — NOT batched. Senders should apply
-        /// their own change-threshold (e.g. quantize to 256 levels) before calling so
-        /// the packet rate stays bounded. Safe to call from any thread.</summary>
+        /// <summary>Send a whammy axis sample for fan-out. Callers should apply a change-threshold.</summary>
         public void SendWhammy(double songTime, float value)
         {
             var peer = _serverPeer;
@@ -358,10 +276,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Send a vocal pitch sample for the singer's on-track blob position.
-        /// Senders should rate-limit (~20 Hz is plenty — receivers interpolate between
-        /// samples). pitchMidi matches VocalsEngine.PitchSang. isSinging disambiguates
-        /// a valid 0 MIDI value from "silence" on the wire.</summary>
+        /// <summary>Send a vocal pitch sample. Rate-limit to ~20 Hz; receivers interpolate.</summary>
         public void SendVocalPitch(double songTime, float pitchMidi, bool isSinging)
         {
             var peer = _serverPeer;
@@ -378,10 +293,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Fan-out a single free-play input action (drum pad or guitar
-        /// fret + strum) so remote receivers can flash their highway visuals
-        /// during BRE / drum activator phrases — the normal NoteHit pipe goes
-        /// silent during those sections.</summary>
+        /// <summary>Fan-out a free-play input for remote highway visuals during BRE / activator phrases.</summary>
         public void SendFreePlayInput(double songTime, int action, float velocity)
         {
             var peer = _serverPeer;
@@ -398,11 +310,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Send an early-sustain-release event to the server for
-        /// fan-out. Called the instant the local engine reports a sustain
-        /// was dropped before its natural end. Doesn't break combo on the
-        /// receiver — only stops sustain scoring at <paramref name="songTime"/>.
-        /// Safe to call from any thread.</summary>
+        /// <summary>Send an early-sustain-release event for fan-out.</summary>
         public void SendSustainReleased(int noteIndex, double songTime)
         {
             var peer = _serverPeer;
@@ -418,11 +326,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Send an overstrum event to the server for fan-out.
-        /// Called the instant the local engine reports an overstrum.
-        /// Breaks combo, drops active sustains, strips SP from the current
-        /// note, and docks the rock meter on receivers. Safe to call from
-        /// any thread.</summary>
+        /// <summary>Send an overstrum event for fan-out.</summary>
         public void SendOverstrum(double songTime)
         {
             var peer = _serverPeer;
@@ -437,10 +341,7 @@ namespace YARG.Online
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Send a note-hit event to the server for fan-out.
-        /// Paired with <see cref="SendNoteMissed"/> — together they form
-        /// the per-note outcome stream that drives the receiver's
-        /// prediction model. Safe to call from any thread.</summary>
+        /// <summary>Send a note-hit event for fan-out.</summary>
         public void SendNoteHit(int noteIndex, double songTime)
         {
             var peer = _serverPeer;
@@ -470,13 +371,7 @@ namespace YARG.Online
             YargLogger.LogInfo("GameClientSession: SendGameComplete");
         }
 
-        /// <summary>Send an authoritative engine-state snapshot to the relay
-        /// for fan-out. Receivers restore their mirror engine to the
-        /// sender's exact state, eliminating any drift accumulated since the
-        /// previous snapshot. Sent periodically by the local player update
-        /// path; one final snapshot is also sent immediately before
-        /// GameComplete so receivers can render the results screen using
-        /// authoritative final values. Safe to call from any thread.</summary>
+        /// <summary>Send an authoritative engine-state snapshot for fan-out.</summary>
         public void SendEngineStateSnapshot(double songTime, byte snapshotKind, byte[] snapshotData)
         {
             var peer = _serverPeer;
@@ -501,9 +396,6 @@ namespace YARG.Online
 
             try { _lifetimeCts.Cancel(); } catch { }
 
-            // Drain in-flight Track bodies. After cancel, each pending
-            // SwitchToMainThread continuation throws on its next Update tick and
-            // the finally in Track decrements the counter.
             await UniTask.WaitUntil(() => Volatile.Read(ref _inflightHandlers) == 0);
 
             NetManager manager;
@@ -518,7 +410,7 @@ namespace YARG.Online
             if (manager != null)
             {
                 try { manager.Stop(); }
-                catch (Exception ex) { YargLogger.LogWarning($"GameClientSession: stop — {ex.Message}"); }
+                catch (Exception ex) { YargLogger.LogWarning($"GameClientSession: stop -- {ex.Message}"); }
             }
 
             _lifetimeCts.Dispose();
@@ -526,9 +418,6 @@ namespace YARG.Online
             YargLogger.LogInfo("GameClientSession: disposed");
         }
 
-        // Tracks fire-and-forget bodies that hop to the main thread so DisposeAsync
-        // can await them. OperationCanceledException from a cancelled SwitchToMainThread
-        // is expected during shutdown and swallowed silently.
         private async UniTaskVoid Track(Func<UniTask> body)
         {
             Interlocked.Increment(ref _inflightHandlers);
@@ -552,10 +441,7 @@ namespace YARG.Online
 
         private void OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod method)
         {
-            // Sample local UTC ms before doing anything else with the packet. The Pong case
-            // uses this as the receive timestamp for clock-sync; sampling later (after the
-            // opcode read or deserialize) would attribute a few hundred microseconds of
-            // parsing work to network RTT.
+            // Sample receive time before parsing for accurate clock-sync RTT.
             long receiveLocalUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             try
             {
@@ -569,7 +455,7 @@ namespace YARG.Online
                         var startPacket = new GameStartPacket();
                         startPacket.Deserialize(reader);
                         var loadouts = startPacket.Loadouts;
-                        YargLogger.LogInfo($"GameClientSession: GameStart received — loadouts={loadouts.Length}");
+                        YargLogger.LogInfo($"GameClientSession: GameStart received -- loadouts={loadouts.Length}");
                         Track(async () =>
                         {
                             await UniTask.SwitchToMainThread(_lifetimeCts.Token);
@@ -583,7 +469,7 @@ namespace YARG.Online
                         cuePacket.Deserialize(reader);
                         var originUtcMs = cuePacket.SongOriginUtcMs;
                         var countdownMs = cuePacket.CountdownMs;
-                        YargLogger.LogInfo($"GameClientSession: GameStartCue received — origin={originUtcMs}");
+                        YargLogger.LogInfo($"GameClientSession: GameStartCue received -- origin={originUtcMs}");
                         Track(async () =>
                         {
                             await UniTask.SwitchToMainThread(_lifetimeCts.Token);
@@ -620,9 +506,6 @@ namespace YARG.Online
                     {
                         var pongPacket = new PongPacket();
                         pongPacket.Deserialize(reader);
-                        // Invoke synchronously on the receive thread. ServerClockSync's
-                        // handler is small and lock-free; a main-thread hop would only
-                        // add frame-time jitter to the very thing we're measuring.
                         PongReceived?.Invoke(pongPacket.ClientTickMs, pongPacket.ServerUtcMs, receiveLocalUtcMs);
                         break;
                     }
@@ -634,10 +517,6 @@ namespace YARG.Online
                         YargLogger.LogFormatDebug(
                             "Prediction[wire-recv] NoteMissed: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
                             missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime, subCount);
-                        // Invoke synchronously on the receive thread. The prediction
-                        // layer's commit-window decision is keyed off event arrival time;
-                        // a main-thread hop would push every miss past the deadline by
-                        // up to one frame and inflate the rollback rate for no benefit.
                         NoteMissedReceived?.Invoke(missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime);
                         break;
                     }
@@ -649,8 +528,6 @@ namespace YARG.Online
                         YargLogger.LogFormatDebug(
                             "Prediction[wire-recv] StarPowerActivated: peer={0} songTime={1:0.000} subs={2}",
                             spPacket.PeerId, spPacket.SongTime, subCount);
-                        // Same rationale as NoteMissed: stays on the receive thread to
-                        // keep activation alignment as tight as possible.
                         StarPowerActivatedReceived?.Invoke(spPacket.PeerId, spPacket.SongTime);
                         break;
                     }
@@ -662,7 +539,6 @@ namespace YARG.Online
                         YargLogger.LogFormatDebug(
                             "Prediction[wire-recv] Whammy: peer={0} songTime={1:0.000} value={2:0.00} subs={3}",
                             whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value, subCount);
-                        // Same rationale as NoteMissed: stays on the receive thread.
                         WhammyReceived?.Invoke(whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value);
                         break;
                     }
@@ -670,8 +546,6 @@ namespace YARG.Online
                     {
                         var vpPacket = new VocalPitchPacket();
                         vpPacket.Deserialize(reader);
-                        // Same rationale as Whammy: stays on the receive thread; the
-                        // director queues the sample for next-tick consumption.
                         VocalPitchReceived?.Invoke(
                             vpPacket.PeerId, vpPacket.SongTime, vpPacket.PitchMidi, vpPacket.IsSinging);
                         break;

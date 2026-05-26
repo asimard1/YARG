@@ -73,7 +73,7 @@ namespace YARG.Player
 
         /// <summary>
         /// Constructs a placeholder player whose engine will be driven by network inputs from
-        /// the named remote peer. Visual presets default to the local user's defaults — only
+        /// the named remote peer. Visual presets default to the local user's defaults -- only
         /// the fields that affect engine scoring (instrument, difficulty, EnginePreset) come
         /// from the wire, so two clients computing the same remote engine agree on the score.
         /// </summary>

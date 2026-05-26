@@ -120,7 +120,7 @@ namespace YARG.Menu.DifficultySelect
 
         private void OnEnable()
         {
-            // LobbyMode overrides the Quickplay/Practice subtitle — when reached from an
+            // LobbyMode overrides the Quickplay/Practice subtitle -- when reached from an
             // online lobby, the header reads "Online" instead of "Quickplay".
             string subHeaderKey = LobbyMode
                 ? "Online"
@@ -228,7 +228,7 @@ namespace YARG.Menu.DifficultySelect
 
         private void UpdateForPlayer()
         {
-            // Set player text — only when iterating through the player list. In the
+            // Set player text -- only when iterating through the player list. In the
             // post-confirmation WaitingForPlayers state, _playerIndex has advanced past
             // the end of PlayerContainer.Players so CurrentPlayer would throw IOOR.
             if (_menuState != State.WaitingForPlayers)
@@ -407,7 +407,7 @@ namespace YARG.Menu.DifficultySelect
         {
             // Local user has confirmed; show the wait gate with current ready count
             // (1 = the local user) over the lobby's member total. Real per-peer ready
-            // tracking requires server protocol work — for now the count reflects
+            // tracking requires server protocol work -- for now the count reflects
             // "you submitted, others may or may not have."
             int totalPlayers = 0;
             var currentLobby = LobbyHubSession.Current?.CurrentLobby;
@@ -425,7 +425,7 @@ namespace YARG.Menu.DifficultySelect
 
             // Unready: tell the orchestrator to retract our loadout on the game server
             // (ClearLoadout packet) and return to State.Main locally. Server only honors
-            // the retraction if the game hasn't started yet — past that point this is a
+            // the retraction if the game hasn't started yet -- past that point this is a
             // silent no-op on the server while still letting the user revisit their
             // selections on the next Ready click. Re-clicking Ready resubmits.
             CreateItem(LocalizeHeader("Unready"), true, _difficultyItemSmallRedPrefab, () =>

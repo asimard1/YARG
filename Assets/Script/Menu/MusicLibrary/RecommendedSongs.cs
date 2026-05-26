@@ -83,7 +83,7 @@ namespace YARG.Menu.MusicLibrary
                 yargPool = filtered.Count > 0 ? filtered : null;
             }
 
-            // Cheap exit if both pools are empty — protects against infinite loops with a
+            // Cheap exit if both pools are empty -- protects against infinite loops with a
             // pathologically small allow-list whose songs are all already in `songs`.
             bool hasYargPool = yargPool != null && yargPool.Count > 0;
             bool hasGeneralPool = allowedHashes == null || (allowedPool != null && allowedPool.Count > 0);

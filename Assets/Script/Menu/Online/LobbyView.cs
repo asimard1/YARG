@@ -5,7 +5,7 @@ using YARG.Menu.ListMenu;
 namespace YARG.Menu.Online
 {
     /// <summary>
-    /// MonoBehaviour on the LobbyView prefab — equivalent of <c>SongView</c>
+    /// MonoBehaviour on the LobbyView prefab -- equivalent of <c>SongView</c>
     /// for the lobby browser. Extends the default <see cref="ViewObject{T}"/>
     /// behavior (primary/secondary text, background swap on selected) with
     /// two extra TMP slots for the lobby type and lobby state badges.
