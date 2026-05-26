@@ -12,12 +12,14 @@ namespace YARG.Menu.Online
     /// </summary>
     public class LobbyView : ViewObject<LobbyViewType>
     {
+        [SerializeField] private TextMeshProUGUI _hostNameText;
         [SerializeField] private TextMeshProUGUI _lobbyTypeText;
         [SerializeField] private TextMeshProUGUI _lobbyStateText;
 
         public override void Show(bool selected, LobbyViewType viewType)
         {
             base.Show(selected, viewType);
+            if (_hostNameText != null) _hostNameText.text = viewType.GetHostNameText();
             _lobbyTypeText.text  = viewType.GetLobbyTypeText();
             _lobbyStateText.text = viewType.GetLobbyStateText();
         }

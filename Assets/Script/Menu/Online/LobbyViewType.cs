@@ -1,5 +1,8 @@
+using UnityEngine;
+using YARG.Core.Song;
 using YARG.Menu.ListMenu;
 using YARG.Online.Lobbies.Contracts.Enums;
+using YARG.Song;
 
 namespace YARG.Menu.Online
 {
@@ -25,12 +28,35 @@ namespace YARG.Menu.Online
 
         public override string GetPrimaryText(bool selected)
         {
-            return $"{_lobby.HostName} | {_lobby.LobbyName}";
+            return _lobby.LobbyName;
         }
 
         public override string GetSecondaryText(bool selected)
         {
             return $"{_lobby.PlayerCount}/{_lobby.PlayerMax} Players";
+        }
+
+        public string GetHostNameText()
+        {
+            return _lobby.HostName;
+        }
+
+        /// <summary>
+        /// Returns the source icon (RB, GH, Custom, etc.) for the lobby's current
+        /// top-queue song, looked up by hash from the local song library. Same
+        /// pattern as <c>SongViewType.GetIcon()</c>. Returns null (icon hidden)
+        /// when the lobby has no queued song or the local player doesn't own it.
+        /// </summary>
+        public override Sprite GetIcon()
+        {
+            if (string.IsNullOrEmpty(_lobby.SongName)) return null;
+
+            var hash = HashWrapper.FromString(_lobby.SongName);
+            if (SongContainer.SongsByHash.TryGetValue(hash, out var entries) && entries.Count > 0)
+            {
+                return SongSources.SourceToIcon(entries[0].Source);
+            }
+            return null;
         }
 
         public string GetLobbyTypeText()
