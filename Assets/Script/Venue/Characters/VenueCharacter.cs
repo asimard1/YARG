@@ -41,7 +41,7 @@ namespace YARG.Venue.Characters
         public VocalGender CharacterGender = VocalGender.Unspecified;
 
         [SerializeField]
-        private int _actionsPerAnimationCycle;
+        protected int _actionsPerAnimationCycle;
 
         [Space]
 
@@ -52,7 +52,7 @@ namespace YARG.Venue.Characters
         [SerializeField]
         private string _playingAnimationName;
         [SerializeField]
-        private int _framesToFirstHit;
+        protected int _framesToFirstHit;
         [Space]
         [SerializeField]
         private List<string> _strumUpStates = new();
