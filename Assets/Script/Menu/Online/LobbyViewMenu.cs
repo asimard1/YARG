@@ -839,6 +839,7 @@ namespace YARG.Menu.Online
                 // Allocation can take seconds -- show a loading overlay.
                 using (var loading = new LoadingContext())
                 {
+                    MenuManager.Instance.DisableCurrentMenu();
                     loading.SetLoadingText(Localize.Key("Menu.Online.PreparingGame"));
                     await session.StartGameAsync(CancellationToken.None);
                 }

@@ -197,6 +197,7 @@ namespace YARG.Menu.Online
         private async UniTaskVoid EnsureConnectedAsync()
         {
             using var context = new LoadingContext();
+            MenuManager.Instance.DisableCurrentMenu();
             context.SetLoadingText("Loading lobbies...");
             try
             {
@@ -282,6 +283,7 @@ namespace YARG.Menu.Online
             YargLogger.LogInfo($"OnlineMenu: join lobby -- host={lobby.HostName}, song={lobby.SongName}");
 
             using var context = new LoadingContext();
+            MenuManager.Instance.DisableCurrentMenu();
             context.SetLoadingText("Joining lobby...");
             try
             {

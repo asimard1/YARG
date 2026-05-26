@@ -118,6 +118,7 @@ namespace YARG.Menu.Online
             }
 
             using var context = new LoadingContext();
+            MenuManager.Instance.DisableCurrentMenu();
             context.SetLoadingText("Joining lobby...");
             try
             {

@@ -326,6 +326,10 @@
                 "Title": "Online Server Unavailable",
                 "Body": "Couldn't reach the YARG server. Only LAN play is available."
             },
+            "UpdateRequired": {
+                "Title": "Update Required",
+                "Body": "Your client is outdated. Please update to at least version {0}."
+            },
             "CreateLobbyMenu": {
                 "Create": "Create",
                 "LobbyName": "Lobby Name",

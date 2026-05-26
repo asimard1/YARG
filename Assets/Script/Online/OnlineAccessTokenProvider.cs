@@ -124,7 +124,11 @@ namespace YARG.Online
         private async UniTask<DevAuthResponse> PerformDevAuthAsync(CancellationToken ct)
         {
             var url = BaseUrl.TrimEnd('/') + DevAuthPath;
-            var body = JsonConvert.SerializeObject(new DevAuthRequest(_authName), JsonSettings);
+            var clientVersion = GlobalVariables.Instance != null
+                ? GlobalVariables.Instance.CurrentVersion
+                : null;
+            var body = JsonConvert.SerializeObject(
+                new DevAuthRequest(_authName, clientVersion), JsonSettings);
 
             using var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST);
             req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body))
@@ -135,6 +139,16 @@ namespace YARG.Online
             req.SetRequestHeader("Accept", "application/json");
 
             await req.SendWebRequest().ToUniTask(cancellationToken: ct);
+
+            if (req.responseCode == 426)
+            {
+                // Server requires a newer client version.
+                var versionError = JsonConvert.DeserializeObject<ClientVersionError>(
+                    req.downloadHandler.text, JsonSettings);
+                var min = versionError?.MinVersion ?? "unknown";
+                throw new ClientUpdateRequiredException(
+                    $"Your client is outdated. Please update to at least version {min}.", min);
+            }
 
             if (req.result != UnityWebRequest.Result.Success)
             {
@@ -148,6 +162,18 @@ namespace YARG.Online
                 throw new InvalidOperationException("Dev auth response was empty.");
             }
             return response;
+        }
+    }
+
+    /// <summary>Thrown when the server rejects the client version (HTTP 426).</summary>
+    public sealed class ClientUpdateRequiredException : Exception
+    {
+        public string MinVersion { get; }
+
+        public ClientUpdateRequiredException(string message, string minVersion)
+            : base(message)
+        {
+            MinVersion = minVersion;
         }
     }
 }

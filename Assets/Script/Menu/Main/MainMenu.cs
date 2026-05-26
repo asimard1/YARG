@@ -122,6 +122,14 @@ namespace YARG.Menu.Main
             {
                 await provider.EnsureAuthenticatedAsync();
             }
+            catch (ClientUpdateRequiredException ex)
+            {
+                YargLogger.LogWarning($"MainMenu: client update required -- {ex.Message}");
+                DialogManager.Instance.ShowMessage(
+                    Localize.Key("Menu.Online.UpdateRequired.Title"),
+                    Localize.KeyFormat("Menu.Online.UpdateRequired.Body", ex.MinVersion));
+                return;
+            }
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);

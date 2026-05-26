@@ -685,9 +685,8 @@ namespace YARG.Online
             if (_peerToPlayer.TryGetValue(peerId, out var player))
             {
                 player.SittingOut = true;
-                YargLogger.LogFormatWarning(
-                    "OnlineSessionDirector: remote peer {0} ({1}) left -- marked SittingOut.",
-                    peerId, player.Profile?.Name);
+                YargLogger.LogWarning(
+                    $"OnlineSessionDirector: remote peer {peerId} ({player.Profile?.Name}) left -- marked SittingOut.");
             }
             else
             {
