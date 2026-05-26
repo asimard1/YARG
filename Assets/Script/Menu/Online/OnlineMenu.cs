@@ -211,6 +211,13 @@ namespace YARG.Menu.Online
                 DialogManager.Instance.ShowMessage("Could not load lobbies",
                     "Failed to connect to the YARG server. Check that it's running and try again.");
             }
+            finally
+            {
+                // Re-show the menu whether connect succeeded or failed -- the
+                // LoadingContext dispose hides the overlay, but the menu was
+                // disabled and needs to come back.
+                MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.Online);
+            }
         }
 
         private void RefreshLobbyList()
@@ -298,6 +305,7 @@ namespace YARG.Menu.Online
                 var session = LobbyHubSession.Current;
                 if (session == null)
                 {
+                    MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.Online);
                     DialogManager.Instance.ShowMessage("Could not join lobby",
                         "The lobby session is no longer active.");
                     return;
@@ -308,8 +316,8 @@ namespace YARG.Menu.Online
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
+                MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.Online);
                 DialogManager.Instance.ShowMessage("Could not join lobby", ex.Message);
-                // Online is still active; nothing to re-show.
             }
         }
 

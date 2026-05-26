@@ -65,19 +65,8 @@ namespace YARG.Gameplay.Player
         // Monotonic cursor for FindRemoteTargetNoteAt (O(1) amortized per frame).
         private int _remoteTargetPhraseCursor;
 
-        // EWMA of (sungPitch - chartTarget) -- captures the singer's habitual pitch offset
-        // for predicting needle position at the start of each new phrase.
-        private float _remotePitchOffsetEwma;
-        private int   _remotePitchOffsetSamples;
-        private const float RemotePitchOffsetEwmaAlpha = 0.20f;
-        private const float RemotePitchOffsetEwmaMaxSemitones = 2.0f;
-
-        // Previous-frame needle visibility; rising edge triggers a position snap.
-        private bool _remoteNeedleWasVisible;
-
-        // Tracks whether singing samples have arrived this phrase (predict vs follow toggle).
-        private VocalNote _remotePhraseTrackedNote;
-        private bool      _remoteSamplesArrivedThisPhrase;
+        // Mirrors local's _lastHitTime for remote hit hysteresis.
+        private double? _remoteLastHitTime;
 
         /// <summary>Deactivates this vocalist's HUD card, which lives on a shared canvas.</summary>
         public void HideHud()
@@ -287,6 +276,7 @@ namespace YARG.Gameplay.Player
         protected override void ResetVisuals()
         {
             _lastTargetNote = null;
+            _phraseIndex = -1;
         }
 
         public override void ResetPracticeSection()
@@ -537,54 +527,48 @@ namespace YARG.Gameplay.Player
                     ? director.GetRemoteVocalPitch(Player.RemotePeerId, GameManager.SongTime)
                     : (0f, false);
 
-                // Remote: scan chart directly since mirror engine's OnTargetNoteChanged won't fire.
-                _lastTargetNote = FindRemoteTargetNoteAt(GameManager.SongTime);
+                // Sticky _lastTargetNote: only update when a note is found, never
+                // clear to null. Mirrors local where OnTargetNoteChanged only fires
+                // when the engine finds a note -- between phrases, local retains the
+                // last note for octave correction in the "not hitting" branch.
+                var currentNote = FindRemoteTargetNoteAt(GameManager.SongTime);
+                if (currentNote != null)
+                    _lastTargetNote = currentNote;
 
-                bool hasActiveTarget = _lastTargetNote is not null;
-                isCurrentlySinging   = remoteSinging;
-                isHittingTarget      = false;
-                pitchSang            = remotePitch;
+                isCurrentlySinging = remoteSinging;
+                pitchSang = remotePitch;
 
-                if (!ReferenceEquals(_remotePhraseTrackedNote, _lastTargetNote))
+                // Hit detection using the engine's exact formula + hysteresis.
+                // Local: OnHit(true) fires when CanVocalNoteBeHit returns true,
+                // _lastHitTime is set, IsInThreshold provides the grace period.
+                isHittingTarget = false;
+                if (remoteSinging && currentNote is not null)
                 {
-                    _remotePhraseTrackedNote = _lastTargetNote;
-                    _remoteSamplesArrivedThisPhrase = false;
-                }
-
-                if (remoteSinging && hasActiveTarget)
-                {
-                    float targetPitch = _lastTargetNote.PitchAtSongTime(GameManager.SongTime);
-                    (float pitchDist, _) = GetPitchDistanceIgnoringOctave(targetPitch, remotePitch);
-                    bool onPitch = Mathf.Abs(pitchDist) <= EngineParams.PitchWindow;
-
-                    if (!_lastTargetNote.IsNonPitched)
+                    if (currentNote.IsNonPitched)
                     {
-                        // Only fold on-pitch samples into EWMA; off-pitch is noise.
-                        if (onPitch)
+                        _remoteLastHitTime = GameManager.SongTime;
+                        isHittingTarget = true;
+                    }
+                    else
+                    {
+                        float expectedPitch = currentNote.PitchAtSongTime(GameManager.SongTime);
+                        float dist = PitchDistanceForEngine(remotePitch, expectedPitch);
+                        if (dist <= EngineParams.PitchWindow)
                         {
-                            _remotePitchOffsetEwma =
-                                _remotePitchOffsetEwma * (1f - RemotePitchOffsetEwmaAlpha)
-                                + pitchDist * RemotePitchOffsetEwmaAlpha;
-                            if (_remotePitchOffsetEwma > RemotePitchOffsetEwmaMaxSemitones)
-                                _remotePitchOffsetEwma = RemotePitchOffsetEwmaMaxSemitones;
-                            else if (_remotePitchOffsetEwma < -RemotePitchOffsetEwmaMaxSemitones)
-                                _remotePitchOffsetEwma = -RemotePitchOffsetEwmaMaxSemitones;
-                            _remotePitchOffsetSamples++;
-                        }
-
-                        // Before first sample: predict at chartTarget + EWMA. After: follow live pitch.
-                        if (_remoteSamplesArrivedThisPhrase)
-                        {
-                            pitchSang = remotePitch;
+                            _remoteLastHitTime = GameManager.SongTime;
+                            isHittingTarget = true;
                         }
                         else
                         {
-                            pitchSang = targetPitch + _remotePitchOffsetEwma;
+                            isHittingTarget = IsInThreshold(GameManager.SongTime, _remoteLastHitTime);
                         }
-                        isHittingTarget = onPitch;
-
-                        _remoteSamplesArrivedThisPhrase = true;
                     }
+                }
+                else
+                {
+                    // Between phrases or not singing: check grace period like local.
+                    isHittingTarget = remoteSinging
+                        && IsInThreshold(GameManager.SongTime, _remoteLastHitTime);
                 }
             }
             else
@@ -603,7 +587,6 @@ namespace YARG.Gameplay.Player
                     _needleVisualContainer.SetActive(false);
                     _hittingParticleGroup.Stop();
                 }
-                _remoteNeedleWasVisible = false;
             }
             else
             {
@@ -614,23 +597,9 @@ namespace YARG.Gameplay.Player
                 {
                     _needleVisualContainer.SetActive(true);
 
-                    // Lerp X times faster if we've just started showing the needle
+                    // Lerp faster on first appearance so the needle reaches pitch quickly.
                     lerpRate *= NEEDLE_POS_SNAP_MULTIPLIER;
                 }
-
-                // Snap needle to predicted position on rising edge to avoid visible lerp from prior phrase.
-                if (Player.IsRemote && !_remoteNeedleWasVisible
-                    && _lastTargetNote is { IsNonPitched: false })
-                {
-                    float predictedTarget =
-                        _lastTargetNote.PitchAtSongTime(GameManager.SongTime)
-                        + _remotePitchOffsetEwma;
-                    float predictedZ = GameManager.VocalTrack.GetPosForPitch(predictedTarget);
-                    var snapPos = transform.localPosition;
-                    snapPos.z = predictedZ;
-                    transform.localPosition = snapPos;
-                }
-                _remoteNeedleWasVisible = true;
 
                 var transformCache = transform;
                 float lastNotePitch = _lastTargetNote?.PitchAtSongTime(GameManager.SongTime) ?? -1f;
@@ -777,6 +746,21 @@ namespace YARG.Gameplay.Player
             return false;
         }
 
+        /// <summary>
+        /// Replicates YargVocalsEngine.CanVocalNoteBeHit's distance formula:
+        /// absolute pitch distance ignoring octave, 0 to 6 semitones.
+        /// </summary>
+        private static float PitchDistanceForEngine(float sung, float expected)
+        {
+            return Mathf.Min(PosMod(sung - expected, 12f), PosMod(expected - sung, 12f));
+
+            static float PosMod(float a, float b)
+            {
+                var r = a % b;
+                return r < 0 ? r + b : r;
+            }
+        }
+
         public override void SetPracticeSection(uint start, uint end)
         {
             var practiceNotes = OriginalNoteTrack.Notes.Where(n => n.Tick >= start && n.Tick < end).ToList();
@@ -805,7 +789,7 @@ namespace YARG.Gameplay.Player
         }
 
         /// <returns>
-        /// The first value in the pair (<c>Distance</c>) is the distance between <paramref name="target"/> and '
+        /// The first value in the pair (<c>Distance</c>) is the distance between <paramref name="target"/> and
         /// <paramref name="other"/> ignoring the octave.<br/>
         /// The second value in the pair (<c>OctaveShift</c>) is how much the <paramref name="target"/> octave
         /// had to be shifted in order for the closest distance to be found.

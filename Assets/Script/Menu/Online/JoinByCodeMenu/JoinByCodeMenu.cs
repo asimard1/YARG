@@ -139,6 +139,7 @@ namespace YARG.Menu.Online
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
+                MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.Online);
                 DialogManager.Instance.ShowMessage("Could not join lobby", ex.Message);
             }
         }

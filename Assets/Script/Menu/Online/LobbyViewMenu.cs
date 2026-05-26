@@ -847,6 +847,8 @@ namespace YARG.Menu.Online
             catch (Exception ex)
             {
                 YargLogger.LogException(ex);
+                // Re-show the lobby view after a failed start.
+                MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);
                 // Translate server error tags to localized strings.
                 string body = ex.Message;
                 if (body != null)
