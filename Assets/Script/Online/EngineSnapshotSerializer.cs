@@ -46,13 +46,15 @@ namespace YARG.Online
             };
         }
 
-        /// <summary>Serialize <paramref name="snapshot"/> to bytes. The
-        /// returned array is the SnapshotData payload of the wire packet.</summary>
-        public static byte[] Serialize(EngineSnapshot snapshot)
+        /// <summary>Serialize <paramref name="snapshot"/> into <paramref name="writer"/>
+        /// at its current position. The caller owns the writer and the surrounding
+        /// packet framing (opcode, header fields, and the length prefix that wraps
+        /// these bytes) -- this method neither resets the writer nor copies out a
+        /// buffer; it appends the snapshot's SnapshotData payload directly.</summary>
+        public static void Serialize(NetDataWriter writer, EngineSnapshot snapshot)
         {
             if (snapshot is null) throw new ArgumentNullException(nameof(snapshot));
 
-            var writer = new NetDataWriter();
             WriteBase(writer, snapshot);
 
             switch (snapshot)
@@ -73,8 +75,6 @@ namespace YARG.Online
                     throw new NotSupportedException(
                         $"EngineSnapshotSerializer.Serialize: unsupported subtype {snapshot.GetType().FullName}");
             }
-
-            return writer.CopyData();
         }
 
         /// <summary>Deserialize a snapshot. <paramref name="kind"/> must match

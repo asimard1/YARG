@@ -668,8 +668,7 @@ namespace YARG.Online
 
             var snapshot = engine.CreateSnapshot();
             byte kind = EngineSnapshotSerializer.KindFor(snapshot);
-            byte[] data = EngineSnapshotSerializer.Serialize(snapshot);
-            _session.SendEngineStateSnapshot(engine.CurrentTime, kind, data);
+            _session.SendEngineStateSnapshot(engine.CurrentTime, kind, snapshot);
             _lastSnapshotSongTime = engine.CurrentTime;
         }
 

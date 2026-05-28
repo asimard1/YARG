@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using YARG.Core.Engine;
 using YARG.Core.Logging;
 using YARG.Online.Game.Contracts.Enums;
 using YARG.Online.Game.Contracts.Packets;
@@ -24,6 +25,9 @@ namespace YARG.Online
         private EventBasedNetListener _listener;
         private NetPeer _serverPeer;
         private TaskCompletionSource<bool> _connectOutcome;
+
+        // Reused across all Send* calls. Main-thread-only: every Send* runs on the Unity main thread
+        private readonly NetDataWriter _sendWriter = new();
 
         private readonly CancellationTokenSource _lifetimeCts = new();
         private int _disposed; // 0 = alive, 1 = disposing/disposed
@@ -155,6 +159,14 @@ namespace YARG.Online
             }
         }
 
+        private void SendToServer<T>(NetPeer peer, PacketOpcode opcode, T packet)
+            where T : INetSerializable
+        {
+            _sendWriter.Reset();
+            GamePacketWriter.Write(_sendWriter, opcode, packet);
+            peer.Send(_sendWriter, DeliveryMethod.ReliableOrdered);
+        }
+
         public void SendLoadout(
             InstrumentId instrument, DifficultyId difficulty, Guid enginePreset,
             float noteSpeed, ulong modifiers, byte[] chartHash)
@@ -171,8 +183,7 @@ namespace YARG.Online
                     nameof(chartHash));
             }
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.SetLoadout, new SetLoadoutPacket
+            SendToServer(peer, PacketOpcode.SetLoadout, new SetLoadoutPacket
             {
                 Instrument = instrument,
                 Difficulty = difficulty,
@@ -181,7 +192,6 @@ namespace YARG.Online
                 Modifiers = modifiers,
                 ChartHash = chartHash,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
             YargLogger.LogInfo($"GameClientSession: SendLoadout instrument={instrument} difficulty={difficulty} noteSpeed={noteSpeed} modifiers=0x{modifiers:X}");
         }
 
@@ -195,9 +205,9 @@ namespace YARG.Online
                 return;
             }
 
-            var writer = new NetDataWriter();
-            writer.Put((byte) PacketOpcode.ClearLoadout);
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            _sendWriter.Reset();
+            _sendWriter.Put((byte) PacketOpcode.ClearLoadout);
+            peer.Send(_sendWriter, DeliveryMethod.ReliableOrdered);
             YargLogger.LogInfo("GameClientSession: SendUnready (ClearLoadout)");
         }
 
@@ -209,9 +219,7 @@ namespace YARG.Online
                 YargLogger.LogWarning("GameClientSession.SendPeerReady: no server peer; dropping.");
                 return;
             }
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.PeerReady, new PeerReadyPacket());
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            SendToServer(peer, PacketOpcode.PeerReady, new PeerReadyPacket());
             YargLogger.LogInfo("GameClientSession: SendPeerReady");
         }
 
@@ -224,9 +232,7 @@ namespace YARG.Online
                 YargLogger.LogWarning("GameClientSession.SendPing: no server peer; dropping.");
                 return;
             }
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.Ping, new PingPacket { ClientTickMs = clientTickMs });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            SendToServer(peer, PacketOpcode.Ping, new PingPacket { ClientTickMs = clientTickMs });
         }
 
         /// <summary>Send a missed-note event for fan-out. Not batched -- latency-sensitive.</summary>
@@ -235,14 +241,12 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.NoteMissed, new NoteMissedPacket
+            SendToServer(peer, PacketOpcode.NoteMissed, new NoteMissedPacket
             {
                 PeerId = 0,
                 NoteIndex = noteIndex,
                 SongTime = songTime,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Send a star-power activation event for fan-out.</summary>
@@ -251,13 +255,11 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.StarPowerActivated, new StarPowerActivatedPacket
+            SendToServer(peer, PacketOpcode.StarPowerActivated, new StarPowerActivatedPacket
             {
                 PeerId = 0,
                 SongTime = songTime,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Send a whammy axis sample for fan-out. Callers should apply a change-threshold.</summary>
@@ -266,14 +268,12 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.Whammy, new WhammyPacket
+            SendToServer(peer, PacketOpcode.Whammy, new WhammyPacket
             {
                 PeerId = 0,
                 SongTime = songTime,
                 Value = value,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Send a vocal pitch sample. Rate-limit to ~20 Hz; receivers interpolate.</summary>
@@ -282,15 +282,13 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.VocalPitch, new VocalPitchPacket
+            SendToServer(peer, PacketOpcode.VocalPitch, new VocalPitchPacket
             {
                 PeerId = 0,
                 SongTime = songTime,
                 PitchMidi = pitchMidi,
                 IsSinging = isSinging,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Fan-out a free-play input for remote highway visuals during BRE / activator phrases.</summary>
@@ -299,15 +297,13 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.FreePlayInput, new FreePlayInputPacket
+            SendToServer(peer, PacketOpcode.FreePlayInput, new FreePlayInputPacket
             {
                 PeerId = 0,
                 SongTime = songTime,
                 Action = action,
                 Velocity = velocity,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Send an early-sustain-release event for fan-out.</summary>
@@ -316,14 +312,12 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.SustainReleased, new SustainReleasedPacket
+            SendToServer(peer, PacketOpcode.SustainReleased, new SustainReleasedPacket
             {
                 PeerId = 0,
                 NoteIndex = noteIndex,
                 SongTime = songTime,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Send an overstrum event for fan-out.</summary>
@@ -332,13 +326,11 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.Overstrum, new OverstrumPacket
+            SendToServer(peer, PacketOpcode.Overstrum, new OverstrumPacket
             {
                 PeerId = 0,
                 SongTime = songTime,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Send a note-hit event for fan-out.</summary>
@@ -347,14 +339,12 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.NoteHit, new NoteHitPacket
+            SendToServer(peer, PacketOpcode.NoteHit, new NoteHitPacket
             {
                 PeerId = 0,
                 NoteIndex = noteIndex,
                 SongTime = songTime,
             });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendGameComplete()
@@ -365,27 +355,45 @@ namespace YARG.Online
                 YargLogger.LogWarning("GameClientSession.SendGameComplete: no server peer; dropping.");
                 return;
             }
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.GameComplete, new GameCompletePacket());
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            SendToServer(peer, PacketOpcode.GameComplete, new GameCompletePacket());
             YargLogger.LogInfo("GameClientSession: SendGameComplete");
         }
 
         /// <summary>Send an authoritative engine-state snapshot for fan-out.</summary>
-        public void SendEngineStateSnapshot(double songTime, byte snapshotKind, byte[] snapshotData)
+        public void SendEngineStateSnapshot(double songTime, byte snapshotKind, EngineSnapshot snapshot)
         {
             var peer = _serverPeer;
             if (peer == null) return;
 
-            var writer = new NetDataWriter();
-            GamePacketWriter.Write(writer, PacketOpcode.EngineStateSnapshot, new EngineStateSnapshotPacket
-            {
-                PeerId = 0,
-                SongTime = songTime,
-                SnapshotKind = snapshotKind,
-                SnapshotData = snapshotData,
-            });
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            // TODO: This code is ugly af, needs to be cleaned up
+
+            // Hand-written framing -- must stay byte-for-byte identical to
+            // EngineStateSnapshotPacket.Serialize (PeerId, SongTime, SnapshotKind,
+            // then a ushort-length-prefixed opaque blob). We serialize the snapshot
+            // straight into the shared send buffer and backpatch the length, avoiding
+            // the intermediate byte[] + packet allocation.
+            _sendWriter.Reset();
+            _sendWriter.Put((byte) PacketOpcode.EngineStateSnapshot);
+            _sendWriter.Put(0);                 // PeerId -- sender always sends 0 (server stamps real id)
+            _sendWriter.Put(songTime);
+            _sendWriter.Put(snapshotKind);
+
+            int lengthPos = _sendWriter.Length; // reserve the ushort length slot
+            _sendWriter.Put((ushort) 0);
+            int payloadStart = _sendWriter.Length;
+            EngineSnapshotSerializer.Serialize(_sendWriter, snapshot);
+            int payloadEnd = _sendWriter.Length;
+
+            int payloadLen = payloadEnd - payloadStart;
+            if (payloadLen > ushort.MaxValue)
+                throw new InvalidOperationException(
+                    $"EngineStateSnapshot payload {payloadLen} exceeds {ushort.MaxValue}-byte ushort length limit.");
+
+            _sendWriter.SetPosition(lengthPos); // backpatch real length, then restore
+            _sendWriter.Put((ushort) payloadLen);
+            _sendWriter.SetPosition(payloadEnd);
+
+            peer.Send(_sendWriter, DeliveryMethod.ReliableOrdered);
         }
 
         public async UniTask DisposeAsync()
