@@ -513,10 +513,13 @@ namespace YARG.Online
                     {
                         var missPacket = new NoteMissedPacket();
                         missPacket.Deserialize(reader);
-                        int subCount = NoteMissedReceived?.GetInvocationList().Length ?? 0;
-                        YargLogger.LogFormatDebug(
-                            "Prediction[wire-recv] NoteMissed: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
-                            missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime, subCount);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        {
+                            int subCount = NoteMissedReceived?.GetInvocationList().Length ?? 0;
+                            YargLogger.LogFormatDebug(
+                                "Prediction[wire-recv] NoteMissed: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
+                                missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime, subCount);
+                        }
                         NoteMissedReceived?.Invoke(missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime);
                         break;
                     }
@@ -524,10 +527,13 @@ namespace YARG.Online
                     {
                         var spPacket = new StarPowerActivatedPacket();
                         spPacket.Deserialize(reader);
-                        int subCount = StarPowerActivatedReceived?.GetInvocationList().Length ?? 0;
-                        YargLogger.LogFormatDebug(
-                            "Prediction[wire-recv] StarPowerActivated: peer={0} songTime={1:0.000} subs={2}",
-                            spPacket.PeerId, spPacket.SongTime, subCount);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        {
+                            int subCount = StarPowerActivatedReceived?.GetInvocationList().Length ?? 0;
+                            YargLogger.LogFormatDebug(
+                                "Prediction[wire-recv] StarPowerActivated: peer={0} songTime={1:0.000} subs={2}",
+                                spPacket.PeerId, spPacket.SongTime, subCount);
+                        }
                         StarPowerActivatedReceived?.Invoke(spPacket.PeerId, spPacket.SongTime);
                         break;
                     }
@@ -535,10 +541,13 @@ namespace YARG.Online
                     {
                         var whammyPacket = new WhammyPacket();
                         whammyPacket.Deserialize(reader);
-                        int subCount = WhammyReceived?.GetInvocationList().Length ?? 0;
-                        YargLogger.LogFormatDebug(
-                            "Prediction[wire-recv] Whammy: peer={0} songTime={1:0.000} value={2:0.00} subs={3}",
-                            whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value, subCount);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        {
+                            int subCount = WhammyReceived?.GetInvocationList().Length ?? 0;
+                            YargLogger.LogFormatDebug(
+                                "Prediction[wire-recv] Whammy: peer={0} songTime={1:0.000} value={2:0.00} subs={3}",
+                                whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value, subCount);
+                        }
                         WhammyReceived?.Invoke(whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value);
                         break;
                     }
@@ -562,10 +571,13 @@ namespace YARG.Online
                     {
                         var releasePacket = new SustainReleasedPacket();
                         releasePacket.Deserialize(reader);
-                        int subCount = SustainReleasedReceived?.GetInvocationList().Length ?? 0;
-                        YargLogger.LogFormatDebug(
-                            "Prediction[wire-recv] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
-                            releasePacket.PeerId, releasePacket.NoteIndex, releasePacket.SongTime, subCount);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        {
+                            int subCount = SustainReleasedReceived?.GetInvocationList().Length ?? 0;
+                            YargLogger.LogFormatDebug(
+                                "Prediction[wire-recv] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
+                                releasePacket.PeerId, releasePacket.NoteIndex, releasePacket.SongTime, subCount);
+                        }
                         SustainReleasedReceived?.Invoke(
                             releasePacket.PeerId, releasePacket.NoteIndex, releasePacket.SongTime);
                         break;
@@ -574,10 +586,13 @@ namespace YARG.Online
                     {
                         var overPacket = new OverstrumPacket();
                         overPacket.Deserialize(reader);
-                        int subCount = OverstrumReceived?.GetInvocationList().Length ?? 0;
-                        YargLogger.LogFormatDebug(
-                            "Prediction[wire-recv] Overstrum: peer={0} songTime={1:0.000} subs={2}",
-                            overPacket.PeerId, overPacket.SongTime, subCount);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        {
+                            int subCount = OverstrumReceived?.GetInvocationList().Length ?? 0;
+                            YargLogger.LogFormatDebug(
+                                "Prediction[wire-recv] Overstrum: peer={0} songTime={1:0.000} subs={2}",
+                                overPacket.PeerId, overPacket.SongTime, subCount);
+                        }
                         OverstrumReceived?.Invoke(overPacket.PeerId, overPacket.SongTime);
                         break;
                     }
@@ -585,10 +600,13 @@ namespace YARG.Online
                     {
                         var hitPacket = new NoteHitPacket();
                         hitPacket.Deserialize(reader);
-                        int subCount = NoteHitReceived?.GetInvocationList().Length ?? 0;
-                        YargLogger.LogFormatDebug(
-                            "Prediction[wire-recv] NoteHit: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
-                            hitPacket.PeerId, hitPacket.NoteIndex, hitPacket.SongTime, subCount);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        {
+                            int subCount = NoteHitReceived?.GetInvocationList().Length ?? 0;
+                            YargLogger.LogFormatDebug(
+                                "Prediction[wire-recv] NoteHit: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
+                                hitPacket.PeerId, hitPacket.NoteIndex, hitPacket.SongTime, subCount);
+                        }
                         NoteHitReceived?.Invoke(hitPacket.PeerId, hitPacket.NoteIndex, hitPacket.SongTime);
                         break;
                     }
@@ -596,11 +614,14 @@ namespace YARG.Online
                     {
                         var snapPacket = new EngineStateSnapshotPacket();
                         snapPacket.Deserialize(reader);
-                        int subCount = EngineStateSnapshotReceived?.GetInvocationList().Length ?? 0;
-                        YargLogger.LogFormatDebug(
-                            "Prediction[wire-recv] EngineStateSnapshot: peer={0} songTime={1:0.000} kind={2} bytes={3} subs={4}",
-                            snapPacket.PeerId, snapPacket.SongTime, snapPacket.SnapshotKind,
-                            snapPacket.SnapshotData?.Length ?? 0, subCount);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        {
+                            int subCount = EngineStateSnapshotReceived?.GetInvocationList().Length ?? 0;
+                            YargLogger.LogFormatDebug(
+                                "Prediction[wire-recv] EngineStateSnapshot: peer={0} songTime={1:0.000} kind={2} bytes={3} subs={4}",
+                                snapPacket.PeerId, snapPacket.SongTime, snapPacket.SnapshotKind,
+                                snapPacket.SnapshotData?.Length ?? 0, subCount);
+                        }
                         EngineStateSnapshotReceived?.Invoke(
                             snapPacket.PeerId, snapPacket.SongTime,
                             snapPacket.SnapshotKind, snapPacket.SnapshotData);
