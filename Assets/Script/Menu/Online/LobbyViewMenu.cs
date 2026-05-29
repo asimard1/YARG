@@ -80,6 +80,7 @@ namespace YARG.Menu.Online
 
         // Locks MusicPlayer to the top-of-queue song. Released in OnDisable.
         private string _previewSongHash;
+        private float _previewSongSpeed = 1f;
 
         // Tracks whether the host or non-host nav scheme is currently pushed.
         private bool _schemePushedAsHost;
@@ -170,13 +171,16 @@ namespace YARG.Menu.Online
         }
 
         /// <summary>
-        /// Locks MusicPlayer to the top-of-queue song, or releases if queue is empty.
+        /// Locks MusicPlayer to the top-of-queue song at the queued speed, or
+        /// releases if queue is empty.
         /// </summary>
         private void RefreshTopSongPreview(LobbyRoomState lobby)
         {
             string topHash = lobby.SongQueue.Count > 0 ? lobby.SongQueue[0].SongHash : null;
-            if (topHash == _previewSongHash) return;
+            float topSpeed = lobby.SongQueue.Count > 0 ? lobby.SongQueue[0].SongSpeed : 1f;
+            if (topHash == _previewSongHash && Mathf.Approximately(topSpeed, _previewSongSpeed)) return;
             _previewSongHash = topHash;
+            _previewSongSpeed = topSpeed;
 
             SongEntry songToLock = null;
             if (!string.IsNullOrEmpty(topHash)
@@ -186,12 +190,13 @@ namespace YARG.Menu.Online
                 songToLock = entries[0];
             }
 
-            MusicPlayer.SetLockedSong(songToLock);
+            MusicPlayer.SetLockedSong(songToLock, topSpeed);
         }
 
         private void ReleasePreviewLock()
         {
             _previewSongHash = null;
+            _previewSongSpeed = 1f;
             MusicPlayer.SetLockedSong(null);
         }
 
@@ -349,7 +354,6 @@ namespace YARG.Menu.Online
 
                 if (_songCards.TryGetValue(dto.Sequence, out var card))
                 {
-                    // Existing card -- just update remove-button visibility.
                     card.SetRemoveButtonVisible(canRemove);
                 }
                 else
@@ -360,6 +364,7 @@ namespace YARG.Menu.Online
                     card.Initialize(
                         HashWrapper.FromString(dto.SongHash),
                         canRemove,
+                        dto.SongSpeed,
                         () => OnRemoveQueuedSongClicked(sequence));
                 }
                 // Queue order preserved (oldest first), offset past any static children.
@@ -682,7 +687,11 @@ namespace YARG.Menu.Online
                         "The lobby session is no longer active.");
                     return;
                 }
-                await session.QueueSongAsync(hash, CancellationToken.None);
+                // Send the requester's last-set song speed (persisted across
+                // PersistentState resets) so it travels with the queue entry and
+                // applies for everyone at game start.
+                float songSpeed = SongSpeedMenu.SongSpeedMultiplier;
+                await session.QueueSongAsync(hash, songSpeed, CancellationToken.None);
             }
             catch (Exception ex)
             {

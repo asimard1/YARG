@@ -6,6 +6,7 @@ using UnityEngine;
 using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Gameplay;
+using YARG.Localization;
 using YARG.Menu;
 using YARG.Menu.DifficultySelect;
 using YARG.Menu.Persistent;
@@ -110,7 +111,7 @@ namespace YARG.Online
             var chartHashBytes = hash.HashBytes;
 
             var orch = new LobbyGameOrchestrator(lobbySession, gameSession, director, clockSync, connectTask, chartHashBytes);
-            orch.PushDifficultySelect(songs[0]);
+            orch.PushDifficultySelect(songs[0], queued.SongSpeed);
             return UniTask.FromResult(orch);
         }
 
@@ -126,10 +127,6 @@ namespace YARG.Online
             _gameSession  = gameSession;
             _director     = director;
             _clockSync    = clockSync;
-            // Preserve() so we can await this task more than once. SendLocalLoadoutAsync
-            // runs once per Ready click, and the Unready → re-Ready flow needs to be able
-            // to re-check the connection without consuming the original UniTask token.
-            // Without Preserve, the second await throws "Token version is not matched".
             _connectTask  = connectTask.Preserve();
             _chartHash    = chartHash;
             _instanceId   = Interlocked.Increment(ref _instanceCounter);
@@ -138,12 +135,60 @@ namespace YARG.Online
             _gameSession.GameStarted  += OnGameStartedOnUdp;
             _gameSession.GameEnded    += OnGameEnded;
             _gameSession.Disconnected += OnUdpDisconnected;
+            _gameSession.LoadoutReadyCountReceived += OnLoadoutReadyCountReceived;
+
+            // Watch lobby member list during pre-game; OnGameStartedOnUdp unsubscribes.
+            _lobbySession.CurrentLobbyChanged += OnLobbyChangedDuringStart;
         }
 
-        private void PushDifficultySelect(SongEntry song)
+        private void OnLobbyChangedDuringStart()
+        {
+            if (Volatile.Read(ref _disposed) != 0) return;
+
+            // Lobby session cleared CurrentLobby (kick, server tore us out): the
+            // session's own teardown path shows the user-facing dialog.
+            var lobby = _lobbySession.CurrentLobby;
+            if (lobby == null)
+            {
+                Ended?.Invoke();
+                return;
+            }
+
+            DifficultySelectMenu.OnLobbyMembersChanged?.Invoke();
+
+            if (lobby.Members.Count < 2)
+            {
+                YargLogger.LogInfo(
+                    $"LobbyGameOrchestrator[#{_instanceId}]: only 1 member left during pre-game; cancelling");
+
+                // Server's lobby is in GameStarted with our IsBackInLobby flipped
+                // false by ConfirmStartGameAsync. LeaveResults flips it true; when
+                // it's the only remaining member, the server transitions the lobby
+                // back to SongSelect.
+                _lobbySession.LeaveResultsAsync().Forget();
+
+                ClearDifficultySelectHooks();
+
+                MenuManager.Instance?.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);
+                DialogManager.Instance.ShowMessage(
+                    Localize.Key("Menu.Online.GameCancelled.Title"),
+                    Localize.Key("Menu.Online.GameCancelled.NotEnoughPlayers"));
+                Ended?.Invoke();
+            }
+        }
+
+        private static void ClearDifficultySelectHooks()
+        {
+            DifficultySelectMenu.LobbyMode = false;
+            DifficultySelectMenu.OnLobbyLoadoutsConfirmed = null;
+            DifficultySelectMenu.OnLobbyUnreadied = null;
+        }
+
+        private void PushDifficultySelect(SongEntry song, float songSpeed)
         {
             GlobalVariables.State.CurrentSong = song;
             GlobalVariables.State.IsPractice = false;
+            GlobalVariables.State.SongSpeed = songSpeed;
 
             DifficultySelectMenu.LobbyMode = true;
             DifficultySelectMenu.OnLobbyLoadoutsConfirmed = OnLoadoutsConfirmed;
@@ -219,17 +264,16 @@ namespace YARG.Online
                     + $"{l.Instrument}/{l.Difficulty} preset={l.EnginePreset}");
             }
 
+            // Lobby-side bail only applies pre-game; in-game peer drops route through RemotePeerLeft.
+            _lobbySession.CurrentLobbyChanged -= OnLobbyChangedDuringStart;
+
             // Build the per-peer YargPlayer list (local first, then remotes), arm the
             // start-cue await, and prep GameManager for the online code paths it needs.
             _director.RegisterSession(loadouts);
             GameManager.IsOnline = true;
 
-            // We no longer need the lobby-mode DifficultySelect overlay -- the gameplay scene
-            // is about to take over. Clear the static flags so a future solo DifficultySelect
-            // doesn't inherit lobby behaviour.
-            DifficultySelectMenu.LobbyMode = false;
-            DifficultySelectMenu.OnLobbyLoadoutsConfirmed = null;
-            DifficultySelectMenu.OnLobbyUnreadied = null;
+            // Clear lobby-mode hooks so a future solo DifficultySelect doesn't inherit them.
+            ClearDifficultySelectHooks();
 
             // Deactivate MusicPlayer FIRST, before HideAllMenus. LobbyView's
             // OnDisable calls MusicPlayer.SetLockedSong(null) which can kick
@@ -262,6 +306,13 @@ namespace YARG.Online
         private void OnGameEnded()       => Ended?.Invoke();
         private void OnUdpDisconnected() => Ended?.Invoke();
 
+        private void OnLoadoutReadyCountReceived(int readyCount, int totalExpected)
+        {
+            DifficultySelectMenu.LobbyReadyCount = readyCount;
+            DifficultySelectMenu.LobbyReadyTotal = totalExpected;
+            DifficultySelectMenu.OnLobbyMembersChanged?.Invoke();
+        }
+
         public async UniTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
@@ -270,12 +321,14 @@ namespace YARG.Online
             _gameSession.GameStarted  -= OnGameStartedOnUdp;
             _gameSession.GameEnded    -= OnGameEnded;
             _gameSession.Disconnected -= OnUdpDisconnected;
+            _gameSession.LoadoutReadyCountReceived -= OnLoadoutReadyCountReceived;
+            _lobbySession.CurrentLobbyChanged -= OnLobbyChangedDuringStart;
 
-            DifficultySelectMenu.LobbyMode = false;
-            DifficultySelectMenu.OnLobbyLoadoutsConfirmed = null;
-            DifficultySelectMenu.OnLobbyUnreadied = null;
-            // ScoreScreenMenu no longer keeps a per-game flag -- it reads lobby state from
-            // LobbyHubSession.Current directly, so there's nothing to clear here.
+            // Stale tally would leak into a future lobby's DifficultySelect.
+            DifficultySelectMenu.LobbyReadyCount = -1;
+            DifficultySelectMenu.LobbyReadyTotal = -1;
+
+            ClearDifficultySelectHooks();
 
             // Failure-recovery: if we're still in MenuScene with DifficultySelect
             // visible, route the user back to LobbyView. If we're in another

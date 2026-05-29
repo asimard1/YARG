@@ -248,10 +248,24 @@ namespace YARG.Gameplay.Player
         }
 
         // Receiver: replay remote free-play pad hits through OnPadHit for visuals.
+        // be gated by Engine.IsCodaActive.
         private void OnRemoteFreePlayInput(int peerId, double songTime, int action, float velocity)
         {
             if (peerId != Player.RemotePeerId) return;
             OnPadHit((DrumsAction) action, false, false, false, DrumNoteType.Neutral, velocity);
+        }
+
+        protected override void FinishDestruction()
+        {
+            if (Player.IsRemote)
+            {
+                var director = YARG.Online.OnlineSessionDirector.Current;
+                if (director != null)
+                {
+                    director.RemoteFreePlayInput -= OnRemoteFreePlayInput;
+                }
+            }
+            base.FinishDestruction();
         }
 
         protected override void FinishInitialization()

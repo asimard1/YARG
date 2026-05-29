@@ -415,6 +415,8 @@ namespace YARG.Settings
 
             public ToggleSetting ShowPlayerNameWhenStartingSong { get; } = new(true);
 
+            public ToggleSetting ShowRemoteHighways { get; } = new(true);
+
             public DropdownSetting<LyricDisplayMode> LyricDisplay { get; }
                 = new(LyricDisplayMode.Normal)
                 {

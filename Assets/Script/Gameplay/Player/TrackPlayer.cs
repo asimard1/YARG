@@ -134,6 +134,19 @@ namespace YARG.Gameplay.Player
             TrackView.ShowPlayerName(player);
         }
 
+        public override void HideHighway()
+        {
+            // Hide the TrackView (player name, combo meter, score, etc.) since it
+            // lives under TrackViewManager, not under the player's GameObject --
+            // base.HideHighway's SetActive(false) wouldn't touch it.
+            if (TrackView != null)
+            {
+                TrackView.gameObject.SetActive(false);
+            }
+
+            base.HideHighway();
+        }
+
         protected override void ResetVisuals()
         {
             // "Muting a stem" isn't technically a visual,
@@ -150,6 +163,54 @@ namespace YARG.Gameplay.Player
 
             HitWindowDisplay.SetHitWindowSize();
         }
+
+        private Action<int, double, int, float> _remoteFreePlayHandler;
+
+        /// <summary>Lane-based subclasses override to play the BRE visual.</summary>
+        protected virtual void OnRemoteBreLaneHit(int action) { }
+
+        /// <summary>Called from a subclass's OnLaneHit to fan the hit out to remotes.</summary>
+        protected void ForwardLaneHitToRemotes(int action)
+        {
+            if (!GameManager.IsOnline || Player.IsReplay || Player.IsRemote)
+            {
+                return;
+            }
+            YARG.Online.OnlineSessionDirector.Current?.SendLocalFreePlayInput(
+                GameManager.SongTime, action, 0f);
+        }
+
+        internal void EnableRemoteBreSubscription()
+        {
+            if (_remoteFreePlayHandler != null) return;
+            if (!Player.IsRemote) return;
+
+            var director = YARG.Online.OnlineSessionDirector.Current;
+            if (director == null) return;
+
+            _remoteFreePlayHandler = OnRemoteFreePlayInputDispatch;
+            director.RemoteFreePlayInput += _remoteFreePlayHandler;
+        }
+
+        internal void DisableRemoteBreSubscription()
+        {
+            if (_remoteFreePlayHandler == null) return;
+            var director = YARG.Online.OnlineSessionDirector.Current;
+            if (director != null)
+            {
+                director.RemoteFreePlayInput -= _remoteFreePlayHandler;
+            }
+            _remoteFreePlayHandler = null;
+        }
+
+        private void OnRemoteFreePlayInputDispatch(int peerId, double songTime, int action, float velocity)
+        {
+            if (peerId != Player.RemotePeerId) return;
+            if (!IsCodaActive()) return;
+            OnRemoteBreLaneHit(action);
+        }
+
+        protected abstract bool IsCodaActive();
     }
 
     public abstract class TrackPlayer<TEngine, TNote> : TrackPlayer
@@ -270,10 +331,14 @@ namespace YARG.Gameplay.Player
             GameManager.BeatEventHandler.Audio.Unsubscribe(MetronomeTock);
             GameManager.BeatEventHandler.Visual.Unsubscribe(SunburstEffects.PulseSunburst);
 
+            DisableRemoteBreSubscription();
+
             _autoCalibrator?.Dispose();
 
             base.FinishDestruction();
         }
+
+        protected override bool IsCodaActive() => Engine != null && Engine.IsCodaActive;
 
         private void InitializeCodaEvents()
         {
@@ -379,6 +444,8 @@ namespace YARG.Gameplay.Player
                     director.RegisterRemoteSimulator(Player.RemotePeerId, sim);
                 }
             }
+
+            EnableRemoteBreSubscription();
         }
 
         protected void ResetNoteCounters()
@@ -1151,6 +1218,8 @@ namespace YARG.Gameplay.Player
         public override void GameplayUpdate()
         {
             base.GameplayUpdate();
+
+            if (HasLeftGame) return;
 
             if (LastHighScore != null && !_newHighScoreShown && Score > LastHighScore)
             {

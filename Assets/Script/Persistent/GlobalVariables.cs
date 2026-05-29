@@ -45,6 +45,8 @@ namespace YARG
 
         public string CurrentVersion { get; private set; } = "v0.14";
 
+        public const string OnlineVersion = "online-alpha-v0.2.0";
+
         protected override void SingletonAwake()
         {
             CurrentVersion = LoadVersion();

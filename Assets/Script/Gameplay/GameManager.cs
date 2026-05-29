@@ -9,6 +9,7 @@ using YARG.Core.Chart;
 using YARG.Core.Engine;
 using YARG.Core.Game;
 using YARG.Core.Input;
+using YARG.Online.Game.Contracts.Packets;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Core.Replays.Analyzer;
@@ -305,7 +306,6 @@ namespace YARG.Gameplay
             IsOnline = false;
         }
 
-        // Disable the remote peer's player GameObject so their highway stops rendering.
         private void HideRemotePlayerHighway(int peerId)
         {
             if (_players == null) return;
@@ -317,13 +317,11 @@ namespace YARG.Gameplay
                 if (player.Player.RemotePeerId != peerId) continue;
 
                 YargLogger.LogInfo(
-                    $"GameManager: hiding remote player highway for peerId={peerId} ({player.Player.Profile?.Name})");
-                player.gameObject.SetActive(false);
+                    $"GameManager: retiring remote player for peerId={peerId} ({player.Player.Profile?.Name})");
+                player.LeaveGame();
 
-                // Vocal HUD lives on a shared canvas, not under the player transform.
-                if (player is VocalsPlayer vocals)
+                if (player is VocalsPlayer)
                 {
-                    vocals.HideHud();
                     TrySwitchToLyricBarIfNoVocalists();
                 }
                 return;
@@ -720,12 +718,14 @@ namespace YARG.Gameplay
                 return true;
             }
 
-            // Notify the server this peer finished; broadcasts our final engine snapshot.
+            // Notify the server this peer finished; broadcasts our final engine snapshot
+            // and the local player's recorded replay inputs so other peers can include
+            // this player's track in their saved replay.
             if (IsOnline && !_gameCompleteSent)
             {
                 _gameCompleteSent = true;
                 _gameCompleteRealtime = Time.realtimeSinceStartupAsDouble;
-                OnlineSession?.SendGameComplete();
+                OnlineSession?.SendGameComplete(GatherLocalReplayInputs());
             }
 
             // Wait for all remote peers' final snapshots before showing results (with timeout).
@@ -965,6 +965,51 @@ namespace YARG.Gameplay
             }
         }
 
+        private ReplayInput[] GatherLocalReplayInputs()
+        {
+            if (_players == null) return Array.Empty<ReplayInput>();
+
+            int total = 0;
+            for (int i = 0; i < _players.Count; i++)
+            {
+                var p = _players[i];
+                if (p?.Player == null) continue;
+                if (p.Player.IsRemote || p.Player.Profile.IsBot) continue;
+                total += p.ReplayInputs.Count;
+            }
+
+            if (total == 0) return Array.Empty<ReplayInput>();
+
+            var result = new ReplayInput[total];
+            int w = 0;
+            for (int i = 0; i < _players.Count; i++)
+            {
+                var p = _players[i];
+                if (p?.Player == null) continue;
+                if (p.Player.IsRemote || p.Player.Profile.IsBot) continue;
+                var inputs = p.ReplayInputs;
+                for (int j = 0; j < inputs.Count; j++)
+                {
+                    var gi = inputs[j];
+                    // Integer aliases the 4-byte union (Axis/Button share the
+                    // same offset); reading via Integer captures the raw bits.
+                    result[w++] = new ReplayInput(gi.Time, gi.Action, gi.Integer);
+                }
+            }
+            return result;
+        }
+
+        private static GameInput[] WireToGameInputs(ReplayInput[] wire)
+        {
+            var result = new GameInput[wire.Length];
+            for (int i = 0; i < wire.Length; i++)
+            {
+                var w = wire[i];
+                result[i] = new GameInput(w.Time, w.Action, w.Value);
+            }
+            return result;
+        }
+
 #nullable enable
         public ReplayInfo? SaveReplay(double length, string directory)
 #nullable disable
@@ -984,9 +1029,24 @@ namespace YARG.Gameplay
             for (int i = 0; i < _players.Count; i++)
             {
                 var player = _players[i];
-                if (player.Player.Profile.IsBot || player.Player.IsRemote)
+                if (player.Player.Profile.IsBot)
                 {
                     continue;
+                }
+
+                // Seed remote players' replay input buffer from the GameComplete
+                // packets we received from each peer.
+                if (player.Player.IsRemote)
+                {
+                    var remoteInputs = OnlineSession?.GetRemoteReplayInputs(player.Player.RemotePeerId);
+                    if (remoteInputs == null)
+                    {
+                        YargLogger.LogWarning(
+                            $"SaveReplay: no remote inputs for peer {player.Player.RemotePeerId} " +
+                            $"({player.Player.Profile?.Name ?? "<null>"}); skipping their frame.");
+                        continue;
+                    }
+                    player.SetReplayInputsFromRemote(WireToGameInputs(remoteInputs));
                 }
 
                 var (frame, stats) = player.ConstructReplayData();

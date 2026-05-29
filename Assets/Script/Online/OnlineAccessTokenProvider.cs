@@ -19,8 +19,8 @@ namespace YARG.Online
     /// </summary>
     public sealed class OnlineAccessTokenProvider
     {
-        // public const string BaseUrl = "http://localhost:5230";
-        public const string BaseUrl = "https://lobbies.yarg.online";
+        public const string BaseUrl = "http://localhost:5230";
+        //public const string BaseUrl = "https://lobbies.yarg.online";
 
         private const string DevAuthPath = "/api/v1/auth/dev";
 
@@ -124,9 +124,10 @@ namespace YARG.Online
         private async UniTask<DevAuthResponse> PerformDevAuthAsync(CancellationToken ct)
         {
             var url = BaseUrl.TrimEnd('/') + DevAuthPath;
-            var clientVersion = GlobalVariables.Instance != null
-                ? GlobalVariables.Instance.CurrentVersion
-                : null;
+            // Use OnlineVersion (always the semver literal) rather than CurrentVersion
+            // (which gets overwritten with git branch+commit in editor/test builds and
+            // doesn't match the server-side gate's expected "online-alpha-v" prefix).
+            var clientVersion = GlobalVariables.OnlineVersion;
             var body = JsonConvert.SerializeObject(
                 new DevAuthRequest(_authName, clientVersion), JsonSettings);
 
@@ -138,7 +139,20 @@ namespace YARG.Online
             req.downloadHandler = new DownloadHandlerBuffer();
             req.SetRequestHeader("Accept", "application/json");
 
-            await req.SendWebRequest().ToUniTask(cancellationToken: ct);
+            try
+            {
+                await req.SendWebRequest().ToUniTask(cancellationToken: ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // ToUniTask throws on any non-2xx, including 426. Swallow it here
+                // so the responseCode-specific branches below can pick the right
+                // exception (ClientUpdateRequiredException for 426, generic for the rest).
+            }
 
             if (req.responseCode == 426)
             {

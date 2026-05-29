@@ -46,14 +46,12 @@ namespace YARG.Online
             };
         }
 
-        /// <summary>Serialize <paramref name="snapshot"/> into <paramref name="writer"/>
-        /// at its current position. The caller owns the writer and the surrounding
-        /// packet framing (opcode, header fields, and the length prefix that wraps
-        /// these bytes) -- this method neither resets the writer nor copies out a
-        /// buffer; it appends the snapshot's SnapshotData payload directly.</summary>
+        /// <summary>Write <paramref name="snapshot"/>'s SnapshotData payload directly
+        /// into <paramref name="writer"/>. Caller owns the writer.</summary>
         public static void Serialize(NetDataWriter writer, EngineSnapshot snapshot)
         {
             if (snapshot is null) throw new ArgumentNullException(nameof(snapshot));
+            if (writer is null) throw new ArgumentNullException(nameof(writer));
 
             WriteBase(writer, snapshot);
 

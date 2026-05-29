@@ -77,6 +77,13 @@ namespace YARG.Gameplay.Player
             }
         }
 
+        public override void HideHighway()
+        {
+            HideHud();
+
+            base.HideHighway();
+        }
+
         public void Initialize(int index, int vocalIndex, YargPlayer player, SongChart chart,
             VocalsPlayerHUD hud, VocalPercussionTrack percussionTrack, int? lastHighScore, float trackSpeed)
         {

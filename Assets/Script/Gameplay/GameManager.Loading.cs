@@ -514,7 +514,13 @@ namespace YARG.Gameplay
 
                     if (player.Profile.GameMode != GameMode.Vocals)
                     {
-                        highwayIndex++;
+                        bool hideThisRemote = player.IsRemote
+                            && !SettingsManager.Settings.ShowRemoteHighways.Value;
+                        if (!hideThisRemote)
+                        {
+                            highwayIndex++;
+                        }
+
                         var prefab = player.Profile.GameMode switch
                         {
                             GameMode.FiveFretGuitar => _fiveFretGuitarPrefab,
@@ -530,16 +536,28 @@ namespace YARG.Gameplay
                         // Skip if there's no prefab for the game mode
                         if (prefab == null) continue;
 
+                        // Use the current (un-incremented) highwayIndex for hidden
+                        // remotes so their world-space slot overlaps the last visible
+                        // player
+                        int spawnIndex = hideThisRemote ? Math.Max(highwayIndex, 0) : highwayIndex;
                         var playerObject = Instantiate(prefab,
-                            new Vector3(highwayIndex * TRACK_SPACING_X, 100f, 0f), prefab.transform.rotation);
+                            new Vector3(spawnIndex * TRACK_SPACING_X, 100f, 0f), prefab.transform.rotation);
 
                         // Setup player
                         var trackPlayer = playerObject.GetComponent<TrackPlayer>();
                         var trackView = _trackViewManager.CreateTrackView();
-                        trackPlayer.Initialize(highwayIndex, player, Chart, trackView, _mixer, lastHighScore);
+                        trackPlayer.Initialize(spawnIndex, player, Chart, trackView, _mixer, lastHighScore);
 
                         _players.Add(trackPlayer);
-                        _trackViewManager.AddTrackPlayer(trackPlayer);
+
+                        if (hideThisRemote)
+                        {
+                            trackPlayer.HideHighway();
+                        }
+                        else
+                        {
+                            _trackViewManager.AddTrackPlayer(trackPlayer);
+                        }
                     }
                     else
                     {
@@ -595,7 +613,6 @@ namespace YARG.Gameplay
                     }
                 }
 
-                // Hide highways for remotes that were already SittingOut before _players existed.
                 foreach (var basePlayer in _players)
                 {
                     if (basePlayer?.Player == null) continue;

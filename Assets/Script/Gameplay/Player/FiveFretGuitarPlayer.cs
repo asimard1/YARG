@@ -222,6 +222,8 @@ namespace YARG.Gameplay.Player
             return engine;
         }
 
+        protected override void OnRemoteBreLaneHit(int action) => OnLaneHit(action);
+
         protected override void FinishInitialization()
         {
             base.FinishInitialization();
@@ -502,6 +504,8 @@ namespace YARG.Gameplay.Player
 
             _fretToMostRecentTime[asFret] = GameManager.VisualTime;
             _fretArray.PlayCodaHitAnimation((int)asFret);
+
+            ForwardLaneHitToRemotes(action);
         }
 
         protected override void OnCodaStart(CodaSection coda)

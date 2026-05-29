@@ -59,12 +59,12 @@ namespace YARG.Menu.Online
         [SerializeField]
         private CreateLobbyMenuItemInput _itemInputPrefab;
 
-        private GameMode         _gameMode    = GameMode.Band;
+        // Always Band for now; Versus (Quickplay) isn't implemented yet.
+        private const GameMode _gameMode = GameMode.Band;
         private int              _maxPlayers  = DefaultMaxPlayers;
         private VisibilityChoice _visibility  = VisibilityChoice.Public;
 
         // Live references for in-place body text updates on click.
-        private CreateLobbyMenuItem      _gameModeRow;
         private CreateLobbyMenuItem      _maxPlayersRow;
         private CreateLobbyMenuItem      _visibilityRow;
         private CreateLobbyMenuItemInput _nameRow;
@@ -113,7 +113,6 @@ namespace YARG.Menu.Online
         {
             if (_navGroup != null) _navGroup.ClearNavigatables();
             _container.DestroyChildren();
-            _gameModeRow   = null;
             _maxPlayersRow = null;
             _visibilityRow = null;
             _nameRow       = null;
@@ -126,12 +125,6 @@ namespace YARG.Menu.Online
 
             // Inline lobby-name row, pre-populated with "{ProfileName}'s Room".
             _nameRow = CreateNameRow();
-
-            // Game Mode cycling row.
-            _gameModeRow = CreateCycleRow(
-                Localize.Key("Menu.Online.CreateLobbyMenu.GameMode"),
-                FormatGameMode(_gameMode),
-                CycleGameMode);
 
             // Max Players cycling row.
             _maxPlayersRow = CreateCycleRow(
@@ -177,12 +170,6 @@ namespace YARG.Menu.Online
 
         // ---- Cycle handlers ------------------------------------------------
 
-        private void CycleGameMode()
-        {
-            _gameMode = NextEnum(_gameMode);
-            _gameModeRow?.SetBody(FormatGameMode(_gameMode));
-        }
-
         private void CycleMaxPlayers()
         {
             _maxPlayers++;
@@ -204,13 +191,6 @@ namespace YARG.Menu.Online
         }
 
         // ---- Formatters ----------------------------------------------------
-
-        private static string FormatGameMode(GameMode mode) => mode switch
-        {
-            GameMode.Band      => Localize.Key("Menu.Online.CreateLobbyMenu.GameMode.Band"),
-            GameMode.Quickplay => Localize.Key("Menu.Online.CreateLobbyMenu.GameMode.Quickplay"),
-            _                  => mode.ToString(),
-        };
 
         private static string FormatMaxPlayers(int n) =>
             Localize.Key($"Menu.Online.CreateLobbyMenu.MaxPlayers.{n}");

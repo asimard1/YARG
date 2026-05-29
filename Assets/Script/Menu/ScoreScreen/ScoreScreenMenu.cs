@@ -10,6 +10,7 @@ using UnityEngine.UI;
 using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Engine.Drums;
+using YARG.Core.Game;
 using YARG.Core.Engine.Guitar;
 using YARG.Core.Engine.Keys;
 using YARG.Core.Engine.Vocals;
@@ -391,17 +392,40 @@ namespace YARG.Menu.ScoreScreen
             var results = ReplayAnalyzer.AnalyzeReplay(chart, replayEntry, data);
             bool allPass = true;
 
+            // Defensive guard for remote players: each peer ships their recorded
+            // inputs with GameComplete so the saved replay should contain a real,
+            // verifiable track for them. But if a peer disconnected before sending
+            // GameComplete, GameManager.SaveReplay drops their frame entirely (it
+            // won't be in `results`). The guard below covers any future code path
+            // that lets a remote frame slip into the replay without real inputs.
+            var remoteProfiles = new HashSet<YargProfile>();
+            foreach (var ps in GlobalVariables.State.ScoreScreenStats.Value.PlayerScores)
+            {
+                if (ps.Player != null && ps.Player.IsRemote && ps.Player.Profile != null)
+                {
+                    remoteProfiles.Add(ps.Player.Profile);
+                }
+            }
+
             for (int i = 0; i < results.Length; i++)
             {
                 var analysisResult = results[i];
+                bool isRemoteFrame = remoteProfiles.Contains(data.Frames[i].Profile);
 
                 // Always print the stats in debug mode
 #if UNITY_EDITOR || YARG_TEST_BUILD
-                YargLogger.LogFormatInfo("({0}, {1}/{2}) Verification Result: {3}. Stats:\n{4}",
+                YargLogger.LogFormatInfo("({0}, {1}/{2}) Verification Result: {3}{4}. Stats:\n{5}",
                     data.Frames[i].Profile.Name, data.Frames[i].Profile.CurrentInstrument,
-                    data.Frames[i].Profile.CurrentDifficulty, item4: analysisResult.Passed ? "Passed" : "Failed",
-                    item5: analysisResult.StatLog);
+                    data.Frames[i].Profile.CurrentDifficulty,
+                    item4: analysisResult.Passed ? "Passed" : "Failed",
+                    item5: isRemoteFrame ? " (remote -- ignored)" : "",
+                    item6: analysisResult.StatLog);
 #endif
+
+                if (isRemoteFrame)
+                {
+                    continue;
+                }
 
                 if (!analysisResult.Passed)
                 {

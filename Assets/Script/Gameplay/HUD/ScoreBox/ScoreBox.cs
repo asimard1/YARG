@@ -68,6 +68,12 @@ namespace YARG.Gameplay.HUD
         [SerializeField]
         private Sprite _brokenOverlaySprite;
 
+        [Header("Remote score rows (when ShowRemoteHighways is off)")]
+        [SerializeField]
+        private RemoteScoreDisplay _remoteScoreDisplayPrefab;
+        [SerializeField]
+        private RectTransform _remoteScoreContainer;
+
         private int _bandScore;
         private int _bandCombo;
         private int _bandMultiplier;
@@ -142,6 +148,31 @@ namespace YARG.Gameplay.HUD
                 _bandComboUnits = GameManager.Players.Min(e => e.BaseStats.BandComboUnits);
             }
             _singlePlayer = GameManager.Players.Count == 1;
+
+            SpawnRemoteScoreDisplays();
+        }
+
+        // When ShowRemoteHighways is off, the remote engines still tick but their
+        // highways aren't rendered. Show each remote's score / multiplier / name
+        // in a stacked column under the regular score so the local player can
+        // still tell who's doing what.
+        private void SpawnRemoteScoreDisplays()
+        {
+            if (_remoteScoreDisplayPrefab == null || _remoteScoreContainer == null) return;
+            if (SettingsManager.Settings.ShowRemoteHighways.Value) return;
+
+            int slotIndex = 0;
+            bool isBandPlay = GameManager.TotalPlayers > 1;
+            foreach (var player in GameManager.Players)
+            {
+                if (player?.Player == null) continue;
+                if (!player.Player.IsRemote) continue;
+                if (player.HasLeftGame) continue;
+
+                var row = Instantiate(_remoteScoreDisplayPrefab, _remoteScoreContainer);
+                row.Initialize(player, isBandPlay, slotIndex);
+                slotIndex++;
+            }
         }
 
         private void Update()

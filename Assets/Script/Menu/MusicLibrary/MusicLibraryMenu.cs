@@ -128,6 +128,8 @@ namespace YARG.Menu.MusicLibrary
         private GameObject _noPlayerWarning;
         [SerializeField]
         private PopupMenu _popupMenu;
+        [SerializeField]
+        private SongSpeedMenu _songSpeedPopup;
 
         protected override int ExtraListViewPadding => 15;
         protected override bool CanScroll => !_popupMenu.gameObject.activeSelf;
@@ -363,6 +365,13 @@ namespace YARG.Menu.MusicLibrary
                     new NavigationScheme.Entry(MenuAction.Green, "Menu.Common.Confirm",
                         () => CurrentSelection?.PrimaryButtonClick(), hide: true),
                     new NavigationScheme.Entry(MenuAction.Red,   "Menu.Common.Back", Back, hide: true),
+                    new NavigationScheme.Entry(
+                        MenuAction.Yellow,
+                        "Menu.MusicLibrary.SongSpeed",
+                        OpenSongSpeedPopup,
+                        displayNameOverride: Localize.KeyFormat(
+                            "Menu.MusicLibrary.SongSpeed",
+                            Localize.Percent(SongSpeedMenu.SongSpeedMultiplier))),
                     new NavigationScheme.Entry(MenuAction.Blue,  "Menu.MusicLibrary.Filters", OpenFilters),
                     new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
                         OnOrangeHit, OnOrangeRelease),

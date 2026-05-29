@@ -32,12 +32,16 @@ namespace YARG.Menu.Online
         private DifficultyRing _difficultyRing;
         [SerializeField]
         private Button _removeButton;
+        [SerializeField]
+        private TextMeshProUGUI _songSpeedText;
+        [SerializeField]
+        private GameObject _songSpeedSeparator;
 
         private CancellationTokenSource _albumCts;
         private Texture2D _ownedTexture;
         private Action _onRemove;
 
-        public void Initialize(HashWrapper hash, bool isLocalHost, Action onRemove)
+        public void Initialize(HashWrapper hash, bool isLocalHost, float songSpeed, Action onRemove)
         {
             CancelAlbumLoad();
             ClearOwnedTexture();
@@ -48,6 +52,8 @@ namespace YARG.Menu.Online
             {
                 _removeButton.gameObject.SetActive(isLocalHost);
             }
+
+            SetSongSpeed(songSpeed);
 
             if (!SongContainer.SongsByHash.TryGetValue(hash, out var songs))
             {
@@ -113,6 +119,25 @@ namespace YARG.Menu.Online
         public void SetRemoveButtonVisible(bool visible)
         {
             if (_removeButton != null) _removeButton.gameObject.SetActive(visible);
+        }
+
+        public void SetSongSpeed(float songSpeed)
+        {
+            bool isNormalSpeed = Mathf.Approximately(songSpeed, 1f);
+
+            if (_songSpeedText != null)
+            {
+                _songSpeedText.gameObject.SetActive(!isNormalSpeed);
+                if (!isNormalSpeed)
+                {
+                    _songSpeedText.text = YARG.Localization.Localize.Percent(songSpeed);
+                }
+            }
+
+            if (_songSpeedSeparator != null)
+            {
+                _songSpeedSeparator.SetActive(!isNormalSpeed);
+            }
         }
 
         public void InvokeRemove()

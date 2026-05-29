@@ -531,6 +531,15 @@ namespace YARG.Menu.MusicLibrary
             _sidebar.SetDifficultiesVisible(false);
         }
 
+        private void OpenSongSpeedPopup()
+        {
+            if (_songSpeedPopup == null) return;
+            StopPreview();
+            // Re-push the nav scheme on close so the Yellow label picks up the new speed.
+            _songSpeedPopup.OnClosed = () => SetNavigationScheme(reset: true);
+            _songSpeedPopup.gameObject.SetActive(true);
+        }
+
         private static bool IsFiltersMenuOpen()
         {
             var menu = YARG.Menu.Filters.FiltersMenu.Instance;

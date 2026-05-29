@@ -140,12 +140,23 @@ namespace YARG.Online
             _session.SustainReleasedReceived     += OnWireSustainReleased;
             _session.OverstrumReceived           += OnWireOverstrum;
             _session.EngineStateSnapshotReceived += OnWireEngineStateSnapshot;
+            _session.RemoteGameCompleteReceived  += OnRemoteGameCompleteEvent;
 
+            // Force-dispose any leaked previous director so stale event handlers
+            // on _session don't fire into a dead instance.
             if (Current != null)
             {
                 YargLogger.LogWarning(
                     "OnlineSessionDirector: Current is already set when constructing a new instance; " +
-                    "overwriting. (Did a previous director fail to Dispose?)");
+                    "force-disposing the previous one before overwriting.");
+                try
+                {
+                    Current.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogException(ex, "OnlineSessionDirector: previous director's Dispose threw");
+                }
             }
             Current = this;
         }
@@ -167,7 +178,9 @@ namespace YARG.Online
             _session.SustainReleasedReceived     -= OnWireSustainReleased;
             _session.OverstrumReceived           -= OnWireOverstrum;
             _session.EngineStateSnapshotReceived -= OnWireEngineStateSnapshot;
+            _session.RemoteGameCompleteReceived  -= OnRemoteGameCompleteEvent;
             _remoteSimulators.Clear();
+            _remoteReplayInputs.Clear();
 
             _peerToPlayer.Clear();
             _orderedPlayers = new List<YargPlayer>();
@@ -282,7 +295,6 @@ namespace YARG.Online
             engine.OnSyncSustainReleased    += OnLocalEngineSustainReleased;
             engine.OnSyncOverstrum          += OnLocalEngineOverstrum;
 
-            _lastSentNoteOutcome = null;
             _lastSnapshotSongTime    = double.NegativeInfinity;
             _lastNoteIndexSeen       = -1;
             _lastNoteIndexChangeTime = double.NegativeInfinity;
@@ -292,25 +304,13 @@ namespace YARG.Online
                 $"Prediction[local-attach]: wired local engine -- localPeerId={_localPeerId}, engine={engine.GetType().Name}");
         }
 
-        // RLE note outcome tracking: true=hit run, false=miss run, null=start of song.
-        private bool? _lastSentNoteOutcome;
-
         private void OnLocalEngineNoteMissed(int noteIndex)
         {
             _localEngineEventsObserved++;
 
-            if (_lastSentNoteOutcome == false)
-            {
-                YargLogger.LogFormatTrace(
-                    "Prediction[local-send] NoteMissed (suppressed -- same run): peer={0} noteIndex={1}",
-                    _localPeerId, noteIndex);
-                return;
-            }
-            _lastSentNoteOutcome = false;
-
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
-            YargLogger.LogFormatDebug(
-                "Prediction[local-send] NoteMissed (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
+            YargLogger.LogFormatTrace(
+                "Prediction[local-send] NoteMissed: peer={0} noteIndex={1} hitTime={2:0.000}",
                 _localPeerId, noteIndex, hitTime);
             _session.SendNoteMissed(noteIndex, hitTime);
         }
@@ -319,25 +319,16 @@ namespace YARG.Online
         {
             _localEngineEventsObserved++;
 
-            if (_lastSentNoteOutcome == true)
-            {
-                YargLogger.LogFormatTrace(
-                    "Prediction[local-send] NoteHit (suppressed -- same run): peer={0} noteIndex={1}",
-                    _localPeerId, noteIndex);
-                return;
-            }
-            _lastSentNoteOutcome = true;
-
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
-            YargLogger.LogFormatDebug(
-                "Prediction[local-send] NoteHit (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
+            YargLogger.LogFormatTrace(
+                "Prediction[local-send] NoteHit: peer={0} noteIndex={1} hitTime={2:0.000}",
                 _localPeerId, noteIndex, hitTime);
             _session.SendNoteHit(noteIndex, hitTime);
         }
 
         private void OnLocalEngineStarPowerActivated(double songTime)
         {
-            YargLogger.LogFormatDebug(
+            YargLogger.LogFormatTrace(
                 "Prediction[local-send] StarPowerActivated: peer={0} songTime={1:0.000}",
                 _localPeerId, songTime);
             _session.SendStarPowerActivated(songTime);
@@ -345,7 +336,7 @@ namespace YARG.Online
 
         private void OnLocalEngineWhammy(double songTime, float value)
         {
-            YargLogger.LogFormatDebug(
+            YargLogger.LogFormatTrace(
                 "Prediction[local-send] Whammy: peer={0} songTime={1:0.000} value={2:0.00}",
                 _localPeerId, songTime, value);
             _session.SendWhammy(songTime, value);
@@ -368,7 +359,7 @@ namespace YARG.Online
 
         private void OnLocalEngineSustainReleased(int noteIndex, double songTime)
         {
-            YargLogger.LogFormatDebug(
+            YargLogger.LogFormatTrace(
                 "Prediction[local-send] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000}",
                 _localPeerId, noteIndex, songTime);
             _session.SendSustainReleased(noteIndex, songTime);
@@ -376,7 +367,7 @@ namespace YARG.Online
 
         private void OnLocalEngineOverstrum(double songTime)
         {
-            YargLogger.LogFormatDebug(
+            YargLogger.LogFormatTrace(
                 "Prediction[local-send] Overstrum: peer={0} songTime={1:0.000}",
                 _localPeerId, songTime);
             _session.SendOverstrum(songTime);
@@ -597,15 +588,36 @@ namespace YARG.Online
         /// <summary>Signal peer ready to the server.</summary>
         public void SendPeerReady() => _session.SendPeerReady();
 
-        /// <summary>Signal game complete. Sends a final snapshot first.</summary>
-        public void SendGameComplete()
+        /// <summary>Signal game complete. Sends a final snapshot first, then a
+        /// GameComplete carrying the local player's raw replay inputs so other
+        /// peers can reconstruct this player's track in their saved replay.</summary>
+        public void SendGameComplete(ReplayInput[] localReplayInputs)
         {
             SendSnapshotNow();
-            _session.SendGameComplete();
+            _session.SendGameComplete(localReplayInputs ?? Array.Empty<ReplayInput>());
             _localGameCompleteSent = true;
         }
 
         private bool _localGameCompleteSent;
+
+        // Per-peer replay inputs from remote GameComplete fanouts; consumed at
+        // SaveReplay time so remote tracks land in the file with real inputs.
+        private readonly Dictionary<int, ReplayInput[]> _remoteReplayInputs = new();
+
+        /// <summary>Inputs the named remote peer sent with their GameComplete, or
+        /// null if none arrived (peer disconnected before sending).</summary>
+        public ReplayInput[] GetRemoteReplayInputs(int peerId)
+        {
+            return _remoteReplayInputs.TryGetValue(peerId, out var inputs) ? inputs : null;
+        }
+
+        private void OnRemoteGameCompleteEvent(int peerId, ReplayInput[] inputs)
+        {
+            _remoteReplayInputs[peerId] = inputs ?? Array.Empty<ReplayInput>();
+            YargLogger.LogFormatInfo(
+                "OnlineSessionDirector: stored {0} replay inputs for remote peer {1}.",
+                inputs?.Length ?? 0, peerId);
+        }
 
         /// <summary>True once every remote peer has delivered a final snapshot past the chart length.</summary>
         public bool AllRemoteFinalSnapshotsReceived(double chartLengthSeconds)
@@ -620,7 +632,7 @@ namespace YARG.Online
             return true;
         }
 
-        // --- Periodic snapshot sender ---------------------------------
+        // Periodic snapshot sender.
 
         public const double SnapshotIntervalSeconds = 0.5;
         private const double QuietHeartbeatSeconds = 5.0;
@@ -689,10 +701,15 @@ namespace YARG.Online
             }
             else
             {
-                YargLogger.LogFormatWarning(
-                    "OnlineSessionDirector: remote peer {0} left but no YargPlayer mapping.",
+                // Pre-game: _peerToPlayer is empty until GameStart fires.
+                YargLogger.LogFormatTrace(
+                    "OnlineSessionDirector: remote peer {0} left before YargPlayer mapping was established (pre-game).",
                     peerId);
             }
+
+            UnregisterRemoteSimulator(peerId);
+            _peerPendingEvents.Remove(peerId);
+
             RemotePlayerLeft?.Invoke(peerId);
             // Don't raise SessionEndedExternally -- local player can finish solo.
         }

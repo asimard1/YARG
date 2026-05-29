@@ -56,6 +56,14 @@ namespace YARG.Online
         /// <summary>Fired (main thread) when a remote peer drops mid-session.</summary>
         public event Action<int> RemotePeerLeft;
 
+        /// <summary>Fired (main thread) when the server reports a new loadout-ready
+        /// tally (peer (un)readied or disconnected pre-cue). Args: readyCount, totalExpected.</summary>
+        public event Action<int, int> LoadoutReadyCountReceived;
+
+        /// <summary>Fired (main thread) when the server fans out another peer's
+        /// GameComplete. Args: peerId, replay inputs.</summary>
+        public event Action<int, ReplayInput[]> RemoteGameCompleteReceived;
+
         /// <summary>Fired (main thread) when the server broadcasts GameEnd.</summary>
         public event Action GameEnded;
 
@@ -139,9 +147,9 @@ namespace YARG.Online
                 return false;
             }
 
-            var writer = new NetDataWriter();
-            writer.Put(jwt);
-            _manager.Connect(endpoint, writer);
+            _sendWriter.Reset();
+            _sendWriter.Put(jwt);
+            _manager.Connect(endpoint, _sendWriter);
 
             YargLogger.LogInfo($"GameClientSession: connecting to {endpoint}...");
 
@@ -159,12 +167,13 @@ namespace YARG.Online
             }
         }
 
-        private void SendToServer<T>(NetPeer peer, PacketOpcode opcode, T packet)
+        private void SendToServer<T>(NetPeer peer, PacketOpcode opcode, T packet,
+            DeliveryMethod delivery = DeliveryMethod.ReliableOrdered)
             where T : INetSerializable
         {
             _sendWriter.Reset();
             GamePacketWriter.Write(_sendWriter, opcode, packet);
-            peer.Send(_sendWriter, DeliveryMethod.ReliableOrdered);
+            peer.Send(_sendWriter, delivery);
         }
 
         public void SendLoadout(
@@ -235,7 +244,7 @@ namespace YARG.Online
             SendToServer(peer, PacketOpcode.Ping, new PingPacket { ClientTickMs = clientTickMs });
         }
 
-        /// <summary>Send a missed-note event for fan-out. Not batched -- latency-sensitive.</summary>
+        /// <summary>Send a missed-note event. Unreliable; snapshots reconcile any drops.</summary>
         public void SendNoteMissed(int noteIndex, double songTime)
         {
             var peer = _serverPeer;
@@ -246,7 +255,7 @@ namespace YARG.Online
                 PeerId = 0,
                 NoteIndex = noteIndex,
                 SongTime = songTime,
-            });
+            }, DeliveryMethod.Unreliable);
         }
 
         /// <summary>Send a star-power activation event for fan-out.</summary>
@@ -333,7 +342,7 @@ namespace YARG.Online
             });
         }
 
-        /// <summary>Send a note-hit event for fan-out.</summary>
+        /// <summary>Send a note-hit event. Unreliable; snapshots reconcile any drops.</summary>
         public void SendNoteHit(int noteIndex, double songTime)
         {
             var peer = _serverPeer;
@@ -344,10 +353,12 @@ namespace YARG.Online
                 PeerId = 0,
                 NoteIndex = noteIndex,
                 SongTime = songTime,
-            });
+            }, DeliveryMethod.Unreliable);
         }
 
-        public void SendGameComplete()
+        // Sent once at end-of-chart. Server tracks completion and fans the inputs
+        // out to other peers for replay reconstruction.
+        public void SendGameComplete(ReplayInput[] replayInputs)
         {
             var peer = _serverPeer;
             if (peer == null)
@@ -355,8 +366,12 @@ namespace YARG.Online
                 YargLogger.LogWarning("GameClientSession.SendGameComplete: no server peer; dropping.");
                 return;
             }
-            SendToServer(peer, PacketOpcode.GameComplete, new GameCompletePacket());
-            YargLogger.LogInfo("GameClientSession: SendGameComplete");
+            SendToServer(peer, PacketOpcode.GameComplete, new GameCompletePacket
+            {
+                PeerId = 0,
+                ReplayInputs = replayInputs ?? System.Array.Empty<ReplayInput>(),
+            });
+            YargLogger.LogInfo($"GameClientSession: SendGameComplete inputs={replayInputs?.Length ?? 0}");
         }
 
         /// <summary>Send an authoritative engine-state snapshot for fan-out.</summary>
@@ -365,20 +380,18 @@ namespace YARG.Online
             var peer = _serverPeer;
             if (peer == null) return;
 
-            // TODO: This code is ugly af, needs to be cleaned up
-
-            // Hand-written framing -- must stay byte-for-byte identical to
+            // Hand-written framing -- byte-for-byte identical to
             // EngineStateSnapshotPacket.Serialize (PeerId, SongTime, SnapshotKind,
-            // then a ushort-length-prefixed opaque blob). We serialize the snapshot
-            // straight into the shared send buffer and backpatch the length, avoiding
-            // the intermediate byte[] + packet allocation.
+            // then a ushort-length-prefixed payload). Serializes the snapshot
+            // straight into _sendWriter and backpatches the length, avoiding
+            // an intermediate byte[].
             _sendWriter.Reset();
             _sendWriter.Put((byte) PacketOpcode.EngineStateSnapshot);
-            _sendWriter.Put(0);                 // PeerId -- sender always sends 0 (server stamps real id)
+            _sendWriter.Put(0);                 // PeerId; server stamps the real id
             _sendWriter.Put(songTime);
             _sendWriter.Put(snapshotKind);
 
-            int lengthPos = _sendWriter.Length; // reserve the ushort length slot
+            int lengthPos = _sendWriter.Length;
             _sendWriter.Put((ushort) 0);
             int payloadStart = _sendWriter.Length;
             EngineSnapshotSerializer.Serialize(_sendWriter, snapshot);
@@ -389,7 +402,7 @@ namespace YARG.Online
                 throw new InvalidOperationException(
                     $"EngineStateSnapshot payload {payloadLen} exceeds {ushort.MaxValue}-byte ushort length limit.");
 
-            _sendWriter.SetPosition(lengthPos); // backpatch real length, then restore
+            _sendWriter.SetPosition(lengthPos);
             _sendWriter.Put((ushort) payloadLen);
             _sendWriter.SetPosition(payloadEnd);
 
@@ -406,19 +419,27 @@ namespace YARG.Online
 
             await UniTask.WaitUntil(() => Volatile.Read(ref _inflightHandlers) == 0);
 
+            // Stop the manager BEFORE nulling fields. LiteNetLib's receive callbacks
+            // run on its own thread without holding _lock, so a callback in flight
+            // when we null _serverPeer would dereference a now-null field. Stop()
+            // joins the receive loop and guarantees no callback is mid-execution.
             NetManager manager;
             lock (_lock)
             {
                 manager = _manager;
-                _manager = null;
-                _listener = null;
-                _serverPeer = null;
-                _connectOutcome = null;
             }
             if (manager != null)
             {
                 try { manager.Stop(); }
                 catch (Exception ex) { YargLogger.LogWarning($"GameClientSession: stop -- {ex.Message}"); }
+            }
+
+            lock (_lock)
+            {
+                _manager = null;
+                _listener = null;
+                _serverPeer = null;
+                _connectOutcome = null;
             }
 
             _lifetimeCts.Dispose();
@@ -510,6 +531,35 @@ namespace YARG.Online
                         }).Forget();
                         break;
                     }
+                    case PacketOpcode.LoadoutReadyCount:
+                    {
+                        var countPacket = new LoadoutReadyCountPacket();
+                        countPacket.Deserialize(reader);
+                        var ready = countPacket.ReadyCount;
+                        var total = countPacket.TotalExpected;
+                        Track(async () =>
+                        {
+                            await UniTask.SwitchToMainThread(_lifetimeCts.Token);
+                            LoadoutReadyCountReceived?.Invoke(ready, total);
+                        }).Forget();
+                        break;
+                    }
+                    case PacketOpcode.GameComplete:
+                    {
+                        // Server fans another peer's GameComplete here; inputs feed SaveReplay.
+                        var completePacket = new GameCompletePacket();
+                        completePacket.Deserialize(reader);
+                        var remotePeerId = completePacket.PeerId;
+                        var inputs = completePacket.ReplayInputs ?? System.Array.Empty<ReplayInput>();
+                        YargLogger.LogInfo(
+                            $"GameClientSession: RemoteGameComplete peerId={remotePeerId} inputs={inputs.Length}");
+                        Track(async () =>
+                        {
+                            await UniTask.SwitchToMainThread(_lifetimeCts.Token);
+                            RemoteGameCompleteReceived?.Invoke(remotePeerId, inputs);
+                        }).Forget();
+                        break;
+                    }
                     case PacketOpcode.Pong:
                     {
                         var pongPacket = new PongPacket();
@@ -521,10 +571,10 @@ namespace YARG.Online
                     {
                         var missPacket = new NoteMissedPacket();
                         missPacket.Deserialize(reader);
-                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
                         {
                             int subCount = NoteMissedReceived?.GetInvocationList().Length ?? 0;
-                            YargLogger.LogFormatDebug(
+                            YargLogger.LogFormatTrace(
                                 "Prediction[wire-recv] NoteMissed: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
                                 missPacket.PeerId, missPacket.NoteIndex, missPacket.SongTime, subCount);
                         }
@@ -535,10 +585,10 @@ namespace YARG.Online
                     {
                         var spPacket = new StarPowerActivatedPacket();
                         spPacket.Deserialize(reader);
-                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
                         {
                             int subCount = StarPowerActivatedReceived?.GetInvocationList().Length ?? 0;
-                            YargLogger.LogFormatDebug(
+                            YargLogger.LogFormatTrace(
                                 "Prediction[wire-recv] StarPowerActivated: peer={0} songTime={1:0.000} subs={2}",
                                 spPacket.PeerId, spPacket.SongTime, subCount);
                         }
@@ -549,10 +599,10 @@ namespace YARG.Online
                     {
                         var whammyPacket = new WhammyPacket();
                         whammyPacket.Deserialize(reader);
-                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
                         {
                             int subCount = WhammyReceived?.GetInvocationList().Length ?? 0;
-                            YargLogger.LogFormatDebug(
+                            YargLogger.LogFormatTrace(
                                 "Prediction[wire-recv] Whammy: peer={0} songTime={1:0.000} value={2:0.00} subs={3}",
                                 whammyPacket.PeerId, whammyPacket.SongTime, whammyPacket.Value, subCount);
                         }
@@ -579,10 +629,10 @@ namespace YARG.Online
                     {
                         var releasePacket = new SustainReleasedPacket();
                         releasePacket.Deserialize(reader);
-                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
                         {
                             int subCount = SustainReleasedReceived?.GetInvocationList().Length ?? 0;
-                            YargLogger.LogFormatDebug(
+                            YargLogger.LogFormatTrace(
                                 "Prediction[wire-recv] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
                                 releasePacket.PeerId, releasePacket.NoteIndex, releasePacket.SongTime, subCount);
                         }
@@ -594,10 +644,10 @@ namespace YARG.Online
                     {
                         var overPacket = new OverstrumPacket();
                         overPacket.Deserialize(reader);
-                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
                         {
                             int subCount = OverstrumReceived?.GetInvocationList().Length ?? 0;
-                            YargLogger.LogFormatDebug(
+                            YargLogger.LogFormatTrace(
                                 "Prediction[wire-recv] Overstrum: peer={0} songTime={1:0.000} subs={2}",
                                 overPacket.PeerId, overPacket.SongTime, subCount);
                         }
@@ -608,10 +658,10 @@ namespace YARG.Online
                     {
                         var hitPacket = new NoteHitPacket();
                         hitPacket.Deserialize(reader);
-                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
                         {
                             int subCount = NoteHitReceived?.GetInvocationList().Length ?? 0;
-                            YargLogger.LogFormatDebug(
+                            YargLogger.LogFormatTrace(
                                 "Prediction[wire-recv] NoteHit: peer={0} noteIndex={1} songTime={2:0.000} subs={3}",
                                 hitPacket.PeerId, hitPacket.NoteIndex, hitPacket.SongTime, subCount);
                         }
@@ -622,10 +672,10 @@ namespace YARG.Online
                     {
                         var snapPacket = new EngineStateSnapshotPacket();
                         snapPacket.Deserialize(reader);
-                        if (YargLogger.IsLevelEnabled(LogLevel.Debug))
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
                         {
                             int subCount = EngineStateSnapshotReceived?.GetInvocationList().Length ?? 0;
-                            YargLogger.LogFormatDebug(
+                            YargLogger.LogFormatTrace(
                                 "Prediction[wire-recv] EngineStateSnapshot: peer={0} songTime={1:0.000} kind={2} bytes={3} subs={4}",
                                 snapPacket.PeerId, snapPacket.SongTime, snapPacket.SnapshotKind,
                                 snapPacket.SnapshotData?.Length ?? 0, subCount);
