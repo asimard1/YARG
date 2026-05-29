@@ -19,8 +19,8 @@ namespace YARG.Online
     /// </summary>
     public sealed class OnlineAccessTokenProvider
     {
-        public const string BaseUrl = "http://localhost:5230";
-        //public const string BaseUrl = "https://lobbies.yarg.online";
+        //public const string BaseUrl = "http://localhost:5230";
+        public const string BaseUrl = "https://lobbies.yarg.online";
 
         private const string DevAuthPath = "/api/v1/auth/dev";
 
