@@ -298,6 +298,7 @@ namespace YARG.Online
             _lastSnapshotSongTime    = double.NegativeInfinity;
             _lastNoteIndexSeen       = -1;
             _lastNoteIndexChangeTime = double.NegativeInfinity;
+            _lastSentNoteOutcome     = null;
             _localGameCompleteSent = false;
 
             YargLogger.LogInfo(
@@ -308,9 +309,20 @@ namespace YARG.Online
         {
             _localEngineEventsObserved++;
 
+            // RLE gate: skip if we're already in a miss run. The receiver fills the
+            // in-between notes as implicit misses on the next Hit transition packet.
+            if (_lastSentNoteOutcome == false)
+            {
+                YargLogger.LogFormatTrace(
+                    "Prediction[local-send] NoteMissed (suppressed -- same run): peer={0} noteIndex={1}",
+                    _localPeerId, noteIndex);
+                return;
+            }
+            _lastSentNoteOutcome = false;
+
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
             YargLogger.LogFormatTrace(
-                "Prediction[local-send] NoteMissed: peer={0} noteIndex={1} hitTime={2:0.000}",
+                "Prediction[local-send] NoteMissed (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
                 _localPeerId, noteIndex, hitTime);
             _session.SendNoteMissed(noteIndex, hitTime);
         }
@@ -319,9 +331,19 @@ namespace YARG.Online
         {
             _localEngineEventsObserved++;
 
+            // RLE gate: skip if we're already in a hit run.
+            if (_lastSentNoteOutcome == true)
+            {
+                YargLogger.LogFormatTrace(
+                    "Prediction[local-send] NoteHit (suppressed -- same run): peer={0} noteIndex={1}",
+                    _localPeerId, noteIndex);
+                return;
+            }
+            _lastSentNoteOutcome = true;
+
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
             YargLogger.LogFormatTrace(
-                "Prediction[local-send] NoteHit: peer={0} noteIndex={1} hitTime={2:0.000}",
+                "Prediction[local-send] NoteHit (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
                 _localPeerId, noteIndex, hitTime);
             _session.SendNoteHit(noteIndex, hitTime);
         }
@@ -641,6 +663,11 @@ namespace YARG.Online
         private double _lastSnapshotSongTime = double.NegativeInfinity;
         private int    _lastNoteIndexSeen = -1;
         private double _lastNoteIndexChangeTime = double.NegativeInfinity;
+
+        // RLE note outcome tracking: true=hit run, false=miss run, null=start of song.
+        // We only put a hit/miss packet on the wire when the outcome flips; the receiver
+        // fills the in-between notes as implicit opposite-kind on the next transition.
+        private bool? _lastSentNoteOutcome;
 
         /// <summary>Send a snapshot if enough time has elapsed. Called per-frame.</summary>
         public void MaybeSendPeriodicSnapshot(double localSongTime)

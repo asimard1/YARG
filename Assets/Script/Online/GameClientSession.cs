@@ -244,7 +244,8 @@ namespace YARG.Online
             SendToServer(peer, PacketOpcode.Ping, new PingPacket { ClientTickMs = clientTickMs });
         }
 
-        /// <summary>Send a missed-note event. Unreliable; snapshots reconcile any drops.</summary>
+        /// <summary>Send a missed-note transition. ReliableOrdered (SendToServer default): the
+        /// run-length-encoded hit/miss protocol can't tolerate a dropped or reordered packet.</summary>
         public void SendNoteMissed(int noteIndex, double songTime)
         {
             var peer = _serverPeer;
@@ -255,7 +256,7 @@ namespace YARG.Online
                 PeerId = 0,
                 NoteIndex = noteIndex,
                 SongTime = songTime,
-            }, DeliveryMethod.Unreliable);
+            });
         }
 
         /// <summary>Send a star-power activation event for fan-out.</summary>
@@ -342,7 +343,8 @@ namespace YARG.Online
             });
         }
 
-        /// <summary>Send a note-hit event. Unreliable; snapshots reconcile any drops.</summary>
+        /// <summary>Send a note-hit transition. ReliableOrdered (SendToServer default): the
+        /// run-length-encoded hit/miss protocol can't tolerate a dropped or reordered packet.</summary>
         public void SendNoteHit(int noteIndex, double songTime)
         {
             var peer = _serverPeer;
@@ -353,7 +355,7 @@ namespace YARG.Online
                 PeerId = 0,
                 NoteIndex = noteIndex,
                 SongTime = songTime,
-            }, DeliveryMethod.Unreliable);
+            });
         }
 
         // Sent once at end-of-chart. Server tracks completion and fans the inputs
