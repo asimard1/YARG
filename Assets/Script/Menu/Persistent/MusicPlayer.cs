@@ -62,7 +62,10 @@ namespace YARG.Menu.Persistent
                 return;
             }
 
-            instance.NextSong();
+            if (song != null)
+            {
+                instance.NextSong();
+            }
         }
 
         private object _lock = new();
