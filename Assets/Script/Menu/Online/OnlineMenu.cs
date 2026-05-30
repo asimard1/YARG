@@ -298,7 +298,7 @@ namespace YARG.Menu.Online
                 byte localInstrument = PlayerContainer.Players.Count > 0
                     ? (byte) PlayerContainer.Players[0].Profile.CurrentInstrument
                     : (byte) 0;
-                var args = new EnterLobbyArgs(lobby.LobbyId, LocalSongLibrary.BuildLocal())
+                var args = new EnterLobbyArgs(lobby.LobbyId)
                 {
                     Instrument = localInstrument,
                 };
@@ -310,7 +310,7 @@ namespace YARG.Menu.Online
                         "The lobby session is no longer active.");
                     return;
                 }
-                await session.EnterLobbyAsync(args, CancellationToken.None);
+                await session.EnterLobbyAsync(args, LocalSongLibrary.SnapshotLocalHashes(), CancellationToken.None);
                 MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);
             }
             catch (Exception ex)

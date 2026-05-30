@@ -126,12 +126,12 @@ namespace YARG.Menu.Online
                     ? (byte) PlayerContainer.Players[0].Profile.CurrentInstrument
                     : (byte) 0;
 
-                var args = new EnterLobbyArgs(code, LocalSongLibrary.BuildLocal())
+                var args = new EnterLobbyArgs(code)
                 {
                     Instrument = localInstrument,
                 };
 
-                await session.EnterLobbyAsync(args, CancellationToken.None);
+                await session.EnterLobbyAsync(args, LocalSongLibrary.SnapshotLocalHashes(), CancellationToken.None);
 
                 gameObject.SetActive(false);
                 MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);

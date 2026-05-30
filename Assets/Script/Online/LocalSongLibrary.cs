@@ -1,16 +1,20 @@
-using YARG.Online.Lobbies.Contracts.Rest;
 using YARG.Song;
 
 namespace YARG.Online
 {
     /// <summary>
-    /// Builds a <see cref="SongLibraryDto"/> from the local player's installed
-    /// songs. The server uses it to compute the lobby-wide shared library
-    /// (intersection of every member's library).
+    /// Snapshots the local player's installed song hashes. The snapshot is streamed to the
+    /// lobby hub (see <see cref="LobbyHubSession"/>) so the server can compute the lobby-wide
+    /// shared library (intersection of every member's library).
     /// </summary>
     internal static class LocalSongLibrary
     {
-        public static SongLibraryDto BuildLocal()
+        /// <summary>
+        /// Materialize every installed song hash on the calling thread. Must be called from
+        /// the main thread -- the resulting array is what gets chunked and streamed, so the
+        /// SignalR send thread never touches <see cref="SongContainer.SongsByHash"/>.
+        /// </summary>
+        public static string[] SnapshotLocalHashes()
         {
             var byHash = SongContainer.SongsByHash;
             var hashes = new string[byHash.Count];
@@ -19,7 +23,7 @@ namespace YARG.Online
             {
                 hashes[i++] = kv.Key.ToString();
             }
-            return new SongLibraryDto(hashes);
+            return hashes;
         }
     }
 }

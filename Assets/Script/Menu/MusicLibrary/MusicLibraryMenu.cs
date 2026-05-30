@@ -1446,7 +1446,7 @@ namespace YARG.Menu.MusicLibrary
                 {
                     try
                     {
-                        await lobbySession.UpdateLibraryAsync(LocalSongLibrary.BuildLocal());
+                        await lobbySession.UpdateLibraryAsync(LocalSongLibrary.SnapshotLocalHashes());
                     }
                     catch (Exception ex)
                     {

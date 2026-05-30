@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -348,14 +349,17 @@ namespace YARG.Online
 
         // ---------- Lobby RPCs ----------
 
-        /// <summary>Create a lobby and populate <see cref="CurrentLobby"/>.</summary>
+        /// <summary>Create a lobby and populate <see cref="CurrentLobby"/>. The local song
+        /// library is streamed to the server as chunked hashes.</summary>
         public async UniTask<CreateLobbyResult> CreateLobbyAsync(
-            CreateLobbyArgs args, CancellationToken ct = default)
+            CreateLobbyArgs args, string[] libraryHashes, CancellationToken ct = default)
         {
             var conn = RequireConnection();
-            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby name='{args.Name}', mode={args.GameMode}");
+            YargLogger.LogInfo(
+                $"LobbyHubSession[#{_instanceId}]: CreateLobby name='{args.Name}', mode={args.GameMode}, "
+                + $"libraryHashes={libraryHashes?.Length ?? 0}");
             var result = await conn.InvokeAsync<CreateLobbyResult>(
-                nameof(ILobbyHub.CreateLobby), args, ct);
+                nameof(ILobbyHub.CreateLobby), args, StreamHashes(libraryHashes, ct), ct);
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
@@ -364,14 +368,17 @@ namespace YARG.Online
             return result;
         }
 
-        /// <summary>Enter a lobby and populate <see cref="CurrentLobby"/>.</summary>
+        /// <summary>Enter a lobby and populate <see cref="CurrentLobby"/>. The local song
+        /// library is streamed to the server as chunked hashes.</summary>
         public async UniTask<EnterLobbyResult> EnterLobbyAsync(
-            EnterLobbyArgs args, CancellationToken ct = default)
+            EnterLobbyArgs args, string[] libraryHashes, CancellationToken ct = default)
         {
             var conn = RequireConnection();
-            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: EnterLobby id={args.LobbyId}");
+            YargLogger.LogInfo(
+                $"LobbyHubSession[#{_instanceId}]: EnterLobby id={args.LobbyId}, "
+                + $"libraryHashes={libraryHashes?.Length ?? 0}");
             var result = await conn.InvokeAsync<EnterLobbyResult>(
-                nameof(ILobbyHub.EnterLobby), args, ct);
+                nameof(ILobbyHub.EnterLobby), args, StreamHashes(libraryHashes, ct), ct);
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromEnter(result);
@@ -478,8 +485,9 @@ namespace YARG.Online
             await conn.InvokeAsync(nameof(ILobbyHub.LeaveResults), ct);
         }
 
-        /// <summary>Push the local song library to the lobby for shared-library recomputation.</summary>
-        public async UniTask UpdateLibraryAsync(SongLibraryDto library, CancellationToken ct = default)
+        /// <summary>Push the local song library to the lobby for shared-library recomputation.
+        /// Streamed to the server as chunked hashes.</summary>
+        public async UniTask UpdateLibraryAsync(string[] libraryHashes, CancellationToken ct = default)
         {
             var conn = _connection;
             if (conn == null || _state != ConnectionState.Connected || _currentLobby == null)
@@ -487,8 +495,27 @@ namespace YARG.Online
                 return;
             }
             YargLogger.LogInfo(
-                $"LobbyHubSession[#{_instanceId}]: UpdateLibrary -- hashes={library?.SongHashes?.Length ?? 0}");
-            await conn.InvokeAsync(nameof(ILobbyHub.UpdateLibrary), new UpdateLibraryArgs(library), ct);
+                $"LobbyHubSession[#{_instanceId}]: UpdateLibrary -- hashes={libraryHashes?.Length ?? 0}");
+            await conn.InvokeAsync(nameof(ILobbyHub.UpdateLibrary), StreamHashes(libraryHashes, ct), ct);
+        }
+
+        /// <summary>
+        /// Chunk a flat hash snapshot into an upload stream. SignalR enumerates this off the
+        /// main thread, so the array must already be materialized (see
+        /// <see cref="LocalSongLibrary.SnapshotLocalHashes"/>) -- this only slices it.
+        /// </summary>
+        private static async IAsyncEnumerable<string[]> StreamHashes(
+            string[] hashes, [EnumeratorCancellation] CancellationToken ct = default)
+        {
+            if (hashes == null) yield break;
+            for (int i = 0; i < hashes.Length; i += SongLibraryStreaming.ChunkSize)
+            {
+                ct.ThrowIfCancellationRequested();
+                int len = Math.Min(SongLibraryStreaming.ChunkSize, hashes.Length - i);
+                var chunk = new string[len];
+                Array.Copy(hashes, i, chunk, 0, len);
+                yield return chunk;
+            }
         }
 
         /// <summary>Tear down the current game session and signal back-in-lobby. Safe when no game is active.</summary>

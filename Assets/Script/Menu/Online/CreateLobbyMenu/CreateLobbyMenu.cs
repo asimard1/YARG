@@ -256,14 +256,13 @@ namespace YARG.Menu.Online
                     GameMode:   _gameMode,
                     Region:     DefaultRegion,
                     Song:       null,
-                    MaxPlayers: _maxPlayers,
-                    Library:    LocalSongLibrary.BuildLocal())
+                    MaxPlayers: _maxPlayers)
                 {
                     Instrument = localInstrument,
                     IsPublic   = _visibility == VisibilityChoice.Public,
                 };
 
-                await session.CreateLobbyAsync(args, CancellationToken.None);
+                await session.CreateLobbyAsync(args, LocalSongLibrary.SnapshotLocalHashes(), CancellationToken.None);
 
                 // Close popup and navigate to the new lobby.
                 gameObject.SetActive(false);
