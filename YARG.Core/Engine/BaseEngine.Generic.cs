@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using YARG.Core.Chart;
@@ -56,8 +56,6 @@ namespace YARG.Core.Engine
 
         public override BaseEngineParameters BaseParameters => EngineParameters;
         public override BaseStats            BaseStats      => EngineStats;
-
-        protected const double LANE_END_LENIENCY = 0.080;
 
         protected BaseEngine(InstrumentDifficulty<TNoteType> chart, SyncTrack syncTrack,
             TEngineParams engineParameters, bool isChordSeparate, bool isBot)
@@ -594,9 +592,9 @@ namespace YARG.Core.Engine
 
             if (IsLaneActive)
             {
-                if (IsTimeBetween(LaneExpireTime, previousTime, nextTime))
+                if (IsTimeBetween(LaneAutohitExpireTime, previousTime, nextTime))
                 {
-                    QueueUpdateTime(LaneExpireTime, "Potential Lane Expiration Time");
+                    QueueUpdateTime(LaneAutohitExpireTime, "Potential Lane Expiration Time");
                 }
             }
         }
@@ -614,6 +612,8 @@ namespace YARG.Core.Engine
 
         protected override void UpdateTimeVariables(double time)
         {
+            YargLogger.LogTrace($"REQUIRED LANE NOTE: {RequiredLaneNote}");
+
             if (time < CurrentTime)
             {
                 YargLogger.FailFormat("Time cannot go backwards! Current time: {0}, new time: {1}", CurrentTime,
@@ -634,7 +634,7 @@ namespace YARG.Core.Engine
                     YargLogger.LogFormatTrace("Coda {0} activated at time {1}", CurrentCodaIndex, time);
                     StartCoda();
                 }
-                else if (time >= Codas[CurrentCodaIndex].EndTime && IsCodaActive)
+                else if (time > Codas[CurrentCodaIndex].EndTime && IsCodaActive)
                 {
                     YargLogger.LogFormatTrace("Coda {0} deactivated at time {1}", CurrentCodaIndex, time);
                     IsCodaActive = false;
@@ -670,17 +670,6 @@ namespace YARG.Core.Engine
 
                         CurrentWaitCountdownIndex++;
                     }
-                }
-            }
-
-            if (IsLaneActive)
-            {
-                if (CurrentTime >= LaneExpireTime)
-                {
-                    // Lane forgiveness window expired, disable all lane behavior
-                    RequiredLaneNote = -1;
-                    NextTrillNote = -1;
-                    YargLogger.LogFormatTrace("Lane behavior turned off at {0}", CurrentTime);
                 }
             }
         }
@@ -762,8 +751,11 @@ namespace YARG.Core.Engine
 
         protected virtual void HitNote(TNoteType note)
         {
-            // If this is the last note in the chart and there was a successful coda, award coda bonus
-            if (CodaHasStarted && note.IsCodaEnd)
+            // The coda ends on the final note of the section. That note may be a chord, but the
+            // CodaEnd marker sits on a single sub-note, so only end the coda once the whole chord
+            // is resolved — otherwise hitting one sub-note (e.g. just the kick) ends the coda early
+            // and banks the bonus without the player completing the final chord.
+            if (CodaHasStarted && ChordHasCodaEnd(note) && note.ParentOrSelf.WasFullyHitOrMissed())
             {
                 EndCoda();
             }
@@ -773,12 +765,12 @@ namespace YARG.Core.Engine
                 AdvanceToNextNote(note);
             }
 
-            if (!LanesExist || !note.IsLane || !BaseParameters.EnableLanes)
+            if ((!LanesExist && !note.IsLaneEnd) || !note.IsLane || !BaseParameters.EnableLanes)
             {
                 return;
             }
 
-            if (note.IsLaneStart || note.Time > LaneExpireTime)
+            if (note.IsLaneStart)
             {
                 YargLogger.LogFormatTrace("Starting lane behavior at time {0}. ", CurrentTime);
 
@@ -795,23 +787,22 @@ namespace YARG.Core.Engine
                 }
 
                 // Future updates during this lane will be handled on SubmitLaneNote inputs
-                UpdateLaneExpireTime();
+                UpdateLaneAutohitExpireTime();
             }
             else if (note.IsLaneEnd)
             {
-                // Lane ends with this note, continue overstrum leniency while transitioning out of this lane
                 YargLogger.LogFormatTrace("Lane ending at {0}", CurrentTime);
-
-                UpdateLaneExpireTime();
+                RequiredLaneNote = -1;
+                NextTrillNote = -1;
             }
 
             YargLogger.LogFormatTrace("Lane note hit at {0}", CurrentTime);
         }
 
         // Intercept a missed note while a lane phrase is active
-        protected bool HitNoteFromLane(TNoteType note)
+        protected bool AutohitNoteFromLane(TNoteType note)
         {
-            if (note.Time > LaneExpireTime)
+            if (note.Time > LaneAutohitExpireTime)
             {
                 return false;
             }
@@ -820,7 +811,7 @@ namespace YARG.Core.Engine
             {
                 if (note.IsLaneStart)
                 {
-                    // The leniency window at the end of the previous lane overlaps with the start of this one
+                    // The autohit window at the end of the previous lane overlaps with the start of this one
                     // The first note in a lane must be manually hit in order to count
                     return false;
                 }
@@ -841,7 +832,8 @@ namespace YARG.Core.Engine
                 Codas[CurrentCodaIndex].MissNote();
             }
 
-            if (CodaHasStarted && note.IsCodaEnd)
+            // Mirror HitNote: end the coda only once the whole final chord is resolved.
+            if (CodaHasStarted && ChordHasCodaEnd(note) && note.ParentOrSelf.WasFullyHitOrMissed())
             {
                 EndCoda();
             }
@@ -849,6 +841,20 @@ namespace YARG.Core.Engine
             if (note.ParentOrSelf.WasFullyHitOrMissed())
             {
                 AdvanceToNextNote(note);
+            }
+
+            // If that note was the start of a lane, set the lane note values
+            if (note.IsLaneStart)
+            {
+                RequiredLaneNote = note.LaneNote;
+                NextTrillNote = note.IsTremolo ? -1 : note.NextNote!.LaneNote;
+            }
+
+            // If that note was the end of a lane, and we haven't already transitioned into a new lane, then clear the lane note values
+            if (note.IsLaneEnd && (RequiredLaneNote == note.LaneNote || NextTrillNote == note.LaneNote))
+            {
+                RequiredLaneNote = -1;
+                NextTrillNote = -1;
             }
         }
 
@@ -883,7 +889,7 @@ namespace YARG.Core.Engine
                 }
 
 
-                UpdateLaneExpireTime();
+                UpdateLaneAutohitExpireTime();
 
                 // Update next required note for trills to ensure alternating inputs
                 if (NextTrillNote != -1)
@@ -908,10 +914,38 @@ namespace YARG.Core.Engine
             return false;
         }
 
-        protected void UpdateLaneExpireTime()
+        // This cares whether the input would satisfy the lane that's providing leniency.
+        // Used by Drums and Keys engines to provide forgiveness only for inputs that would satisfy a nearby lane, not for unrelated inputs.
+        // Guitar engine has a parameterless version that doesn't check inputs against adjacent lanes.
+        protected bool IsInLaneLeniencyWindow(int inputNote)
         {
-            LaneExpireTime = CurrentTime + EngineParameters.HitWindow.TremoloWindow;
-            YargLogger.LogFormatDebug("LaneExpireTime extended to {0}. TremoloWindow {1}. Increment {2}.", LaneExpireTime, EngineParameters.HitWindow.TremoloWindow, LaneExpireTime - CurrentTime);
+            if (IsLaneActive)
+            {
+                return false;
+            }
+
+            if (
+                NoteIndex < Notes.Count && // There is a next note
+                Notes[NoteIndex].IsLaneStart && // That note is a lane start
+                Notes[NoteIndex].Time - CurrentTime < EngineParameters.HitWindow.LaneProximityProtectionWindow && // That lane is starting soon
+                ProximalLaneForgivesInput(inputNote, Notes[NoteIndex]) // That lane forgives this input
+            )
+            {
+                return true;
+            }
+
+            return (
+                NoteIndex > 0 && // There is a previous note
+                Notes[NoteIndex - 1].IsLaneEnd && // That note was a lane end
+                CurrentTime - Notes[NoteIndex - 1].Time < EngineParameters.HitWindow.LaneProximityProtectionWindow && // That lane ended recently
+                ProximalLaneForgivesInput(inputNote, Notes[NoteIndex - 1]) // That lane forgives this input
+            );
+        }
+
+        protected void UpdateLaneAutohitExpireTime()
+        {
+            LaneAutohitExpireTime = CurrentTime + EngineParameters.HitWindow.LaneAutohitWindow;
+            YargLogger.LogFormatDebug("LaneExpireTime extended to {0}. LaneAutohitWindow {1}. Increment {2}.", LaneAutohitExpireTime, EngineParameters.HitWindow.LaneAutohitWindow, LaneAutohitExpireTime - CurrentTime);
         }
 
         protected bool SkipPreviousNotes(TNoteType current)
@@ -920,7 +954,7 @@ namespace YARG.Core.Engine
             var prevNote = current.PreviousNote;
             while (prevNote is not null && !prevNote.WasFullyHitOrMissed())
             {
-                if (HitNoteFromLane(prevNote))
+                if (AutohitNoteFromLane(prevNote))
                 {
                     // Save this note from being counted as a skip if it satisfies the active lane
                     continue;
@@ -1119,6 +1153,11 @@ namespace YARG.Core.Engine
             if (IsStarPowerSustainActive() && StarPowerWhammyTimer.IsActive)
             {
                 var whammyTicks = CalculateStarPowerGain(CurrentTick, Math.Max(LastTick, FirstWhammyTick), ref WhammyTicksRemainder);
+
+                if (!BaseStats.IsStarPowerActive && BaseStats.StarPowerTickAmount < TicksPerHalfSpBar && BaseStats.StarPowerTickAmount + whammyTicks >= TicksPerHalfSpBar)
+                {
+                    OnStarPowerReady?.Invoke();
+                }
 
                 // Don't cap until drain has been calculated
                 BaseStats.StarPowerTickAmount += whammyTicks;
@@ -1362,6 +1401,21 @@ namespace YARG.Core.Engine
             IsCodaActive = true;
             CodaHasStarted = true;
             OnCodaStart?.Invoke(Codas[CurrentCodaIndex]);
+        }
+
+        // The CodaEnd marker is set on a single note; this reports whether that note's
+        // chord (parent + children) carries it, so the coda ends on the whole final chord.
+        private static bool ChordHasCodaEnd(TNoteType note)
+        {
+            foreach (var chordNote in note.ParentOrSelf.AllNotes)
+            {
+                if (chordNote.IsCodaEnd)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         protected void EndCoda()
@@ -1703,6 +1757,48 @@ namespace YARG.Core.Engine
             }
 
             return msbIndex;
+        }
+
+        protected abstract bool ProximalLaneForgivesInput(int inputNote, TNoteType laneNote);
+
+        protected static bool LaneIncludesInputNote(int inputNote, TNoteType laneNote)
+        {
+            var inputMask = 1 << inputNote;
+            var (requiredLaneNote, otherNoteInTrill) = GetLaneNotes(laneNote);
+
+            if ((inputMask & requiredLaneNote) != 0)
+            {
+                return true;
+            }
+
+            if (otherNoteInTrill != -1 && ((inputMask & otherNoteInTrill) != 0))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        protected static (int requiredLaneNote, int otherNoteInTrill) GetLaneNotes(TNoteType laneNote)
+        {
+            var requiredLaneNote = laneNote.LaneNote;
+
+            int otherNoteInTrill;
+
+            if (laneNote.IsTremolo)
+            {
+                otherNoteInTrill = -1;
+            }
+            else if (laneNote.IsLaneEnd)
+            {
+                otherNoteInTrill = laneNote.PreviousNote.LaneNote;
+            }
+            else
+            {
+                otherNoteInTrill = laneNote.NextNote.LaneNote;
+            }
+
+            return (requiredLaneNote, otherNoteInTrill);
         }
     }
 }

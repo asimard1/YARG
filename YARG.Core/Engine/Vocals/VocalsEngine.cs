@@ -59,6 +59,14 @@ namespace YARG.Core.Engine.Vocals
             VocalsEngineParameters engineParameters, bool isBot)
             : base(chart, syncTrack, engineParameters, false, isBot)
         {
+            foreach (var note in Notes)
+            {
+                // Percussion phrases do not count as phrases, they cannot be hit and do not increment combo.
+                if (note.IsPercussionPhrase)
+                {
+                    BaseStats.TotalNotes--;
+                }
+            }
         }
 
         public override void Reset(bool keepCurrentButtons = false)
@@ -165,11 +173,14 @@ namespace YARG.Core.Engine.Vocals
                     UpdateMultiplier();
                 }
 
-                // No matter what, we still wanna count this as a phrase hit though
-                if (IsRemoteMirror) EngineStats.IncrementNotesHit(note);
-                else                EngineStats.IncrementNotesHit(note, CurrentTime);
+                if (!note.IsPercussionPhrase)
+                {
+                    // No matter what, we still wanna count this as a phrase hit though
+                    if (IsRemoteMirror) EngineStats.IncrementNotesHit(note);
+                    else                EngineStats.IncrementNotesHit(note, CurrentTime);
 
-                OnNoteHit?.Invoke(NoteIndex, note);
+                    OnNoteHit?.Invoke(NoteIndex, note);
+                }
 
                 // Phrases resolve at most once per NoteIndex — fire unconditionally.
                 OnSyncNoteHit?.Invoke(NoteIndex);

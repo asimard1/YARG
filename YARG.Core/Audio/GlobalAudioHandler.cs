@@ -88,9 +88,19 @@ namespace YARG.Core.Audio
             return StemSettings[stem].VolumeSetting;
         }
 
+        public static double GetVolumeMultiplier(SongStem stem)
+        {
+            return StemSettings[stem].VolumeMultiplier;
+        }
+
         public static void SetVolumeSetting(SongStem stem, double volume)
         {
             StemSettings[stem].VolumeSetting = volume;
+        }
+
+        public static void SetVolumeMultiplier(SongStem stem, double multiplier)
+        {
+            StemSettings[stem].VolumeMultiplier = multiplier;
         }
 
         public static bool GetReverbSetting(SongStem stem)
@@ -430,17 +440,6 @@ namespace YARG.Core.Audio
             }
         }
 
-        public static void TogglePlaybackBuffer(bool enable)
-        {
-            lock (_instanceLock)
-            {
-                if (_instance == null)
-                {
-                    throw new NotInitializedException();
-                }
-                _instance.ToggleBuffer(enable);
-            }
-        }
 
         public static void SetBufferLength(int length)
         {

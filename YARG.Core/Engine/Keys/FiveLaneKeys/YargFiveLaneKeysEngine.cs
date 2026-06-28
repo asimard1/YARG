@@ -96,7 +96,7 @@ namespace YARG.Core.Engine.Keys.Engines
                 if (missed)
                 {
                     // Intercept missed note while lane phrase is active
-                    if (!HitNoteFromLane(parentNote))
+                    if (!AutohitNoteFromLane(parentNote))
                     {
                         // If one of the notes in the chord was missed out the back end,
                         // that means all of them would miss.
@@ -154,7 +154,7 @@ namespace YARG.Core.Engine.Keys.Engines
                                 }
                                 else
                                 {
-                                    if (HitNoteFromLane(note))
+                                    if (AutohitNoteFromLane(note))
                                     {
                                         YargLogger.LogFormatTrace("Forgiving chord staggering for note {0} due to lane phrase", (int)note.FiveLaneKeysAction);
                                     }
@@ -488,17 +488,18 @@ namespace YARG.Core.Engine.Keys.Engines
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool IsFiveLaneKeysAction(ProKeysAction action)
         {
-            return (ALLOWED_FIVE_LANE_KEYS_ACTIONS & (1 << (int) action)) != 0;
+            return (ALLOWED_FIVE_LANE_KEYS_ACTIONS & (1L << (int) action)) != 0;
         }
 
-        private const int ALLOWED_FIVE_LANE_KEYS_ACTIONS =
-            1 << (int) ProKeysAction.GreenKey |
-            1 << (int) ProKeysAction.RedKey |
-            1 << (int) ProKeysAction.YellowKey |
-            1 << (int) ProKeysAction.BlueKey |
-            1 << (int) ProKeysAction.OrangeKey |
-            1 << (int) ProKeysAction.OpenNote |
-            1 << (int) ProKeysAction.StarPower |
-            1 << (int) ProKeysAction.TouchEffects;
+        // ProKeysAction.OrangeKey is 32, which causes issues if we use a plain 32-bit int for the mask
+        private const long ALLOWED_FIVE_LANE_KEYS_ACTIONS =
+            1L << (int) ProKeysAction.GreenKey |
+            1L << (int) ProKeysAction.RedKey |
+            1L << (int) ProKeysAction.YellowKey |
+            1L << (int) ProKeysAction.BlueKey |
+            1L << (int) ProKeysAction.OrangeKey |
+            1L << (int) ProKeysAction.OpenNote |
+            1L << (int) ProKeysAction.StarPower |
+            1L << (int) ProKeysAction.TouchEffects;
     }
 }
