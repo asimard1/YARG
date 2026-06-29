@@ -179,6 +179,8 @@ namespace YARG.Menu.MusicLibrary
         {
             base.OnEnable();
 
+            _heldInputs.Clear();
+
             // Hack to ensure that crowd samples are stopped no matter what
             GlobalAudioHandler.StopAllSfxChannels();
 
@@ -474,7 +476,7 @@ namespace YARG.Menu.MusicLibrary
             if (CurrentSelection is SongViewType song)
             {
                 if (CurrentlyPlaying == null && song.SongEntry == _currentSong &&
-                    (_previewCanceller == null || !_previewCanceller.IsCancellationRequested))
+                    _previewCanceller != null && !_previewCanceller.IsCancellationRequested)
                 {
                     return;
                 }
@@ -692,11 +694,13 @@ namespace YARG.Menu.MusicLibrary
                     }
                     else
                     {
-                        starAmount = GetStarAmountForSong(song);
+                        starAmount = SongViewType.GetStarAmountForSong(song);
                     }
 
                     if (starAmount is not null)
-                        sectionTotalStars += StarAmountHelper.GetStarCount(starAmount.Value);
+                    {
+                        sectionTotalStars += starAmount.Value.GetStarCount();
+                    }
                 }
                 _totalStarCount += sectionTotalStars;
 
@@ -704,27 +708,11 @@ namespace YARG.Menu.MusicLibrary
                 {
                     sortHeader.TotalStarsCount = sectionTotalStars;
                 }
-
             }
 
             _totalSongCount = songCount;
             CalculateCategoryHeaderIndices(list);
             return list;
-        }
-
-        private static StarAmount? GetStarAmountForSong(SongEntry song)
-        {
-            var humanCount = PlayerContainer.Players.Count(p => !p.Profile.IsBot);
-            if (humanCount == 1)
-            {
-                var player = PlayerContainer.Players.First(e => !e.Profile.IsBot);
-                var playerScoreRecord = ScoreContainer.GetHighScore(
-                    song.Hash, player.Profile.Id, player.Profile.CurrentInstrument);
-                return playerScoreRecord?.Stars;
-            }
-
-            var bandScoreRecord = ScoreContainer.GetBandHighScore(song.Hash);
-            return bandScoreRecord?.BandStars;
         }
 
         private void ExitLibrary()
@@ -946,6 +934,7 @@ namespace YARG.Menu.MusicLibrary
             _activeInstance = null;
 
             SetSidebarDifficultiesVisible(false);
+            _heldInputs.Clear();
 
             if (Navigator.Instance == null) return;
 

@@ -205,6 +205,7 @@ public override bool ShouldUpdateInputsOnResume => true;
             engine.OnStarPowerPhraseHit += OnStarPowerPhraseHit;
             engine.OnStarPowerPhraseMissed += OnStarPowerPhraseMissed;
             engine.OnStarPowerStatus += OnStarPowerStatus;
+            engine.OnStarPowerReady += OnStarPowerReady;
 
             engine.OnCountdownChange += OnCountdownChange;
 
@@ -574,6 +575,20 @@ public override bool ShouldUpdateInputsOnResume => true;
             if (IsNormalNote(note))
             {
                 _fretArray.SetSustained((int)GetFretIndex(note.FiveLaneKeysAction), true);
+            }
+            else
+            {
+                // Must be an open or wildcard
+                if (note.Fret == (int) FiveFretGuitarFret.Open && !UsingOpenLane)
+                {
+                    StrikelineAnimator.SetParticleColor(Player.ColorProfile.FiveFretGuitar.GetNoteColor(note.Fret).ToUnityColor());
+                }
+                else
+                {
+                    StrikelineAnimator.SetParticleRainbow();
+                }
+
+                StrikelineAnimator.SetSustaining(true);
             }
 
             _sustainCount++;

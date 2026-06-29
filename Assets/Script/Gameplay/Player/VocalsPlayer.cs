@@ -1,4 +1,5 @@
-﻿using System.Linq;
+﻿using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using YARG.Core;
@@ -55,6 +56,8 @@ namespace YARG.Gameplay.Player
         private VocalsPlayerHUD _hud;
         private VocalPercussionTrack _percussionTrack;
         private bool _shouldHideNeedle;
+        private bool _handlesCountdown;
+        private List<VocalsPart> _allVocalParts;
 
         private int _phraseIndex = -1;
 
@@ -105,6 +108,8 @@ namespace YARG.Gameplay.Player
             // Get the notes from the specific harmony or solo part
 
             var multiTrack = chart.GetVocalsTrack(Player.Profile.CurrentInstrument);
+            _allVocalParts = multiTrack.Parts;
+            _handlesCountdown = vocalIndex == 0;
 
             var track = multiTrack.Parts[Player.Profile.HarmonyIndex];
             player.Profile.ApplyVocalModifiers(track);
@@ -147,26 +152,6 @@ namespace YARG.Gameplay.Player
             }
 
             Engine = CreateEngine();
-
-            Engine.OnComboIncrement += OnComboIncrement;
-            Engine.OnComboReset += OnComboReset;
-
-            if (vocalIndex == 0)
-            {
-                if (Player.Profile.CurrentInstrument == Instrument.Vocals)
-                {
-                    Engine.BuildCountdownsFromSelectedPart();
-                }
-                else
-                {
-                    Engine.BuildCountdownsFromAllParts(multiTrack.Parts);
-                }
-
-                Engine.OnCountdownChange += (countdownLength, endTime) =>
-                {
-                    GameManager.VocalTrack.UpdateCountdown(countdownLength, endTime);
-                };
-            }
 
             if (GameManager.IsPractice)
             {
@@ -222,8 +207,12 @@ namespace YARG.Gameplay.Player
             var engine = new YargVocalsEngine(NoteTrack, SyncTrack, EngineParams, Player.Profile.IsBot);
             EngineContainer = GameManager.EngineManager.Register(engine, NoteTrack.Instrument, Player.Profile.HarmonyIndex, _chart, Player.RockMeterPreset);
 
+            engine.OnComboIncrement += OnComboIncrement;
+            engine.OnComboReset += OnComboReset;
+
             engine.OnStarPowerPhraseHit += _ => OnStarPowerPhraseHit();
             engine.OnStarPowerStatus += OnStarPowerStatus;
+            engine.OnStarPowerReady += OnStarPowerReady;
 
             engine.OnTargetNoteChanged += (note) =>
             {
@@ -276,6 +265,23 @@ namespace YARG.Gameplay.Player
                     ? GameManager.InputTime
                     : null;
             };
+
+            if (_handlesCountdown)
+            {
+                if (Player.Profile.CurrentInstrument == Instrument.Vocals)
+                {
+                    engine.BuildCountdownsFromSelectedPart();
+                }
+                else
+                {
+                    engine.BuildCountdownsFromAllParts(_allVocalParts);
+                }
+
+                engine.OnCountdownChange += (countdownLength, endTime) =>
+                {
+                    GameManager.VocalTrack.UpdateCountdown(countdownLength, endTime);
+                };
+            }
 
             return engine;
         }
@@ -447,6 +453,12 @@ namespace YARG.Gameplay.Player
                 (float) Engine.GetStarPowerBarAmount(), Engine.EngineStats.IsStarPowerActive);
         }
 
+        protected override void OnStarPowerReady()
+        {
+            base.OnStarPowerReady();
+            _hud.ShowNotification(TextNotificationType.StarPowerReady);
+        }
+
         private void ShowTextNotifications(bool isLastPhrase)
         {
             if (SettingsManager.Settings.DisableTextNotifications.Value)
@@ -455,12 +467,6 @@ namespace YARG.Gameplay.Player
             }
 
             var isStarPowerActive = Engine.EngineStats.IsStarPowerActive;
-            var currentStarPowerPercent = Engine.GetStarPowerBarAmount();
-            if (!isStarPowerActive && _previousStarPowerPercent < 0.5 && currentStarPowerPercent >= 0.5)
-            {
-                _hud.ShowNotification(TextNotificationType.StarPowerReady);
-
-            }
             _previousStarPowerPercent = Engine.GetStarPowerBarAmount();
 
             var isMaxMultiplier = Engine.EngineStats.ScoreMultiplier == (isStarPowerActive ? 8 : 4);
@@ -770,7 +776,7 @@ namespace YARG.Gameplay.Player
 
         public override void SetPracticeSection(uint start, uint end)
         {
-            var practiceNotes = OriginalNoteTrack.Notes.Where(n => n.Tick >= start && n.Tick < end).ToList();
+            var practiceNotes = OriginalNoteTrack.Notes.Where(n => IsVocalPhraseInPracticeRange(n, start, end)).ToList();
 
             NoteTrack = new InstrumentDifficulty<VocalNote>(
                 OriginalNoteTrack.Instrument,
@@ -782,7 +788,19 @@ namespace YARG.Gameplay.Player
             _phraseIndex = -1;
 
             Engine = CreateEngine();
+            Engine.SetSpeed(GameManager.SongSpeed >= 1 ? GameManager.SongSpeed : 1);
             ResetPracticeSection();
+        }
+
+        private static bool IsVocalPhraseInPracticeRange(VocalNote note, uint start, uint end)
+        {
+            if (note.Tick >= start && note.Tick < end)
+            {
+                return true;
+            }
+
+            return note.ChildNotes.Count > 0 &&
+                note.ChildNotes.All(child => child.Tick >= start && child.TotalTickEnd <= end);
         }
 
         public override void SetStemMuteState(bool muted)
