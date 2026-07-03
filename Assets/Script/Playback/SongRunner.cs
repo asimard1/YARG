@@ -190,8 +190,6 @@ namespace YARG.Playback
         private bool _resumeAfterOverride;
 
         private bool _pausedForFrameDebugger;
-
-        private double _forceStartTime = double.NaN;
         #endregion
 
         #region Rewind State
@@ -312,12 +310,29 @@ namespace YARG.Playback
             }
         }
 
-        private void Start()
+        /// <summary>
+        /// Deterministic kick for playback. Called by <see cref="GameManager"/> immediately
+        /// before flipping <c>IsSongStarted = true</c>. Spawns the sync thread and rebases
+        /// the time reference so the sync thread ramps SyncVisualTime from
+        /// <c>-preRollSeconds</c> up to 0 before the mixer plays -- i.e. <paramref name="preRollSeconds"/>
+        /// of visible track-scrolling animation before audio starts.
+        ///
+        /// Solo passes <see cref="SONG_START_DELAY"/>. Online absorbs the wall-clock-alignment
+        /// wait into the pre-roll by passing <c>secondsUntilOrigin + SONG_START_DELAY</c>, so
+        /// the highway-scrolling animation is what the user sees during the wait instead of
+        /// the loading screen -- audio still lands exactly at <c>SongOriginUtcMs + SONG_START_DELAY</c>
+        /// on every peer.
+        /// </summary>
+        public void BeginPlayback(double preRollSeconds = SONG_START_DELAY)
         {
-            YargLogger.LogDebug("Starting song runner");
+            if (Started) return;
+            YargLogger.LogFormatDebug("Beginning song runner playback (preRoll={0:0.000}s)", preRollSeconds);
 
-            // Re-initialize song times to avoid lag issues
-            InitializeSongTime(InputTime, 0);
+            // Re-anchor the input/song-time reference so the sync thread sees songTime =
+            // -preRollSeconds RIGHT NOW. It then ramps forward in wall-clock time; mixer
+            // plays once songTime crosses 0. Pre-roll length can exceed the constructor-time
+            // startDelay (online uses this to extend it across the wall-clock-alignment wait).
+            InitializeSongTime(0, preRollSeconds);
 
             _syncThread.Start();
             Started = true;
@@ -325,26 +340,9 @@ namespace YARG.Playback
 
         public void Update()
         {
-            // Runner is lazy-started to avoid timing issues with lag
-            if (!Started)
-            {
-                // Hack: delay if the starting frame lagged
-
-                // Only delay a maximum of one second
-                if (double.IsNaN(_forceStartTime))
-                {
-                    _forceStartTime = InputManager.CurrentInputTime + 1;
-                }
-
-                double currentTime = InputManager.CurrentInputTime;
-                double currentFrameLength = currentTime - InputManager.InputUpdateTime;
-                if (currentFrameLength >= 0.1f && currentTime < _forceStartTime)
-                {
-                    return;
-                }
-
-                Start();
-            }
+            // BeginPlayback must have been called before the runner is ticked.
+            // A stray tick (e.g. during the online cue wait) is a harmless no-op.
+            if (!Started) return;
 
             // Hack: don't update while in the frame debugger
             if (_pausedForFrameDebugger != FrameDebugger.enabled)

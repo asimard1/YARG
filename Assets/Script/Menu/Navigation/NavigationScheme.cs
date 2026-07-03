@@ -28,6 +28,9 @@ namespace YARG.Menu.Navigation
             public readonly MenuAction Action;
             public readonly string     LocalizationKey;
             public readonly bool       Hide;
+            // When non-null, used in place of Localize.Key(LocalizationKey). Lets callers
+            // pass a pre-formatted label (e.g. "Song Speed (100%)") that includes runtime values.
+            private readonly string _displayNameOverride;
 
             private readonly Action<NavigationContext> _handler;
             private readonly Action<NavigationContext> _onHoldHandler;
@@ -36,7 +39,7 @@ namespace YARG.Menu.Navigation
             public readonly float HoldSeconds;
             public bool HasHoldHandler => _onHoldHandler != null && HoldSeconds > 0f;
 
-            public string DisplayName => Localize.Key(LocalizationKey);
+            public string DisplayName => _displayNameOverride ?? Localize.Key(LocalizationKey);
 
             public Entry(MenuAction action,
                 string localizationKey,
@@ -44,10 +47,12 @@ namespace YARG.Menu.Navigation
                 Action onHoldOffHandler = null,
                 Action onHoldHandler = null,
                 float holdSeconds = 0,
-                bool hide = false)
+                bool hide = false,
+                string displayNameOverride = null)
             {
                 Action = action;
                 LocalizationKey = localizationKey;
+                _displayNameOverride = displayNameOverride;
                 _handler = _ => handler?.Invoke();
                 _onHoldOffHandler = _ => onHoldOffHandler?.Invoke();
                 _onHoldHandler = _ => onHoldHandler?.Invoke();
@@ -61,10 +66,12 @@ namespace YARG.Menu.Navigation
                 Action<NavigationContext> onHoldOffHandler = null,
                 Action<NavigationContext> onHoldHandler = null,
                 float holdSeconds = 0,
-                bool hide = false)
+                bool hide = false,
+                string displayNameOverride = null)
             {
                 Action = action;
                 LocalizationKey = localizationKey;
+                _displayNameOverride = displayNameOverride;
                 _handler = handler;
                 _onHoldOffHandler = onHoldOffHandler;
                 _onHoldHandler = onHoldHandler;

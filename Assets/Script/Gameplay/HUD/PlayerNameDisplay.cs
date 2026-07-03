@@ -1,4 +1,4 @@
-﻿using DG.Tweening;
+using DG.Tweening;
 using System;
 using System.Collections;
 using TMPro;
@@ -24,9 +24,13 @@ namespace YARG.Gameplay.HUD
         private RawImage _needleIcon;
 
         private CanvasGroup _canvasGroup;
+        private YargPlayer _player;
 
         public float DisplayTime = 3.0f;
         public float FadeDuration = 0.5f;
+
+        // Remote names hold at partial alpha so the local user can identify each highway.
+        public float RemoteHoldAlpha = 0.35f;
 
         protected override void GameplayAwake()
         {
@@ -41,6 +45,7 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
+            _player = player;
             var profile = player.Profile;
             _playerName.text = profile.Name;
 
@@ -73,10 +78,23 @@ namespace YARG.Gameplay.HUD
         private IEnumerator FadeoutCoroutine()
         {
             _canvasGroup.alpha = 1f;
-            yield return new WaitForSeconds(DisplayTime);
-            yield return _canvasGroup.DOFade(0f, FadeDuration).WaitForCompletion();
 
-            gameObject.SetActive(false);
+            // Wait for loading screen to dismiss before starting the display timer.
+            while (LoadingScreen.IsActive)
+            {
+                yield return null;
+            }
+
+            yield return new WaitForSeconds(DisplayTime);
+
+            bool isRemote = _player != null && _player.IsRemote;
+            float endAlpha = isRemote ? RemoteHoldAlpha : 0f;
+            yield return _canvasGroup.DOFade(endAlpha, FadeDuration).WaitForCompletion();
+
+            if (!isRemote)
+            {
+                gameObject.SetActive(false);
+            }
         }
     }
 }

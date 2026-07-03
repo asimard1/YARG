@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using PlasticBand.Haptics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -12,6 +13,7 @@ using YARG.Gameplay.HUD;
 using YARG.Helpers.Extensions;
 using YARG.Helpers.UI;
 using YARG.Input;
+using YARG.Online;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Settings;
@@ -58,13 +60,18 @@ namespace YARG.Gameplay.Player
 
         public abstract BaseEngine BaseEngine { get; }
 
+        /// <summary>
+        /// Visual-time clock for rendering this player's highway. Equals GameManager.VisualTime
+        /// for both local and remote players. Updated each frame before UpdateVisuals.
+        /// </summary>
+        public double EffectiveVisualTime { get; private set; }
+
         public BaseStats BaseStats => BaseEngine.BaseStats;
         public BaseEngineParameters BaseParameters => BaseEngine.BaseParameters;
 
         /// <summary>
-        /// <p> Star thresholds, from 1 to 5 stars, then gold stars. </p>
-        /// <p> These values represent multiples of the score if you were to FC, hold all sustains fully, hit no dynamics, and use no star power. </p>
-        /// <p> Multiplying these by the max multiplier of the instrument will also roughly give you the average multiplier needed for that star. </p>
+        /// Star thresholds (1-5 stars, then gold) as multiples of the base FC score.
+        /// Multiply by max instrument multiplier to approximate the average multiplier needed.
         /// </summary>
         protected abstract float[] StarMultiplierThresholds { get; set; }
 
@@ -95,6 +102,18 @@ namespace YARG.Gameplay.Player
 
         public IReadOnlyList<GameInput> ReplayInputs => _replayInputs.AsReadOnly();
 
+        /// <summary>
+        /// Replaces this player's replay-input buffer with externally-supplied data.
+        /// </summary>
+        public void SetReplayInputsFromRemote(GameInput[] inputs)
+        {
+            _replayInputs.Clear();
+            if (inputs is { Length: > 0 })
+            {
+                _replayInputs.AddRange(inputs);
+            }
+        }
+
         private Dictionary<int, GameInput> LastInputs { get; } = new();
         private Dictionary<int, GameInput> InputsToSendOnResume { get; } = new();
 
@@ -108,6 +127,9 @@ namespace YARG.Gameplay.Player
 
         protected int  LastCombo;
         protected bool IsStemMuted;
+
+        // True once LeaveGame() ran; GameplayUpdate becomes a no-op.
+        public bool HasLeftGame { get; private set; }
 
         private List<GameInput> _replayInputs;
 
@@ -144,7 +166,7 @@ namespace YARG.Gameplay.Player
                 SantrollerHaptics = Player.Bindings.GetDevicesByType<ISantrollerHaptics>();
             }
 
-            if (!Player.IsReplay)
+            if (!Player.IsReplay && !Player.IsRemote)
             {
                 SubscribeToInputEvents();
             }
@@ -188,12 +210,19 @@ namespace YARG.Gameplay.Player
                 return;
             }
 
+            if (HasLeftGame)
+            {
+                return;
+            }
+
             if (!GameManager.Rewinding)
             {
                 UpdateInputs(GameManager.InputTime);
             }
 
-            UpdateVisuals(GameManager.VisualTime);
+            double visualTime = GameManager.VisualTime;
+            EffectiveVisualTime = visualTime;
+            UpdateVisuals(visualTime);
         }
 
         protected abstract void UpdateVisuals(double visualTime);
@@ -215,6 +244,21 @@ namespace YARG.Gameplay.Player
         // TODO Make this more generic
         public abstract void SetStemMuteState(bool muted);
 
+        /// <summary>Hide this player's highway and HUD.</summary>
+        public virtual void HideHighway()
+        {
+            gameObject.SetActive(false);
+        }
+
+        /// <summary>Retires the player after a mid-song disconnect.</summary>
+        public void LeaveGame()
+        {
+            if (HasLeftGame) return;
+            HasLeftGame = true;
+            SetStemMuteState(false);
+            HideHighway();
+        }
+
         public virtual void SetStarPowerFX(bool active)
         {
             GameManager.ChangeStemReverbState(SongStem.Song, active);
@@ -234,7 +278,7 @@ namespace YARG.Gameplay.Player
 
         protected override void GameplayDestroy()
         {
-            if (!Player.IsReplay)
+            if (!Player.IsReplay && !Player.IsRemote)
             {
                 UnsubscribeFromInputEvents();
             }
@@ -251,6 +295,29 @@ namespace YARG.Gameplay.Player
             // Apply input offset
             // Video offset is already accounted for
             time += InputCalibration;
+
+            if (Player.IsRemote)
+            {
+                // Drive the mirror engine via the prediction layer.
+                var director = GameManager.OnlineSession;
+                if (director != null)
+                {
+                    director.SetLatestLocalSongTime(time);
+                    director.TickRemoteSimulator(Player.RemotePeerId, time);
+                }
+                else
+                {
+                    // Defensive fallback -- should not happen in real lobbies.
+                    BaseEngine.Update(time);
+                }
+                return;
+            }
+
+            // Periodically push engine snapshots to remote peers (throttled by director).
+            if (!Player.IsRemote && GameManager.IsOnline)
+            {
+                GameManager.OnlineSession?.MaybeSendPeriodicSnapshot(time);
+            }
 
             if (Player.IsReplay && GameManager.ReplayInfo != null)
             {

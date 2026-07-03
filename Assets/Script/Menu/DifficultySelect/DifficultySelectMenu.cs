@@ -17,6 +17,7 @@ using YARG.Localization;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.Filters;
+using YARG.Online;
 using YARG.Player;
 using YARG.Song;
 
@@ -24,6 +25,44 @@ namespace YARG.Menu.DifficultySelect
 {
     public class DifficultySelectMenu : MonoBehaviour
     {
+        /// <summary>
+        /// When true, the menu is being driven by the online lobby flow:
+        /// hide the song-speed input, suppress sit-out / disconnect buttons,
+        /// and route completion through <see cref="OnLobbyLoadoutsConfirmed"/>
+        /// instead of loading the gameplay scene. Caller is responsible for
+        /// resetting these to <c>false</c> / <c>null</c> when done.
+        /// </summary>
+        public static bool LobbyMode { get; set; }
+        public static Action OnLobbyLoadoutsConfirmed { get; set; }
+        // Invoked by the Unready button on the WaitingForPlayers screen. The orchestrator
+        // hooks this to retract the previously-sent loadout via the game session (ClearLoadout
+        // packet). No-op if unset (lobby mode wasn't initialized).
+        public static Action OnLobbyUnreadied { get; set; }
+
+        // Fired by orchestrator when lobby members change during the pre-game
+        // phase. Receiver re-renders the WaitingForPlayers screen if it's active.
+        // Matches the OnLobbyLoadoutsConfirmed / OnLobbyUnreadied static-Action pattern.
+        public static Action OnLobbyMembersChanged { get; set; }
+
+        // Server-side loadout-ready tally pushed by the game session (LoadoutReadyCount
+        // packet). The orchestrator stores it here and re-renders WaitingForPlayers via
+        // OnLobbyMembersChanged so the on-screen count reflects authoritative state
+        // rather than a local guess. Negative means "unknown yet -- haven't heard from
+        // the server" and the UI falls back to a generic spinner-style message.
+        public static int LobbyReadyCount = -1;
+        public static int LobbyReadyTotal = -1;
+
+        private void RebuildWaitingForPlayersIfActive()
+        {
+            if (_menuState != State.WaitingForPlayers) return;
+            // CreateWaitingForPlayersMenu appends an Unready row to the container --
+            // wipe existing rows first so a member-list change doesn't stack duplicate
+            // Unready buttons.
+            _navGroup.ClearNavigatables();
+            _container.DestroyChildren();
+            CreateWaitingForPlayersMenu();
+        }
+
         /// <summary>
         /// The saved song speed value
         /// </summary>
@@ -35,7 +74,12 @@ namespace YARG.Menu.DifficultySelect
             Instrument,
             Difficulty,
             Modifiers,
-            Harmony
+            Harmony,
+            // Lobby-only "I'm ready, waiting for the rest of the room" gate. Entered from
+            // Main when the local player confirms their loadout (LobbyMode + ChangePlayer hits
+            // the end of the local player list). Unready returns to Main and lets the user
+            // re-pick their loadout before the game server has collected all loadouts.
+            WaitingForPlayers,
         }
 
         [SerializeField]
@@ -62,6 +106,8 @@ namespace YARG.Menu.DifficultySelect
         private TextMeshProUGUI _artistText;
         [SerializeField]
         private Image _sourceIcon;
+        [SerializeField]
+        private TextMeshProUGUI _songSpeedLabel;
 
         [Space]
         [SerializeField]
@@ -100,7 +146,16 @@ namespace YARG.Menu.DifficultySelect
 
         private void OnEnable()
         {
-            string subHeaderKey = GlobalVariables.State.IsPractice ? "Practice" : "Quickplay";
+            OnLobbyMembersChanged = RebuildWaitingForPlayersIfActive;
+
+            _menuState = State.Main;
+            _playerIndex = 0;
+
+            // LobbyMode overrides the Quickplay/Practice subtitle -- when reached from an
+            // online lobby, the header reads "Online" instead of "Quickplay".
+            string subHeaderKey = LobbyMode
+                ? "Online"
+                : (GlobalVariables.State.IsPractice ? "Practice" : "Quickplay");
             _subHeader.text = Localize.Key("Menu.Main.Options", subHeaderKey);
 
             // Set navigation scheme
@@ -115,6 +170,11 @@ namespace YARG.Menu.DifficultySelect
                     {
                         if (_playerIndex == 0)
                         {
+                            if (LobbyMode)
+                            {
+                                return;
+                            }
+
                             MenuManager.Instance.PopMenu();
                         }
                         else
@@ -130,9 +190,21 @@ namespace YARG.Menu.DifficultySelect
                 })
             }, false));
 
+            // In online lobby mode, song speed is fixed at 1x and the input is hidden.
+            if (LobbyMode)
+            {
+                _songSpeed = 1f;
+                if (_speedInput != null) _speedInput.gameObject.SetActive(false);
+            }
+            else
+            {
+                if (_speedInput != null) _speedInput.gameObject.SetActive(true);
+            }
+
             _speedInput.text = $"{Mathf.RoundToInt(_songSpeed * 100f)}%";
             _songTitleText.text = GlobalVariables.State.CurrentSong.Name;
             _artistText.text = GlobalVariables.State.CurrentSong.Artist;
+            UpdateSongSpeedLabel();
 
             if (GlobalVariables.State.PlayingAShow)
             {
@@ -186,11 +258,29 @@ namespace YARG.Menu.DifficultySelect
             }
         }
 
+        private void UpdateSongSpeedLabel()
+        {
+            if (_songSpeedLabel == null) return;
+            _songSpeedLabel.gameObject.SetActive(true);
+            _songSpeedLabel.text = Localize.KeyFormat(
+                "Menu.DifficultySelect.SongSpeedLabel",
+                Localize.Percent(GlobalVariables.State.SongSpeed));
+        }
+
         private void UpdateForPlayer()
         {
-            // Set player text
-            var profile = CurrentPlayer.Profile;
-            _text.text = $"<sprite name=\"{profile.GameMode.ToResourceName()}\"> {profile.Name}";
+            // Set player text -- only when iterating through the player list. In the
+            // post-confirmation WaitingForPlayers state, _playerIndex has advanced past
+            // the end of PlayerContainer.Players so CurrentPlayer would throw IOOR.
+            if (_menuState != State.WaitingForPlayers)
+            {
+                var profile = CurrentPlayer.Profile;
+                _text.text = $"<sprite name=\"{profile.GameMode.ToResourceName()}\"> {profile.Name}";
+            }
+            else
+            {
+                _text.text = string.Empty;
+            }
 
             // Reset content
             _navGroup.ClearNavigatables();
@@ -214,6 +304,9 @@ namespace YARG.Menu.DifficultySelect
                     break;
                 case State.Harmony:
                     CreateHarmonyMenu();
+                    break;
+                case State.WaitingForPlayers:
+                    CreateWaitingForPlayersMenu();
                     break;
             }
 
@@ -315,8 +408,9 @@ namespace YARG.Menu.DifficultySelect
                 }
             }
 
+            // Sit-out / disconnect aren't meaningful in the online lobby flow.
             // Only show if there is more than one play, only if there is instruments available
-            if (_possibleInstruments.Count <= 0 || PlayerContainer.Players.Count != 1)
+            if (!LobbyMode && (_possibleInstruments.Count <= 0 || PlayerContainer.Players.Count != 1))
             {
                 // Sit out button
                 CreateItem(LocalizeHeader("SitOut"), _possibleInstruments.Count <= 0, _difficultyItemSmallRedPrefab, () =>
@@ -348,6 +442,31 @@ namespace YARG.Menu.DifficultySelect
                     ChangePlayer(0);
                 });
             }
+        }
+
+        private void CreateWaitingForPlayersMenu()
+        {
+            // Show the server-pushed ready tally when available; before the first
+            // LoadoutReadyCount packet lands we fall back to a generic message so the
+            // user isn't shown a stale "0/0" placeholder.
+            string warning = LobbyReadyCount >= 0 && LobbyReadyTotal > 0
+                ? Localize.KeyFormat(
+                    "Menu.DifficultySelect.WaitingForPlayers", LobbyReadyCount, LobbyReadyTotal)
+                : Localize.Key("Menu.DifficultySelect.WaitingForPlayersUnknown");
+            ShowWarning(warning);
+
+            // Unready: tell the orchestrator to retract our loadout on the game server
+            // (ClearLoadout packet) and return to State.Main locally. Server only honors
+            // the retraction if the game hasn't started yet -- past that point this is a
+            // silent no-op on the server while still letting the user revisit their
+            // selections on the next Ready click. Re-clicking Ready resubmits.
+            CreateItem(LocalizeHeader("Unready"), true, _difficultyItemSmallRedPrefab, () =>
+            {
+                OnLobbyUnreadied?.Invoke();
+                ShowWarning(null);
+                _playerIndex = 0;
+                ChangePlayer(0);
+            });
         }
 
         private void ShowWarning(string message)
@@ -547,6 +666,20 @@ namespace YARG.Menu.DifficultySelect
                     }
                 }
 
+                // In online lobby mode, song speed comes from the queue entry
+                // (set by the orchestrator's PushDifficultySelect before this menu
+                // opens) and we hand control off to the lobby orchestrator instead
+                // of loading the gameplay scene. Park the UI in WaitingForPlayers
+                // so the local user sees a "ready, waiting for everyone else"
+                // screen with an unready escape hatch.
+                if (LobbyMode)
+                {
+                    _menuState = State.WaitingForPlayers;
+                    OnLobbyLoadoutsConfirmed?.Invoke();
+                    UpdateForPlayer();
+                    return;
+                }
+
                 // This will always work (as it's set up in the input field)
                 // The max speed that the game can keep up with is 5000%
                 float speed = float.Parse(_speedInput.text.TrimEnd('%')) / 100f;
@@ -673,6 +806,7 @@ namespace YARG.Menu.DifficultySelect
 
         private void OnDisable()
         {
+            OnLobbyMembersChanged = null;
             Navigator.Instance.PopScheme();
         }
 

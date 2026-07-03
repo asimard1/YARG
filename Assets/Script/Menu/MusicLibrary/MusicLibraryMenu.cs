@@ -15,6 +15,7 @@ using YARG.Menu.Filters;
 using YARG.Menu.ListMenu;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
+using YARG.Online;
 using YARG.Player;
 using YARG.Playlists;
 using YARG.Scores;
@@ -57,6 +58,39 @@ namespace YARG.Menu.MusicLibrary
         public static MusicLibraryMode LibraryMode;
 
         public static SongEntry CurrentlyPlaying;
+
+        /// <summary>
+        /// When non-null, the music library acts as a song picker: confirming a
+        /// song pops back to the caller and invokes this delegate with the chosen
+        /// hash instead of starting the play flow. Set before pushing the menu;
+        /// cleared by the picker code on confirm and by <see cref="OnDisable"/>
+        /// on the cancel-back path.
+        /// </summary>
+        public static Action<HashWrapper> SongPickedCallback;
+        public static bool PickerMode => SongPickedCallback != null;
+
+#nullable enable
+        /// <summary>
+        /// When non-null, restricts the visible library to songs whose hash is in this set.
+        /// Stacks with <see cref="Filters.FiltersMenu.ActiveFilterPredicate"/>: the allow-list
+        /// is the ceiling, in-menu filters narrow further. Cleared on <see cref="OnDisable"/>.
+        /// Use <see cref="NotifyAllowedSongsChanged"/> to refresh the active menu after mutation.
+        /// </summary>
+        public static HashSet<HashWrapper>? AllowedSongHashes;
+#nullable disable
+
+        private static MusicLibraryMenu _activeInstance;
+
+        /// <summary>
+        /// Refreshes the music library if it is currently open. Safe to call when closed (no-op).
+        /// Call after mutating <see cref="AllowedSongHashes"/>.
+        /// </summary>
+        public static void NotifyAllowedSongsChanged()
+        {
+            if (_activeInstance == null) return;
+            _activeInstance.RefreshForAllowedSongsChange();
+        }
+
         public        MenuState MenuState;
         public        Playlist  SelectedPlaylist;
 
@@ -94,6 +128,8 @@ namespace YARG.Menu.MusicLibrary
         private GameObject _noPlayerWarning;
         [SerializeField]
         private PopupMenu _popupMenu;
+        [SerializeField]
+        private SongSpeedMenu _songSpeedPopup;
 
         protected override int ExtraListViewPadding => 15;
         protected override bool CanScroll => !_popupMenu.gameObject.activeSelf;
@@ -245,6 +281,8 @@ namespace YARG.Menu.MusicLibrary
 
             // Ensure the sidebar is rendered correctly on first entry
             _sidebar.UpdateSidebar(true);
+
+            _activeInstance = this;
         }
 
         private void SetRefreshIfNeeded()
@@ -287,6 +325,60 @@ namespace YARG.Menu.MusicLibrary
             if (reset)
             {
                 Navigator.Instance.PopScheme();
+            }
+
+            // Picker mode (e.g. opened from an online lobby to queue a song): use a
+            // simplified scheme that drops Play-A-Show / setlist controls and exposes
+            // only navigate + confirm + filters + more options. Green is a plain confirm
+            // -- SongViewType.PrimaryButtonClick already routes through SongPickedCallback
+            // and ExitFromPickerConfirm back to the lobby.
+            if (PickerMode)
+            {
+                Navigator.Instance.PushScheme(new NavigationScheme(new()
+                {
+                    new NavigationScheme.Entry(MenuAction.Up, "Menu.Common.Up",
+                        ctx =>
+                        {
+                            if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
+                            {
+                                GoToPreviousSection();
+                            }
+                            else
+                            {
+                                SetWrapAroundState(!ctx.IsRepeat);
+                                SelectedIndex--;
+                            }
+                        }),
+                    new NavigationScheme.Entry(MenuAction.Down, "Menu.Common.Down",
+                        ctx =>
+                        {
+                            if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
+                            {
+                                GoToNextSection();
+                            }
+                            else
+                            {
+                                SetWrapAroundState(!ctx.IsRepeat);
+                                SelectedIndex++;
+                            }
+                        }),
+                    new NavigationScheme.Entry(MenuAction.Left,  "Menu.MusicLibrary.SkipSection", GoToPreviousSection),
+                    new NavigationScheme.Entry(MenuAction.Right, "Menu.MusicLibrary.SkipSection", GoToNextSection),
+                    new NavigationScheme.Entry(MenuAction.Green, "Menu.Common.Confirm",
+                        () => CurrentSelection?.PrimaryButtonClick(), hide: true),
+                    new NavigationScheme.Entry(MenuAction.Red,   "Menu.Common.Back", Back, hide: true),
+                    new NavigationScheme.Entry(
+                        MenuAction.Yellow,
+                        "Menu.MusicLibrary.SongSpeed",
+                        OpenSongSpeedPopup,
+                        displayNameOverride: Localize.KeyFormat(
+                            "Menu.MusicLibrary.SongSpeed",
+                            Localize.Percent(SongSpeedMenu.SongSpeedMultiplier))),
+                    new NavigationScheme.Entry(MenuAction.Blue,  "Menu.MusicLibrary.Filters", OpenFilters),
+                    new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
+                        OnOrangeHit, OnOrangeRelease),
+                }, false));
+                return;
             }
 
             bool isSelectingPlaylist = MenuState == MenuState.PlaylistSelect;
@@ -335,6 +427,18 @@ namespace YARG.Menu.MusicLibrary
                         MenuAction.Green,
                         "Menu.Common.Confirm",
                         () => CurrentSelection?.PrimaryButtonClick(),
+                        hide: true
+                    ) :
+                    PickerMode ?
+                    // Lobby picker: the green button is purely "add this song
+                    // to the setlist for the host" -- there's no immediate-play
+                    // action available, so don't render the "Play Song / hold
+                    // Add to Setlist" two-line label that implies one. Drop
+                    // the hold handler too; tap is the only meaningful action.
+                    new NavigationScheme.Entry(
+                        MenuAction.Green,
+                        "Menu.Online.AddSong",
+                        OnGreenTap,
                         hide: true
                     ) :
                     new NavigationScheme.Entry(
@@ -444,6 +548,22 @@ namespace YARG.Menu.MusicLibrary
 
             if (!_sortedSongs.Any(section => section.Songs.Length > 0))
             {
+                // Add the Playlists nav entry even when the filtered library is empty so the
+                // user can still reach Favorites / custom playlists. In lobby picker mode
+                // the AllowedSongHashes filter can legitimately reduce the library to zero
+                // (e.g. instrument combinations where no shared song is playable for all
+                // members) -- without this, the only entry the player sees is
+                // "No Songs Match Criteria" and Favorites becomes unreachable. Gated on
+                // !IsSearching to match the normal-path placement below.
+                if (!_searchField.IsSearching)
+                {
+                    list.Add(new ButtonViewType(
+                        Localize.Key("Menu.MusicLibrary.Playlists"),
+                        "MusicLibraryIcons[Playlists]",
+                        EnterPlaylistSelectFromLibrary,
+                        PLAYLIST_ID,
+                        Localize.Key("Menu.MusicLibrary.PlaylistsHelp")));
+                }
                 list.Add(new SortHeaderViewType(Localize.Key("Menu.MusicLibrary.NoSongsMatchCriteria"), 0, null, Array.Empty<SongEntry>()));
                 return list;
             }
@@ -620,8 +740,41 @@ namespace YARG.Menu.MusicLibrary
             _previewContext?.Dispose();
             _previewContext = null;
             StemSettings.ApplySettings = true;
+            ExitToCallerMenu(wasPicker: PickerMode);
+        }
+
+        /// <summary>
+        /// Closes this library instance, routing back to the lobby view when
+        /// we were opened as a picker from an active lobby session. The
+        /// online flow never pushed onto the menu stack, so PopMenu would
+        /// land on the wrong screen.
+        /// </summary>
+        /// <param name="wasPicker">
+        /// True if the caller was operating in picker mode at the point of
+        /// the exit decision. Picker callers may have already nulled the
+        /// static <see cref="SongPickedCallback"/> before invoking this, so
+        /// we can't re-read <see cref="PickerMode"/> here.
+        /// </param>
+        private static void ExitToCallerMenu(bool wasPicker)
+        {
+            // Real-exit cleanup. Previously this lived in OnDisable, but that fires
+            // for transient deactivations too (Filters submenu cycle), so it dropped
+            // the picker session on Filters open/close. Centralising here means both
+            // cancel-back (ExitLibrary) and picker-confirm (ExitFromPickerConfirm)
+            // funnel through the same teardown without burning state across the
+            // Filters menu cycle.
+            SongPickedCallback = null;
+            AllowedSongHashes = null;
+
+            if (wasPicker && LobbyHubSession.Current?.CurrentLobby != null)
+            {
+                MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.LobbyView);
+                return;
+            }
             MenuManager.Instance.PopMenu();
         }
+
+        internal static void ExitFromPickerConfirm() => ExitToCallerMenu(wasPicker: true);
 
         private bool TrySelectCurrentSongPreferNaturalLocation(SongEntry targetSong)
         {
@@ -787,6 +940,17 @@ namespace YARG.Menu.MusicLibrary
         protected override void OnDisable()
         {
             base.OnDisable();
+
+            // NOTE: do NOT clear SongPickedCallback / AllowedSongHashes here.
+            // OnDisable also fires for transient deactivations -- opening and closing
+            // the Filters submenu routes through MenuManager.ReactivateCurrentMenu,
+            // which SetActive(false)→SetActive(true)'s this menu, and a clear here
+            // would silently drop the lobby picker session every time the user
+            // touches Filters. Real-exit cleanup lives in ExitToCallerMenu (both
+            // the cancel-back path via ExitLibrary and the picker-confirm path via
+            // ExitFromPickerConfirm funnel through there).
+            _activeInstance = null;
+
             SetSidebarDifficultiesVisible(false);
             _heldInputs.Clear();
 
@@ -1001,6 +1165,29 @@ namespace YARG.Menu.MusicLibrary
             var headerIndex = _sectionHeaderIndices.IndexOf(closestHeader);
             var offset = SelectedIndex - _sectionHeaderIndices[headerIndex];
             return (headerIndex, offset);
+        }
+
+        private void RefreshForAllowedSongsChange()
+        {
+            // Capture BEFORE Refresh -- that rebuilds ViewList and may invalidate CurrentSelection.
+            var currentSongHash = (CurrentSelection as SongViewType)?.SongEntry.Hash;
+            var snapshot = CaptureSelectionSnapshot();
+            Refresh();
+
+            // Hash-based ContentStableId match inside RestoreSelectionSnapshot handles the happy
+            // path automatically. When the previously-selected song is gone, we explicitly land
+            // at index 0 instead of clamping to the old index near a different song.
+            bool selectedSongFilteredOut = currentSongHash.HasValue
+                && AllowedSongHashes != null
+                && !AllowedSongHashes.Contains(currentSongHash.Value);
+
+            if (selectedSongFilteredOut && ViewList.Count > 0)
+            {
+                SelectedIndex = 0;
+                return;
+            }
+
+            RestoreSelectionSnapshot(snapshot);
         }
 
         public void RefreshAndReselect(bool selectTopOfList = false, bool preserveSelectedIndex = false)
@@ -1252,6 +1439,28 @@ namespace YARG.Menu.MusicLibrary
             {
                 await SongContainer.RunRefresh(false, context);
                 RefreshAndReselect();
+
+                // If the user triggered this scan from the lobby picker, push the
+                // freshly-scanned library to the lobby hub so the server can
+                // recompute the shared intersection. Without this the local
+                // user's view of "what's queueable" diverges from what the
+                // server actually allows -- they'd see new songs in the picker
+                // (AllowedSongHashes is reference-aliased to the live
+                // LobbySongLibrary, so it picks up local additions only after
+                // the server broadcasts them back), but QueueSong would reject
+                // any song the server doesn't think they have.
+                var lobbySession = LobbyHubSession.Current;
+                if (PickerMode && lobbySession?.CurrentLobby != null)
+                {
+                    try
+                    {
+                        await lobbySession.UpdateLibraryAsync(LocalSongLibrary.SnapshotLocalHashes());
+                    }
+                    catch (Exception ex)
+                    {
+                        Core.Logging.YargLogger.LogException(ex);
+                    }
+                }
             }
             finally
             {

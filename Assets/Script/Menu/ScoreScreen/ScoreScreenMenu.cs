@@ -12,6 +12,7 @@ using UnityEngine.UI;
 using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Engine.Drums;
+using YARG.Core.Game;
 using YARG.Core.Engine.Guitar;
 using YARG.Core.Engine.Keys;
 using YARG.Core.Engine.Vocals;
@@ -22,9 +23,11 @@ using YARG.Core.Replays;
 using YARG.Core.Replays.Analyzer;
 using YARG.Core.Song;
 using YARG.Localization;
+using YARG.Menu;
 using YARG.Menu.MusicLibrary;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
+using YARG.Online;
 using YARG.Scores;
 using YARG.Song;
 using YARG.Playlists;
@@ -382,17 +385,40 @@ namespace YARG.Menu.ScoreScreen
             var results = ReplayAnalyzer.AnalyzeReplay(chart, replayEntry, data);
             bool allPass = true;
 
+            // Defensive guard for remote players: each peer ships their recorded
+            // inputs with GameComplete so the saved replay should contain a real,
+            // verifiable track for them. But if a peer disconnected before sending
+            // GameComplete, GameManager.SaveReplay drops their frame entirely (it
+            // won't be in `results`). The guard below covers any future code path
+            // that lets a remote frame slip into the replay without real inputs.
+            var remoteProfiles = new HashSet<YargProfile>();
+            foreach (var ps in GlobalVariables.State.ScoreScreenStats.Value.PlayerScores)
+            {
+                if (ps.Player != null && ps.Player.IsRemote && ps.Player.Profile != null)
+                {
+                    remoteProfiles.Add(ps.Player.Profile);
+                }
+            }
+
             for (int i = 0; i < results.Length; i++)
             {
                 var analysisResult = results[i];
+                bool isRemoteFrame = remoteProfiles.Contains(data.Frames[i].Profile);
 
                 // Always print the stats in debug mode
 #if UNITY_EDITOR || YARG_TEST_BUILD
-                YargLogger.LogFormatInfo("({0}, {1}/{2}) Verification Result: {3}. Stats:\n{4}",
+                YargLogger.LogFormatInfo("({0}, {1}/{2}) Verification Result: {3}{4}. Stats:\n{5}",
                     data.Frames[i].Profile.Name, data.Frames[i].Profile.CurrentInstrument,
-                    data.Frames[i].Profile.CurrentDifficulty, item4: analysisResult.Passed ? "Passed" : "Failed",
-                    item5: analysisResult.StatLog);
+                    data.Frames[i].Profile.CurrentDifficulty,
+                    item4: analysisResult.Passed ? "Passed" : "Failed",
+                    item5: isRemoteFrame ? " (remote -- ignored)" : "",
+                    item6: analysisResult.StatLog);
 #endif
+
+                if (isRemoteFrame)
+                {
+                    continue;
+                }
 
                 if (!analysisResult.Passed)
                 {
@@ -442,6 +468,31 @@ namespace YARG.Menu.ScoreScreen
                         else
                         {
                             GlobalVariables.State.PlayingAShow = false;
+
+                            // If we're still in an online lobby session, force
+                            // the LobbyView menu open on the next MenuScene Start.
+                            // The stack-free start-game flow never pushed LobbyView
+                            // onto the menu stack, so _lastOpenMenu can't restore it.
+                            var lobbySession = LobbyHubSession.Current;
+                            if (lobbySession?.CurrentLobby != null)
+                            {
+                                MenuManager.SetOverrideOpenMenu(MenuManager.Menu.LobbyView);
+                                // Returning to the lobby from the score screen means we're done
+                                // with the game session. Use LeaveCurrentGame (not just
+                                // LeaveResultsAsync) so both happen in one shot:
+                                //   1. SignalR LeaveResults -- flips MemberIsBackInLobby for us
+                                //      so the host's Start gate unblocks.
+                                //   2. Orchestrator + GameClientSession dispose -- closes our UDP
+                                //      connection to the game server. Without this the orchestrator
+                                //      outlives the song; the server's session waits on a peer that
+                                //      will never send another packet, and ~30 s later the straggler
+                                //      timer fires BroadcastGameEnd into a lobby where everyone is
+                                //      already on song-select. With both clients disposing on
+                                //      Continue, the game server's last-peer-disconnect path
+                                //      removes the session (and cancels the straggler CTS) cleanly.
+                                lobbySession.LeaveCurrentGame();
+                            }
+
                             GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
                         }
                     }
@@ -622,8 +673,13 @@ namespace YARG.Menu.ScoreScreen
             List<NavigationScheme.Entry> buttons = new()
             {
                 _continueButtonEntry,
-                _restartButtonEntry
             };
+
+            // Only show the restart button if we aren't playing online
+            if (LobbyHubSession.Current == null || LobbyHubSession.Current.CurrentLobby == null)
+            {
+                buttons.Add(_restartButtonEntry);
+            }
 
             var song = GlobalVariables.State.CurrentSong;
             var isFavorited = PlaylistContainer.FavoritesPlaylist.ContainsSong(song);

@@ -268,11 +268,15 @@
             "Harmony": "Harmony",
             "Modifiers": "Modifiers",
             "Ready": "Ready",
+            "Unready": "Unready",
             "SitOut": "Sit Out",
 			"Disconnect" : "Disconnect",
             "Done": "Done",
+            "WaitingForPlayers": "Waiting for other players ({0}/{1})",
+            "WaitingForPlayersUnknown": "Waiting for other players...",
             "WarningPlayerNoInputDevice" : "This player has no input device assigned! Assign one from the Profiles menu.",
-            "WarningVocalistNoMicrophone" : "This vocalist has no microphone assigned! Assign one from the Profiles menu."
+            "WarningVocalistNoMicrophone" : "This vocalist has no microphone assigned! Assign one from the Profiles menu.",
+            "SongSpeedLabel": "Song Speed: {0}"
         },
         "History": {
             "Name": "History",
@@ -289,10 +293,149 @@
             "Analyze": "Analyze",
             "PlayWithReplay": "Play With Replay"
         },
+        "Online": {
+            "Name": "Online",
+            "CreateLobby": "Create Lobby",
+            "Filters": "Filters",
+            "JoinByCode": "Join By Code",
+            "AddSong": "Add Song",
+            "StartGame": "Start Game",
+            "CopyCode": "Copy Code (Hold to Show)",
+            "LobbyHeaderSubText": "Online",
+            "LobbyType": {
+                "Public": "Public Lobby",
+                "Private": "Private Lobby"
+            },
+            "ShowCode": {
+                "Title": "Lobby Code",
+                "Body": "Share this code so others can join:\n\n<size=200%><b>{0}</b></size>"
+            },
+            "PlayersHeader": "Players ({0}/{1})",
+            "SongsQueued": {
+                "Singular": "1 Song Queued",
+                "Plural": "{0} Songs Queued"
+            },
+            "PlayerActions": {
+                "MakeHost": "Make Host",
+                "Kick": "Kick"
+            },
+            "KickDialog": {
+                "Title": "Kicked from lobby",
+                "Reason": {
+                    "KickedByHost": "The host removed you from the lobby.",
+                    "Unknown": "You were removed from the lobby ({0})."
+                }
+            },
+            "ServerUnavailable": {
+                "Title": "Online Server Unavailable",
+                "Body": "Couldn't reach the YARG server. Only LAN play is available."
+            },
+            "UpdateRequired": {
+                "Title": "Update Required",
+                "Body": "Your client is outdated. Please update to at least version {0}."
+            },
+            "CreateLobbyMenu": {
+                "Create": "Create",
+                "LobbyName": "Lobby Name",
+                "LobbyNamePlaceholder": "Enter lobby name...",
+                "GameMode": "Game Mode",
+                "GameMode.Band": "Band",
+                "GameMode.Quickplay": "Versus",
+                "MaxPlayers": "Max Players",
+                "MaxPlayers.2": "2",
+                "MaxPlayers.3": "3",
+                "MaxPlayers.4": "4",
+                "Visibility": "Visibility",
+                "Visibility.Public": "Public",
+                "Visibility.Private": "Private (With Code)"
+            },
+            "JoinByCodeMenu": {
+                "Join": "Join",
+                "Code": "Code",
+                "CodePlaceholder": "Enter code..."
+            },
+            "FiltersMenu": {
+                "Header": "Filters",
+                "Options": "Options",
+                "Filters": "Filters",
+                "SortedBy": "Sorted By",
+                "SortBy.LobbyName": "Lobby Name",
+                "SortBy.HostName": "Host Name",
+                "SortBy.SongName": "Song Name",
+                "SortBy.PlayerCount": "Player Count",
+                "GameMode.Any": "Any",
+                "GameMode.Band": "Band",
+                "GameMode.Versus": "Versus",
+                "Status.Any": "Any",
+                "Status.SongSelect": "Song Select",
+                "Status.InGame": "In-game"
+            },
+            "QueueFull": {
+                "Title": "Queue full",
+                "Body": "The song queue holds at most {0} songs. Remove one before adding another."
+            },
+            "WaitingForPlayers": {
+                "Title": "Waiting for players",
+                "InGame": "Still in-game: {0}",
+                "OnResults": "Still on the results screen: {0}",
+                "Both": "In-game: {0}\nOn the results screen: {1}",
+                "Generic": "Some players haven't returned to the lobby yet."
+            },
+            "PreparingGame": "Preparing game...",
+            "GameCancelled": {
+                "Title": "Game cancelled",
+                "NotEnoughPlayers": "Not enough players remain in the lobby to start the game."
+            },
+            "StartGameError": {
+                "Title": "Could not start game",
+                "AlreadyStarted": "The game has already started.",
+                "AlreadyStarting": "The game is already being prepared. Please wait.",
+                "PlayersStillInResults": "One or more players are still in-game or on the results screen. Wait for everyone to return to the lobby.",
+                "AllocationFailed": "No game servers are available right now. Please try again in a moment.",
+                "StartAborted": "Game start was aborted. Please try again.",
+                "NotEnoughPlayers": "You need at least two players in the lobby to start a game.",
+                "QueueEmpty": "The song queue is empty. Add a song before starting the game."
+            },
+            "HostActionError": {
+                "KickTitle": "Could not kick player",
+                "TransferHostTitle": "Could not transfer host",
+                "NotHost.Kick": "Only the lobby host can kick.",
+                "NotHost.MakeHost": "Only the lobby host can make a new host.",
+                "TargetIsHost.Kick": "You can't kick the host. Transfer host to someone else first.",
+                "TargetIsHost.MakeHost": "That player is already the host.",
+                "TargetNotMember": "That player is no longer in the lobby.",
+                "NotInLobby": "You're not in a lobby.",
+                "ValidationFailed.Kick": "Couldn't kick. Invalid request.",
+                "ValidationFailed.MakeHost": "Couldn't make a new host. Invalid request."
+            },
+            "Toast": {
+                "PlayerJoined": "{0} joined the lobby",
+                "PlayerLeft": "{0} left the lobby",
+                "PlayerKicked": "{0} was kicked from the lobby",
+                "HostStartingGame": "Host is starting the game...",
+                "SongQueued": "{0} queued {1}",
+                "SongRemovedByPlayer": "{0} removed {1} from queue",
+                "SongRemovedRequesterLeft": "{0} was removed (requester left)",
+                "LibrarySongsAdded.Singular": "1 song added to lobby library",
+                "LibrarySongsAdded.Plural": "{0} songs added to lobby library",
+                "LibrarySongsRemoved.Singular": "1 song removed from lobby library",
+                "LibrarySongsRemoved.Plural": "{0} songs removed from lobby library",
+                "LibrarySongsBoth.Singular": "Lobby library: +{0} / -{1} song",
+                "LibrarySongsBoth.Plural": "Lobby library: +{0} / -{1} songs",
+                "SessionEndedDuringGame": "Online session ended returning to lobby",
+                "CopyCode.Success": "Copied lobby code",
+                "CopyCode.NoLobby": "No lobby code to copy"
+            },
+            "Handshake": {
+                "SyncingPeers": "Synchronizing with peers...",
+                "WaitingForPlayers": "Waiting for players..."
+            }
+        },
         "Main": {
             "MessageOfTheDay": "<align=center><size=32><b>Welcome to v0.15!</b></size></align>\n\nv0.15 is a major update that adds many highly requested and necessary gameplay features such as roll/trill lanes and Big \"YARG\" endings, as well as revamped user interface in the song selection and results screen, drum lane customization, automatic genre categorization, experimental custom vocalist characters in venues, and more.\n\n<b>If you have any feedback or find any bugs, please let us know on Discord or GitHub.</b>\n\nHappy YARGin'!",
             "Options": {
                 "Quickplay": "Quickplay",
+                "Online": "Online",
                 "Practice": "Practice",
                 "Profiles": "Profiles",
                 "History": "History",
@@ -300,7 +443,15 @@
                 "Credits": "Credits",
                 "Exit": "Exit"
             },
-            "GoToCurrentlyPlaying": "Go To Currently Playing"
+            "GoToCurrentlyPlaying": "Go To Currently Playing",
+            "OnlineRequiresProfile": {
+                "Title": "No Profile Connected",
+                "Body": "Connect a profile before entering Online. Open the Profiles menu and pick one to play with."
+            },
+            "OnlineNoBots": {
+                "Title": "Bot Profile Connected",
+                "Body": "Bot profiles cannot play online. Please remove them from your connected profiles."
+            }
         },
         "MusicLibrary": {
             "Name": "Music Library",
@@ -371,6 +522,11 @@
             "AddedToShow": "Added To Show",
             "StartShow": "Start The Show",
             "MoreOptions": "<align=left><size=80%>More Options<br>(Hold) Navigate Sections</size></align>",
+            "SongSpeed": "Song Speed ({0})",
+            "SongSpeedMenu": {
+                "Speed": "Song Speed (%)",
+                "SpeedPlaceholder": "100"
+            },
             "PlayAShow": {
                 "LongSong": "A Long Song",
                 "RandomSong": "A Random Song",
@@ -1730,6 +1886,10 @@
                 "Name": "Show Player Name When Starting Song",
                 "Description": "If enabled, the player name and instrument icon will appear when the song starts."
             },
+            "ShowRemoteHighways": {
+                "Name": "Show Remote Highways",
+                "Description": "If disabled, your highway is centered as in singleplayer and other players' tracks are not displayed. Their scores, star power, and stem audio still sync."
+            },
 			"StaticVocalsMode": {
 				"Name": "Static Vocals Mode",
 				"Description": "When enabled, lyrics stay stationary on the left side of the vocal highway. When disabled, lyrics scroll across the vocal highway."
@@ -1767,6 +1927,13 @@
 			"RockMeterPresetContainer" : "Rock Meter Presets"
         },
         "PresetSetting": {
+            "Online": {
+                "SortBy": { "Name": "Sorted By" },
+                "GameMode": { "Name": "Game Mode" },
+                "Status": { "Name": "Status" },
+                "ShowFullLobbies": { "Name": "Show Full Lobbies" },
+                "LanOnly": { "Name": "LAN Only" }
+            },
             "CameraPreset": {
                 "CurveFactor": {
                     "Name": "Curve Factor",

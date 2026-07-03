@@ -212,6 +212,8 @@ public override bool ShouldUpdateInputsOnResume => true;
             return engine;
         }
 
+        protected override void OnRemoteBreLaneHit(int action) => OnLaneHit(action);
+
         protected override void FinishInitialization()
         {
             base.FinishInitialization();
@@ -498,6 +500,8 @@ public override bool ShouldUpdateInputsOnResume => true;
             _breLaneIndexToMostRecentTime[breIndex] = GameManager.VisualTime;
 
             _fretArray.PlayCodaHitAnimation((int)((FiveLaneKeysAction)action).ToFret());
+
+            ForwardLaneHitToRemotes(action);
         }
 
         protected override void OnCodaStart(CodaSection coda)

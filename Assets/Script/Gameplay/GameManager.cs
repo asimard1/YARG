@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Threading.Tasks;
@@ -9,19 +9,21 @@ using YARG.Core.Chart;
 using YARG.Core.Engine;
 using YARG.Core.Game;
 using YARG.Core.Input;
+using YARG.Online.Game.Contracts.Packets;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Core.Replays.Analyzer;
 using YARG.Core.Song;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Player;
-using YARG.Gameplay.Visuals;
 using YARG.Input;
 using YARG.Integration;
 using YARG.Localization;
+using YARG.Menu;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.ScoreScreen;
+using YARG.Online;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Replays;
@@ -74,9 +76,15 @@ namespace YARG.Gameplay
         /// </summary>
         public IReadOnlyList<YargPlayer> YargPlayers { get; private set;}
 
+        public static bool IsOnline { get; set; }
+
+        public OnlineSessionDirector OnlineSession { get; private set; }
+
         private List<BasePlayer> _players;
 
         public int TotalPlayers => _players.Count;
+
+        public bool IsSongReady { get; private set; } = false;
 
         public bool IsSongStarted { get; private set; } = false;
 
@@ -163,6 +171,10 @@ namespace YARG.Gameplay
         private bool _isReplaySaved;
         private int _originalSleepTimeout;
         private bool _breBoxActive;
+        private bool _gameCompleteSent;
+        private double _gameCompleteRealtime;
+        // Max wait for remote peers' final snapshots before proceeding to results.
+        private const double FINAL_SNAPSHOT_TIMEOUT_SECONDS = 3.0;
 
         private StemMixer _mixer;
 
@@ -188,8 +200,39 @@ namespace YARG.Gameplay
             PracticeManager = GetComponent<PracticeManager>();
             BackgroundManager = GetComponent<BackgroundManager>();
             EngineManager = new EngineManager();
+            if (IsOnline)
+            {
+                EngineManager.BandFeaturesEnabled = false;
+            }
 
-            YargPlayers = PlayerContainer.Players;
+            if (IsOnline)
+            {
+                OnlineSession = OnlineSessionDirector.Current;
+                if (OnlineSession == null)
+                {
+                    YargLogger.LogError(
+                        "GameManager: IsOnline is true but OnlineSessionDirector.Current is null; " +
+                        "aborting back to menu.");
+                    BailOutToMenu();
+                    return;
+                }
+                YargPlayers = OnlineSession.Players;
+                OnlineSession.RemotePlayerLeft += HideRemotePlayerHighway;
+
+                // Bail if the session died before we could subscribe.
+                if (OnlineSession.SessionAbortedExternally)
+                {
+                    YargLogger.LogWarning(
+                        "GameManager: OnlineSession already aborted before Start subscribed -- bailing.");
+                    BailOutToMenu();
+                    return;
+                }
+                OnlineSession.SessionEndedExternally += OnOnlineSessionEnded;
+            }
+            else
+            {
+                YargPlayers = PlayerContainer.Players;
+            }
 
             Song = GlobalVariables.State.CurrentSong;
             ReplayInfo = GlobalVariables.State.CurrentReplay;
@@ -203,7 +246,7 @@ namespace YARG.Gameplay
             {
                 YargLogger.LogError("Null song set when loading gameplay!");
 
-                GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+                BailOutToMenu();
                 return;
             }
 
@@ -253,6 +296,64 @@ namespace YARG.Gameplay
 
             // Reset sleep timeout setting
             Screen.sleepTimeout = _originalSleepTimeout;
+
+            if (OnlineSession != null)
+            {
+                OnlineSession.RemotePlayerLeft -= HideRemotePlayerHighway;
+                OnlineSession.SessionEndedExternally -= OnOnlineSessionEnded;
+            }
+
+            IsOnline = false;
+        }
+
+        private void HideRemotePlayerHighway(int peerId)
+        {
+            if (_players == null) return;
+            foreach (var player in _players)
+            {
+                if (player == null) continue;
+                if (player.Player == null) continue;
+                if (!player.Player.IsRemote) continue;
+                if (player.Player.RemotePeerId != peerId) continue;
+
+                YargLogger.LogInfo(
+                    $"GameManager: retiring remote player for peerId={peerId} ({player.Player.Profile?.Name})");
+                player.LeaveGame();
+
+                if (player is VocalsPlayer)
+                {
+                    TrySwitchToLyricBarIfNoVocalists();
+                }
+                return;
+            }
+        }
+
+        // If no vocalists remain active, hide the vocal highway and fall back to the lyric bar.
+        private void TrySwitchToLyricBarIfNoVocalists()
+        {
+            if (!VocalTrack.gameObject.activeSelf) return;
+            if (_players == null) return;
+
+            foreach (var p in _players)
+            {
+                if (p is VocalsPlayer && p != null && p.gameObject.activeSelf)
+                {
+                    return;
+                }
+            }
+
+            YargLogger.LogInfo("GameManager: last vocalist left, hiding vocal highway and falling back to lyric bar");
+            VocalTrack.gameObject.SetActive(false);
+
+            // Only re-enable the lyric bar if lyrics exist, not in practice, and display is enabled.
+            if (_lyricBar != null
+                && Chart?.Lyrics?.Phrases.Count > 0
+                && !IsPractice
+                && SettingsManager.Settings.LyricDisplay.Value != LyricDisplayMode.Disabled)
+            {
+                _lyricBar.gameObject.SetActive(true);
+                _lyricBar.SetSongTime(_songRunner.SongTime);
+            }
         }
 
         private void Update()
@@ -370,7 +471,10 @@ namespace YARG.Gameplay
 
         public void Pause(bool showMenu = true)
         {
-            _songRunner.Pause();
+            if (!IsOnline)
+            {
+                _songRunner.Pause();
+            }
             PauseCore(showMenu);
         }
 
@@ -394,16 +498,22 @@ namespace YARG.Gameplay
                 {
                     _pauseMenu.PushMenu(PauseMenuManager.Menu.SetlistPause);
                 }
+                else if (IsOnline)
+                {
+                    _pauseMenu.PushMenu(PauseMenuManager.Menu.OnlinePause);
+                }
                 else
                 {
                     _pauseMenu.PushMenu(PauseMenuManager.Menu.QuickPlayPause);
                 }
             }
 
-            // Pause the background/venue
-            Time.timeScale = 0f;
-            BackgroundManager.SetPaused(true);
-            GameStateFetcher.SetPaused(true);
+            if (!IsOnline)
+            {
+                Time.timeScale = 0f;
+                BackgroundManager.SetPaused(true);
+                GameStateFetcher.SetPaused(true);
+            }
 
             // This uses the raw input update time because it keeps running during the pause
             // allowing us to accurately calculate the length of the pause later
@@ -436,6 +546,13 @@ namespace YARG.Gameplay
 
         public async void Resume(double? rewindDuration = null)
         {
+            // Online: nothing is actually paused, just dismiss the menu.
+            if (IsOnline)
+            {
+                _pauseMenu.PopAllMenus();
+                return;
+            }
+
             // We don't rewind in practice mode or in replay, so we can skip all the BS
             if (IsPractice || IsReplay)
             {
@@ -600,6 +717,30 @@ namespace YARG.Gameplay
                 Pause(false);
                 return true;
             }
+
+            // Notify the server this peer finished; broadcasts our final engine snapshot
+            // and the local player's recorded replay inputs so other peers can include
+            // this player's track in their saved replay.
+            if (IsOnline && !_gameCompleteSent)
+            {
+                _gameCompleteSent = true;
+                _gameCompleteRealtime = Time.realtimeSinceStartupAsDouble;
+                OnlineSession?.SendGameComplete(GatherLocalReplayInputs());
+            }
+
+            // Wait for all remote peers' final snapshots before showing results (with timeout).
+            if (IsOnline && OnlineSession != null
+                && !OnlineSession.AllRemoteFinalSnapshotsReceived(SongLength))
+            {
+                double elapsed = Time.realtimeSinceStartupAsDouble - _gameCompleteRealtime;
+                if (elapsed < FINAL_SNAPSHOT_TIMEOUT_SECONDS)
+                {
+                    return false;
+                }
+                YargLogger.LogFormatWarning(
+                    "GameManager: final-snapshot gate timed out after {0:0.0}s -- proceeding to results.",
+                    elapsed);
+            }
 #nullable enable
             ReplayInfo? replayInfo = null;
 #nullable disable
@@ -659,7 +800,11 @@ namespace YARG.Gameplay
             {
                 var profile = player.Player.Profile;
 
-                // Skip bots and anyone that's obviously cheating.
+                if (player.Player.IsRemote)
+                {
+                    continue;
+                }
+
                 if (!ScoreContainer.IsSoloScoreValid(SongSpeed, player.Player))
                 {
                     continue;
@@ -760,9 +905,46 @@ namespace YARG.Gameplay
             }, playerEntries);
         }
 
+        private bool _onlineSessionEndedHandled;
+
+        /// <summary>Handles online session death mid-song by bailing to the menu.</summary>
+        private void OnOnlineSessionEnded(bool hadLocalProgress)
+        {
+            if (_onlineSessionEndedHandled) return;
+            _onlineSessionEndedHandled = true;
+
+            YargLogger.LogFormatWarning(
+                "GameManager: online session ended externally (hadLocalProgress={0}); bailing out of gameplay.",
+                hadLocalProgress);
+
+            try
+            {
+                ToastManager.ToastWarning(
+                    YARG.Localization.Localize.Key("Menu.Online.Toast.SessionEndedDuringGame"));
+            }
+            catch (Exception ex) { YargLogger.LogException(ex); }
+
+            ForceQuitSong();
+        }
+
         public void ForceQuitSong()
         {
+            // Leave the game session before resetting state so peers see us disconnect.
+            if (IsOnline)
+            {
+                LobbyHubSession.Current?.LeaveCurrentGame();
+            }
             GlobalVariables.State = PersistentState.Default;
+            BailOutToMenu();
+        }
+
+        /// <summary>Returns to the menu, routing to LobbyView if in an online lobby.</summary>
+        internal static void BailOutToMenu()
+        {
+            if (IsOnline && LobbyHubSession.Current?.CurrentLobby != null)
+            {
+                MenuManager.SetOverrideOpenMenu(MenuManager.Menu.LobbyView);
+            }
             GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
         }
 
@@ -792,6 +974,51 @@ namespace YARG.Gameplay
             }
         }
 
+        private ReplayInput[] GatherLocalReplayInputs()
+        {
+            if (_players == null) return Array.Empty<ReplayInput>();
+
+            int total = 0;
+            for (int i = 0; i < _players.Count; i++)
+            {
+                var p = _players[i];
+                if (p?.Player == null) continue;
+                if (p.Player.IsRemote || p.Player.Profile.IsBot) continue;
+                total += p.ReplayInputs.Count;
+            }
+
+            if (total == 0) return Array.Empty<ReplayInput>();
+
+            var result = new ReplayInput[total];
+            int w = 0;
+            for (int i = 0; i < _players.Count; i++)
+            {
+                var p = _players[i];
+                if (p?.Player == null) continue;
+                if (p.Player.IsRemote || p.Player.Profile.IsBot) continue;
+                var inputs = p.ReplayInputs;
+                for (int j = 0; j < inputs.Count; j++)
+                {
+                    var gi = inputs[j];
+                    // Integer aliases the 4-byte union (Axis/Button share the
+                    // same offset); reading via Integer captures the raw bits.
+                    result[w++] = new ReplayInput(gi.Time, gi.Action, gi.Integer);
+                }
+            }
+            return result;
+        }
+
+        private static GameInput[] WireToGameInputs(ReplayInput[] wire)
+        {
+            var result = new GameInput[wire.Length];
+            for (int i = 0; i < wire.Length; i++)
+            {
+                var w = wire[i];
+                result[i] = new GameInput(w.Time, w.Action, w.Value);
+            }
+            return result;
+        }
+
 #nullable enable
         public ReplayInfo? SaveReplay(double length, string directory)
 #nullable disable
@@ -814,6 +1041,21 @@ namespace YARG.Gameplay
                 if (player.Player.Profile.IsBot)
                 {
                     continue;
+                }
+
+                // Seed remote players' replay input buffer from the GameComplete
+                // packets we received from each peer.
+                if (player.Player.IsRemote)
+                {
+                    var remoteInputs = OnlineSession?.GetRemoteReplayInputs(player.Player.RemotePeerId);
+                    if (remoteInputs == null)
+                    {
+                        YargLogger.LogWarning(
+                            $"SaveReplay: no remote inputs for peer {player.Player.RemotePeerId} " +
+                            $"({player.Player.Profile?.Name ?? "<null>"}); skipping their frame.");
+                        continue;
+                    }
+                    player.SetReplayInputsFromRemote(WireToGameInputs(remoteInputs));
                 }
 
                 var (frame, stats) = player.ConstructReplayData();
@@ -862,7 +1104,9 @@ namespace YARG.Gameplay
                         SetEditHUD(false);
                     }
 
-                    if ((!IsPractice || PracticeManager.HasSelectedSection) && !DialogManager.Instance.IsDialogShowing && !PlayerHasFailed)
+                    if ((!IsPractice || PracticeManager.HasSelectedSection)
+                        && !DialogManager.Instance.IsDialogShowing
+                        && !PlayerHasFailed)
                     {
                         SetPaused(!_songRunner.Paused);
                     }
@@ -898,7 +1142,8 @@ namespace YARG.Gameplay
 
         private async void OnSongFailed()
         {
-            if (SettingsManager.Settings.NoFail.Value != NoFailMode.Off || IsPractice)
+            if (SettingsManager.Settings.NoFail.Value != NoFailMode.Off ||
+                IsPractice || IsOnline)
             {
                 return;
             }

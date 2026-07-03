@@ -223,6 +223,8 @@ namespace YARG.Gameplay.Player
             return engine;
         }
 
+        protected override void OnRemoteBreLaneHit(int action) => OnLaneHit(action);
+
         protected override void FinishInitialization()
         {
             base.FinishInitialization();
@@ -294,6 +296,23 @@ namespace YARG.Gameplay.Player
                     var mostRecentTime = _fretToMostRecentTime[(FiveFretGuitarFret)breLaneIndex];
                     var normalizedTimeSinceLastHit = CodaSection.GetNormalizedTimeSinceLastHit(visualTime, mostRecentTime);
                     BRELanes[highwayOrderingIndex].SetEmissionColor(normalizedTimeSinceLastHit);
+                }
+            }
+
+            // Remote whammy: read from prediction layer. Uses Engine.ActiveSustainCount
+            // instead of _sustainCount because snapshots can desync the event-driven counter.
+            if (Player.IsRemote && GameManager.OnlineSession != null)
+            {
+                float remoteWhammy = GameManager.OnlineSession.GetRemoteWhammyValue(Player.RemotePeerId);
+                if (Engine.ActiveSustainCount > 0)
+                {
+                    WhammyFactor = remoteWhammy;
+                    GameManager.ChangeStemWhammyPitch(_stem, remoteWhammy);
+                }
+                else if (WhammyFactor != 0f)
+                {
+                    WhammyFactor = 0f;
+                    GameManager.ChangeStemWhammyPitch(_stem, 0f);
                 }
             }
 
@@ -486,6 +505,8 @@ namespace YARG.Gameplay.Player
 
             _fretToMostRecentTime[asFret] = GameManager.VisualTime;
             _fretArray.PlayCodaHitAnimation((int)asFret);
+
+            ForwardLaneHitToRemotes(action);
         }
 
         protected override void OnCodaStart(CodaSection coda)
@@ -544,7 +565,7 @@ namespace YARG.Gameplay.Player
                 return;
             }
 
-            if (SettingsManager.Settings.OverstrumAndOverhitSoundEffects.Value)
+            if (SettingsManager.Settings.OverstrumAndOverhitSoundEffects.Value && !Player.IsRemote)
             {
                 const int MIN = (int) SfxSample.Overstrum1;
                 const int MAX = (int) SfxSample.Overstrum4;

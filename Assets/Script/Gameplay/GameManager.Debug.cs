@@ -67,10 +67,7 @@ namespace YARG.Gameplay
         private const int DEBUG_WINDOW_ID = 0;
         private const int DEBUG_WINDOW_MARGIN = 25;
 
-        // The values used for everything were designed under a height of
-        // 550 pixels (using the Unity editor viewport).
-        // Decided to round it down to 500 since it gives a little more room
-        // after scaling calculation is applied
+        // UI was designed at ~550px height; rounded to 500 for extra room after scaling.
         private const int DEBUG_WINDOW_DESIGN_HEIGHT = 500;
 
         private const int DEBUG_WINDOW_MIN_WIDTH = 300;
@@ -125,6 +122,7 @@ namespace YARG.Gameplay
                 }
 
                 var player = _players[_debugSelectedPlayer];
+                if (player.Player.Bindings == null) return false;
                 return player.Player.Bindings.ContainsDevice(device);
             };
         }

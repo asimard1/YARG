@@ -45,8 +45,7 @@ namespace YARG
 
         public string CurrentVersion { get; private set; } = "v0.15";
 
-        private float _nextLocalizationUpdate;
-        private const float LOCALIZATION_UPDATE_INTERVAL = 1800f;
+        public const string OnlineVersion = "online-alpha-v0.2.2";
 
         protected override void SingletonAwake()
         {

@@ -11,10 +11,12 @@ using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Player;
+using YARG.Localization;
 using YARG.Menu;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.Settings;
+using YARG.Online;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Scores;
@@ -89,6 +91,20 @@ namespace YARG.Gameplay
             remove => _songLoaded -= value;
         }
 
+        private event Action _songReady;
+
+        public event Action SongReady
+        {
+            add
+            {
+                _songReady += value;
+
+                // Invoke now if already ready, this event is only fired once
+                if (IsSongReady) value?.Invoke();
+            }
+            remove => _songReady -= value;
+        }
+
         private event Action _songStarted;
 
         public event Action SongStarted
@@ -105,8 +121,6 @@ namespace YARG.Gameplay
 
         private async void Start()
         {
-            // Displays the loading screen
-            using var context = new LoadingContext();
             var global = GlobalVariables.Instance;
 
             // Disable until everything's loaded
@@ -116,77 +130,80 @@ namespace YARG.Gameplay
 
             YargLogger.LogFormatInfo("Loading song {0} - {1}", Song.Name, Song.Artist);
 
-            if (ReplayInfo != null)
+            double preRoll = SONG_START_DELAY;
+            using (var context = new LoadingContext())
             {
-                if (!SongContainer.SongsByHash.TryGetValue(GlobalVariables.State.CurrentReplay.SongChecksum, out var songs))
+                if (ReplayInfo != null)
                 {
-                    ToastManager.ToastWarning("Song not present in library");
-                    global.LoadScene(SceneIndex.Menu);
-                    return;
-                }
-                Song = songs[0];
-
-                context.SetLoadingText("Loading replay...");
-                if (!LoadReplay())
-                {
-                    ToastManager.ToastError("Failed to load replay!");
-                    global.LoadScene(SceneIndex.Menu);
-                    return;
-                }
-
-                if (!GlobalVariables.State.PlayingWithReplay)
-                {
-                    _replayController.gameObject.SetActive(true);
-                }
-                else
-                {
-                    _replayController.gameObject.SetActive(false);
-                    var players = new List<YargPlayer>();
-                    players.AddRange(PlayerContainer.Players);
-                    for (int i = 0; i < YargPlayers.Count; i++)
+                    if (!SongContainer.SongsByHash.TryGetValue(GlobalVariables.State.CurrentReplay.SongChecksum, out var songs))
                     {
-                         players.Add(YargPlayers[i]);
+                        ToastManager.ToastWarning("Song not present in library");
+                        BailOutToMenu();
+                        return;
+                    }
+                    Song = songs[0];
+
+                    context.SetLoadingText("Loading replay...");
+                    if (!LoadReplay())
+                    {
+                        ToastManager.ToastError("Failed to load replay!");
+                        BailOutToMenu();
+                        return;
                     }
 
-                    YargPlayers = players.ToArray();
-                }
-
-                var replayIndex = 0;
-                foreach (var player in YargPlayers)
-                {
-                    if (player.IsReplay)
+                    if (!GlobalVariables.State.PlayingWithReplay)
                     {
-                        player.ReplayIndex = replayIndex;
-                        replayIndex++;
+                        _replayController.gameObject.SetActive(true);
+                    }
+                    else
+                    {
+                        _replayController.gameObject.SetActive(false);
+                        var players = new List<YargPlayer>();
+                        players.AddRange(PlayerContainer.Players);
+                        for (int i = 0; i < YargPlayers.Count; i++)
+                        {
+                             players.Add(YargPlayers[i]);
+                        }
+
+                        YargPlayers = players.ToArray();
+                    }
+
+                    var replayIndex = 0;
+                    foreach (var player in YargPlayers)
+                    {
+                        if (player.IsReplay)
+                        {
+                            player.ReplayIndex = replayIndex;
+                            replayIndex++;
+                        }
                     }
                 }
-            }
 
-            context.Queue(UniTask.RunOnThreadPool(LoadChart), "Loading chart...");
-            context.Queue(UniTask.RunOnThreadPool(LoadAudio), "Loading audio...");
-            await context.Wait();
+                context.Queue(UniTask.RunOnThreadPool(LoadChart), "Loading chart...");
+                context.Queue(UniTask.RunOnThreadPool(LoadAudio), "Loading audio...");
+                await context.Wait();
 
-            if (_loadState == LoadFailureState.Rescan)
-            {
-                ToastManager.ToastWarning("Chart requires a rescan!", () =>
+                if (_loadState == LoadFailureState.Rescan)
                 {
-                    MenuManager.Instance.DisableCurrentMenu();
-                    SettingsMenu.Instance.gameObject.SetActive(true);
-                    SettingsMenu.Instance.SelectTabByName("SongManager");
-                });
+                    ToastManager.ToastWarning("Chart requires a rescan!", () =>
+                    {
+                        MenuManager.Instance.DisableCurrentMenu();
+                        SettingsMenu.Instance.gameObject.SetActive(true);
+                        SettingsMenu.Instance.SelectTabByName("SongManager");
+                    });
 
-                global.LoadScene(SceneIndex.Menu);
-                return;
-            }
+                    BailOutToMenu();
+                    return;
+                }
 
-            if (_loadState == LoadFailureState.Error)
-            {
-                YargLogger.LogError(_loadFailureMessage);
-                ToastManager.ToastError(_loadFailureMessage);
+                if (_loadState == LoadFailureState.Error)
+                {
+                    YargLogger.LogError(_loadFailureMessage);
+                    ToastManager.ToastError(_loadFailureMessage);
 
-                global.LoadScene(SceneIndex.Menu);
-                return;
-            }
+                    BailOutToMenu();
+                    return;
+                }
 
             FinalizeChart();
 
@@ -198,86 +215,149 @@ namespace YARG.Gameplay
                 totalOffsetSeconds += offsetOverrideMs / 1000.0;
             }
 
-            // Initialize song runner
-            _songRunner = new SongRunner(
-                _mixer,
-                startTime: 0,
-                SONG_START_DELAY,
-                GlobalVariables.State.SongSpeed,
-                totalOffsetSeconds);
+                _songRunner = new SongRunner(
+                    _mixer,
+                    startTime: 0,
+                    startDelay: SONG_START_DELAY,
+                    GlobalVariables.State.SongSpeed,
+                    totalOffsetSeconds);
 
-            // Spawn players
-            CreatePlayers();
-            YargLogger.LogFormatDebug("Calculating star cutoffs for {0} players", _players.Count);
-            EngineManager.StarScoreThresholds = EngineManager.GetStarScoreCutoffs(_players.ConvertAll(p => p.BaseEngine.StarScoreThresholds));
-            YargLogger.LogFormatDebug("Star score thresholds: {0}", string.Join(", ", EngineManager.StarScoreThresholds));
+                // Spawn players
+                CreatePlayers();
+                YargLogger.LogFormatDebug("Calculating star cutoffs for {0} players", _players.Count);
+                EngineManager.StarScoreThresholds = EngineManager.GetStarScoreCutoffs(_players.ConvertAll(p => p.BaseEngine.StarScoreThresholds));
+                YargLogger.LogFormatDebug("Star score thresholds: {0}", string.Join(", ", EngineManager.StarScoreThresholds));
 
 
-            // Set up the crowd stem so it can be restored after muting (if it exists)
-            if (_stemStates.TryGetValue(SongStem.Crowd, out var state))
-            {
-                state.Total = 1;
-                state.Audible = 1;
-            }
+                // Set up the crowd stem so it can be restored after muting (if it exists)
+                if (_stemStates.TryGetValue(SongStem.Crowd, out var state))
+                {
+                    state.Total = 1;
+                    state.Audible = 1;
+                }
 
-            if (_loadState == LoadFailureState.Error)
-            {
-                ToastManager.ToastError(_loadFailureMessage);
+                if (_loadState == LoadFailureState.Error)
+                {
+                    ToastManager.ToastError(_loadFailureMessage);
 
-                global.LoadScene(SceneIndex.Menu);
-                return;
-            }
+                    BailOutToMenu();
+                    return;
+                }
 
-            // Listen for menu inputs
-            Navigator.Instance.NavigationEvent += OnNavigationEvent;
+                // Listen for menu inputs
+                Navigator.Instance.NavigationEvent += OnNavigationEvent;
 
-            // Debug info
-            InitializeDebug();
+                // Debug info
+                InitializeDebug();
 #if UNITY_EDITOR
-            SetDebugEnabled(true);
+                SetDebugEnabled(true);
 #endif
 
-            // Initialize/destroy practice mode
-            if (IsPractice)
-            {
-                PracticeManager.DisplayPracticeMenu();
+                // Initialize/destroy practice mode
+                if (IsPractice)
+                {
+                    PracticeManager.DisplayPracticeMenu();
+                }
+                else
+                {
+                    Destroy(PracticeManager);
+                }
+
+                _failMeter.Initialize(EngineManager, this);
+
+                if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || IsPractice)
+                {
+                    _failMeter.SetActive(false);
+                }
+
+                // This is not an else because we still want to subscribe in case the user disables no fail during the song
+                // We check in the callback to determine whether we should actually run the fail routine
+                if (ReplayInfo == null || GlobalVariables.State.PlayingWithReplay)
+                {
+                    EngineManager.OnSongFailed += OnSongFailed;
+
+                    EngineManager.InitializeHappiness();
+
+                    SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
+                    SettingsManager.Settings.AutoCalibrateAudio.Value = false;
+                    SettingsManager.Settings.AutoCalibrateVideo.Value = false;
+                }
+
+                EngineManager.OnCodaStart += StartCoda;
+                EngineManager.OnCodaEnd += EndCoda;
+
+                // Log constant values
+                YargLogger.LogFormatDebug("Audio calibration: {0}, video calibration: {1}, song offset: {2}",
+                    _songRunner.AudioCalibration, _songRunner.VideoCalibration, _songRunner.SongOffset);
+
+                IsSongReady = true;
+                _songReady?.Invoke();
+
+                preRoll = await NegotiateStartTimingAsync(context);
             }
-            else
-            {
-                Destroy(PracticeManager);
-            }
 
-            _failMeter.Initialize(EngineManager, this);
-
-            if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || IsPractice)
-            {
-                _failMeter.SetActive(false);
-            }
-
-            // This is not an else because we still want to subscribe in case the user disables no fail during the song
-            // We check in the callback to determine whether we should actually run the fail routine
-            if (ReplayInfo == null || GlobalVariables.State.PlayingWithReplay)
-            {
-                EngineManager.OnSongFailed += OnSongFailed;
-
-                EngineManager.InitializeHappiness();
-
-                SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
-                SettingsManager.Settings.AutoCalibrateAudio.Value = false;
-                SettingsManager.Settings.AutoCalibrateVideo.Value = false;
-            }
-
-            EngineManager.OnCodaStart += StartCoda;
-            EngineManager.OnCodaEnd += EndCoda;
-
-            // Log constant values
-            YargLogger.LogFormatDebug("Audio calibration: {0}, video calibration: {1}, song offset: {2}",
-                _songRunner.AudioCalibration, _songRunner.VideoCalibration, _songRunner.SongOffset);
+            _songRunner.BeginPlayback(preRoll);
 
             // Loaded, enable updates
             enabled = true;
             IsSongStarted = true;
             _songStarted?.Invoke();
+        }
+
+        /// <summary>
+        /// Online: syncs clocks, announces ready, waits for start cue.
+        /// Returns pre-roll length (solo: SONG_START_DELAY; online: alignment wait + delay).
+        /// </summary>
+        private async UniTask<double> NegotiateStartTimingAsync(LoadingContext context)
+        {
+            if (!IsOnline) return SONG_START_DELAY;
+
+            context.SetLoadingText(Localize.Key("Menu.Online.Handshake.SyncingPeers"));
+
+            // Sync clock offset before announcing ready so audio aligns across peers.
+            if (ServerClockSync.Current != null)
+            {
+                bool ok = await ServerClockSync.Current.RunSyncBurstAsync(
+                    ct: this.GetCancellationTokenOnDestroy());
+                if (!ok)
+                {
+                    YargLogger.LogWarning(
+                        "Server clock sync failed; song start may be misaligned across peers.");
+                }
+            }
+            else
+            {
+                YargLogger.LogWarning(
+                    "ServerClockSync.Current is null at online song start; falling back to raw " +
+                    "local wall clock.");
+            }
+
+            context.SetLoadingText(Localize.Key("Menu.Online.Handshake.WaitingForPlayers"));
+            OnlineSession?.SendPeerReady();
+            await OnlineSession.WaitForStartCueAsync();
+
+            if (OnlineSession.TryGetSongStartOffsetSeconds(out double secondsUntilOrigin))
+            {
+                if (secondsUntilOrigin > 0)
+                {
+                    // Absorb wall-clock alignment wait into visible pre-roll.
+                    YargLogger.LogFormatInfo(
+                        "Online start: absorbing {0:0.000}s wall-clock wait into visible pre-roll",
+                        secondsUntilOrigin);
+                    return secondsUntilOrigin + SONG_START_DELAY;
+                }
+
+                YargLogger.LogFormatWarning(
+                    "GameStartCue arrived after SongOriginUtcMs by {0:0.000}s; starting with minimum pre-roll",
+                    -secondsUntilOrigin);
+            }
+            else
+            {
+                YargLogger.LogWarning(
+                    "Online start cue missing SongOriginUtcMs; falling back to local-clock start");
+            }
+
+            return SONG_START_DELAY;
         }
 
         private void ApplySampleNormalization()
@@ -422,17 +502,27 @@ namespace YARG.Gameplay
                 {
                     player.IsScoreValid = true;
 
-                    if (!player.IsReplay)
+                    if (!player.IsReplay && !player.IsRemote)
                     {
                         // Reset microphone (resets channel buffers)
                         // We probably wanna do this no matter what, so put it up here
                         player.Bindings.Microphone?.Reset();
                     }
 
-                    // Skip if the player is sitting out
-                    if (player.SittingOut)
+                    // Skip local sitting-out players. Remote sitting-out players are
+                    // still created so the sim keeps draining; hidden post-init below.
+                    if (player.SittingOut && !player.IsRemote)
                     {
+                        YargLogger.LogFormatInfo(
+                            "CreatePlayers: skipping local player {0} (SittingOut)",
+                            player.Profile?.Name ?? "<null>");
                         continue;
+                    }
+                    if (player.SittingOut && player.IsRemote)
+                    {
+                        YargLogger.LogFormatWarning(
+                            "CreatePlayers: remote player {0} (peerId={1}) is SittingOut -- creating anyway, will hide highway.",
+                            player.Profile?.Name ?? "<null>", player.RemotePeerId);
                     }
                     index++;
 
@@ -449,7 +539,13 @@ namespace YARG.Gameplay
 
                     if (player.Profile.GameMode != GameMode.Vocals)
                     {
-                        highwayIndex++;
+                        bool hideThisRemote = player.IsRemote
+                            && !SettingsManager.Settings.ShowRemoteHighways.Value;
+                        if (!hideThisRemote)
+                        {
+                            highwayIndex++;
+                        }
+
                         var prefab = player.Profile.GameMode switch
                         {
                             GameMode.FiveFretGuitar => _fiveFretGuitarPrefab,
@@ -465,16 +561,28 @@ namespace YARG.Gameplay
                         // Skip if there's no prefab for the game mode
                         if (prefab == null) continue;
 
+                        // Use the current (un-incremented) highwayIndex for hidden
+                        // remotes so their world-space slot overlaps the last visible
+                        // player
+                        int spawnIndex = hideThisRemote ? Math.Max(highwayIndex, 0) : highwayIndex;
                         var playerObject = Instantiate(prefab,
-                            new Vector3(highwayIndex * TRACK_SPACING_X, 100f, 0f), prefab.transform.rotation);
+                            new Vector3(spawnIndex * TRACK_SPACING_X, 100f, 0f), prefab.transform.rotation);
 
                         // Setup player
                         var trackPlayer = playerObject.GetComponent<TrackPlayer>();
                         var trackView = _trackViewManager.CreateTrackView();
-                        trackPlayer.Initialize(highwayIndex, player, Chart, trackView, _mixer, lastHighScore);
+                        trackPlayer.Initialize(spawnIndex, player, Chart, trackView, _mixer, lastHighScore);
 
                         _players.Add(trackPlayer);
-                        _trackViewManager.AddTrackPlayer(trackPlayer);
+
+                        if (hideThisRemote)
+                        {
+                            trackPlayer.HideHighway();
+                        }
+                        else
+                        {
+                            _trackViewManager.AddTrackPlayer(trackPlayer);
+                        }
                     }
                     else
                     {
@@ -483,7 +591,6 @@ namespace YARG.Gameplay
                         {
                             highwayIndex++;
                             VocalTrack.gameObject.SetActive(true);
-                            // Position the vocal track at its highway slot so the shader's WorldPosToIndex maps it correctly
                             VocalTrack.transform.position = new Vector3(highwayIndex * TRACK_SPACING_X, 100, 0);
                             _trackViewManager.CreateVocalTrackView(highwayIndex);
 
@@ -529,6 +636,17 @@ namespace YARG.Gameplay
                         state.Total += 2;
                         state.Audible += 2;
                     }
+                }
+
+                foreach (var basePlayer in _players)
+                {
+                    if (basePlayer?.Player == null) continue;
+                    if (!basePlayer.Player.IsRemote) continue;
+                    if (!basePlayer.Player.SittingOut) continue;
+                    YargLogger.LogFormatInfo(
+                        "CreatePlayers: hiding pre-flagged-SittingOut remote {0} (peerId={1})",
+                        basePlayer.Player.Profile?.Name ?? "<null>", basePlayer.Player.RemotePeerId);
+                    HideRemotePlayerHighway(basePlayer.Player.RemotePeerId);
                 }
             }
             catch (Exception ex)

@@ -214,7 +214,55 @@ namespace YARG.Gameplay.Player
 
             engine.OnPadHit += OnPadHit;
 
+            // Forward free-play pad hits (BRE/coda/freestyle) so remotes see them.
+            if (GameManager.IsOnline && !Player.IsReplay && !Player.IsRemote)
+            {
+                engine.OnPadHit += ForwardFreePlayPadHitIfActive;
+            }
+            else if (Player.IsRemote)
+            {
+                var director = YARG.Online.OnlineSessionDirector.Current;
+                if (director != null)
+                {
+                    director.RemoteFreePlayInput += OnRemoteFreePlayInput;
+                }
+            }
+
             return engine;
+        }
+
+        // Only forward pad hits during free-play (coda/freestyle) -- normal hits use the prediction layer.
+        private void ForwardFreePlayPadHitIfActive(
+            DrumsAction action, bool wasNoteHit, bool wasNoteHitCorrectly,
+            bool wasOverhitInLane, DrumNoteType type, float velocity)
+        {
+            if (!Engine.IsCodaActive && !IsDrumFreestyle())
+            {
+                return;
+            }
+            YARG.Online.OnlineSessionDirector.Current?.SendLocalFreePlayInput(
+                GameManager.SongTime, (int) action, velocity);
+        }
+
+        // Receiver: replay remote free-play pad hits through OnPadHit for visuals.
+        // be gated by Engine.IsCodaActive.
+        private void OnRemoteFreePlayInput(int peerId, double songTime, int action, float velocity)
+        {
+            if (peerId != Player.RemotePeerId) return;
+            OnPadHit((DrumsAction) action, false, false, false, DrumNoteType.Neutral, velocity);
+        }
+
+        protected override void FinishDestruction()
+        {
+            if (Player.IsRemote)
+            {
+                var director = YARG.Online.OnlineSessionDirector.Current;
+                if (director != null)
+                {
+                    director.RemoteFreePlayInput -= OnRemoteFreePlayInput;
+                }
+            }
+            base.FinishDestruction();
         }
 
         protected override void FinishInitialization()
@@ -781,10 +829,7 @@ namespace YARG.Gameplay.Player
 
                 var lowestDelta = float.MaxValue;
 
-                // The fret array's animation functions take pads, so we need to know which pad is relevant for the
-                // current visual fret. If there are multiple (shared fret), we can send it either; the fret array
-                // forwards shared fret indices to the right fret. If we don't find any pads, we won't call any
-                // animations.
+                // Find the pad mapped to this visual fret (shared frets forward correctly).
                 int? padToPress = null;
 
                 foreach (var (pad, highwayOrderingInfo) in _highwayOrdering)

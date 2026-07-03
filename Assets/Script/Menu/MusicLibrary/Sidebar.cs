@@ -463,6 +463,14 @@ namespace YARG.Menu.MusicLibrary
 
                 enableButton = true;
             }
+            else if (MusicLibraryMenu.PickerMode)
+            {
+                // Online lobby picker: only meaningful action is "add this
+                // song to the setlist for the host". Suppress the "(Hold) Add
+                // to Setlist" subtitle so the button reads as just "Add Song".
+                key = "Menu.Online.AddSong";
+                enableButton = _musicLibraryMenu.CurrentSelection is SongViewType;
+            }
             else
             {
                 key = setListNotEmpty

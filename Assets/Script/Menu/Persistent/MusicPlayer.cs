@@ -17,6 +17,57 @@ namespace YARG.Menu.Persistent
         private static SongEntry _nowPlaying = null;
         public static SongEntry NowPlaying => _nowPlaying;
 
+        // When non-null, NextSong always picks this song instead of a random one.
+        private static SongEntry _lockedSong = null;
+        public static SongEntry LockedSong => _lockedSong;
+
+        // Playback speed for the currently locked song. 1f when unlocked.
+        private static float _lockedSongSpeed = 1f;
+        // Speed the currently-playing mixer was loaded at, so we can detect
+        // a speed change on a re-lock to the same song.
+        private static float _nowPlayingSpeed = 1f;
+
+        /// <summary>
+        /// Lock the player to a specific song (looped on repeat) at the supplied
+        /// speed, or unlock by passing null. If the player is active and the locked
+        /// song/speed differs from what's currently playing, the swap happens
+        /// immediately via <see cref="NextSong"/>. If the player isn't active
+        /// (no menu music allowed in the current context, e.g. gameplay), the flag
+        /// is stored and takes effect the next time the player is enabled.
+        /// </summary>
+        public static void SetLockedSong(SongEntry song, float speed = 1f)
+        {
+            if (_lockedSong == song && Mathf.Approximately(_lockedSongSpeed, speed))
+            {
+                return;
+            }
+
+            _lockedSong = song;
+            _lockedSongSpeed = speed;
+
+            var instance = HelpBar.Instance ? HelpBar.Instance.MusicPlayer : null;
+            if (!instance)
+            {
+                return;
+            }
+
+            if (!instance.gameObject.activeSelf)
+            {
+                return;
+            }
+
+            // Already playing this exact (song, speed)
+            if (song != null && song == _nowPlaying && Mathf.Approximately(_nowPlayingSpeed, speed))
+            {
+                return;
+            }
+
+            if (song != null)
+            {
+                instance.NextSong();
+            }
+        }
+
         private object _lock = new();
         private StemMixer _mixer = null;
 
@@ -39,6 +90,14 @@ namespace YARG.Menu.Persistent
 
             // Wait until the loading is done
             await UniTask.WaitUntil(() => !LoadingScreen.IsActive);
+
+            // Only the Menu scene runs the rotating preview player
+            if (GlobalVariables.Instance == null
+                || GlobalVariables.Instance.CurrentScene != SceneIndex.Menu)
+            {
+                gameObject.SetActive(false);
+                return;
+            }
 
             // Disable if there are no songs to play
             if (SongContainer.Count <= 0)
@@ -66,18 +125,30 @@ namespace YARG.Menu.Persistent
             const int MAX_TRIES = 20;
             for (int tries = 0; tries < MAX_TRIES; tries++)
             {
-                var entry = SongContainer.GetRandomSong();
-                if (entry == _nowPlaying)
+                SongEntry entry;
+                float speed;
+                if (_lockedSong != null)
                 {
-                    continue;
+                    entry = _lockedSong;
+                    speed = _lockedSongSpeed;
+                }
+                else
+                {
+                    entry = SongContainer.GetRandomSong();
+                    if (entry == _nowPlaying)
+                    {
+                        continue;
+                    }
+                    speed = 1f;
                 }
                 _nowPlaying = entry;
+                _nowPlayingSpeed = speed;
 
                 Task<StemMixer> task;
                 lock (_lock)
                 {
-                    const float SPEED = 1f;
-                    _current = task = Task.Run(() => entry.LoadAudio(SPEED, SettingsManager.Settings.MusicPlayerVolume.Value, SongStem.Crowd));
+                    float audioSpeed = speed;
+                    _current = task = Task.Run(() => entry.LoadAudio(audioSpeed, SettingsManager.Settings.MusicPlayerVolume.Value, SongStem.Crowd));
                 }
 
                 var mixer = await task;
@@ -88,7 +159,11 @@ namespace YARG.Menu.Persistent
 
                 lock (_lock)
                 {
-                    if (_current != task || !gameObject.activeSelf)
+                    // A LoadAudio task started while the user was still in the menu can complete after they've
+                    // already entered gameplay
+                    var sceneIsMenu = GlobalVariables.Instance != null
+                                       && GlobalVariables.Instance.CurrentScene == SceneIndex.Menu;
+                    if (_current != task || !gameObject.activeSelf || !sceneIsMenu)
                     {
                         mixer.Dispose();
                         continue;
@@ -96,10 +171,17 @@ namespace YARG.Menu.Persistent
 
                     _mixer?.Dispose();
                     _mixer = mixer;
-                    _mixer.SongEnd += () =>
+                    // Capture the mixer locally so SongEnd can't fire on a
+                    // later-swapped-in mixer (e.g. user re-locked mid-song,
+                    // scene swap raced the playback loop).
+                    var endedMixer = mixer;
+                    endedMixer.SongEnd += () =>
                     {
-                        _mixer.Dispose();
-                        _mixer = null;
+                        endedMixer.Dispose();
+                        if (_mixer == endedMixer)
+                        {
+                            _mixer = null;
+                        }
                         NextSong();
                     };
                     _mixer.Play();

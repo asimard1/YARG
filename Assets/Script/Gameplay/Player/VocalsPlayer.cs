@@ -65,6 +65,28 @@ namespace YARG.Gameplay.Player
 
         private SongChart _chart;
 
+        // Monotonic cursor for FindRemoteTargetNoteAt (O(1) amortized per frame).
+        private int _remoteTargetPhraseCursor;
+
+        // Mirrors local's _lastHitTime for remote hit hysteresis.
+        private double? _remoteLastHitTime;
+
+        /// <summary>Deactivates this vocalist's HUD card, which lives on a shared canvas.</summary>
+        public void HideHud()
+        {
+            if (_hud != null)
+            {
+                _hud.gameObject.SetActive(false);
+            }
+        }
+
+        public override void HideHighway()
+        {
+            HideHud();
+
+            base.HideHighway();
+        }
+
         public void Initialize(int index, int vocalIndex, YargPlayer player, SongChart chart,
             VocalsPlayerHUD hud, VocalPercussionTrack percussionTrack, int? lastHighScore, float trackSpeed)
         {
@@ -122,8 +144,8 @@ namespace YARG.Gameplay.Player
 
             _hud.ShowPlayerName(player, needleIndex);
 
-            // Create and start an input context for the mic
-            if (!Player.IsReplay && player.Bindings.Microphone != null)
+            // Remote players have no local mic; their pitch arrives over the network.
+            if (!Player.IsReplay && !Player.IsRemote && player.Bindings.Microphone != null)
             {
                 _inputContext = new MicInputContext(player.Bindings.Microphone, GameManager);
                 _inputContext.Start();
@@ -140,6 +162,22 @@ namespace YARG.Gameplay.Player
                 Engine.SetSpeed(GameManager.SongSpeed);
             }
 
+            // Online sync wiring (mirrors TrackPlayer.FinishInitialization).
+            var director = YARG.Online.OnlineSessionDirector.Current;
+            if (director != null)
+            {
+                bool isLocalEligible = !player.IsReplay && !player.Profile.IsBot && !player.IsRemote;
+                if (isLocalEligible)
+                {
+                    director.AttachLocalEngineForSync(Engine);
+                }
+                else if (player.IsRemote)
+                {
+                    var sim = new YARG.Core.Engine.Prediction.RemotePlayerSimulator<VocalNote>(
+                        Engine, NoteTrack.Notes);
+                    director.RegisterRemoteSimulator(player.RemotePeerId, sim);
+                }
+            }
         }
 
         protected override void FinishDestruction()
@@ -206,7 +244,7 @@ namespace YARG.Gameplay.Player
 
             engine.OnNoteMissed += (_, _) =>
             {
-                if (LastCombo >= 2)
+                if (LastCombo >= 2 && !Player.IsRemote)
                 {
                     GlobalAudioHandler.PlaySoundEffect(SfxSample.NoteMiss);
                 }
@@ -251,6 +289,7 @@ namespace YARG.Gameplay.Player
         protected override void ResetVisuals()
         {
             _lastTargetNote = null;
+            _phraseIndex = -1;
         }
 
         public override void ResetPracticeSection()
@@ -280,10 +319,16 @@ namespace YARG.Gameplay.Player
             UpdateVisuals(visualTime);
         }
 
+        private const double VocalPitchSendInterval = 0.05; // ~20 Hz; receivers interpolate
+        // Grace period before emitting singing->silent to avoid flicker from mic batching gaps.
+        private const double VocalPitchSilenceGraceSeconds = 0.15;
+        private double _lastVocalPitchSendTime = double.NegativeInfinity;
+        private bool   _lastVocalPitchIsSingingSent;
+        private double _vocalPitchSilencePendingAt = double.NaN; // NaN = no pending transition
+
         protected override void UpdateInputs(double time)
         {
-            // Push all inputs from mic
-            if (!Player.IsReplay && _inputContext != null)
+            if (!Player.IsReplay && !Player.IsRemote && _inputContext != null)
             {
                 foreach (var input in _inputContext.GetInputsFromMic())
                 {
@@ -293,6 +338,44 @@ namespace YARG.Gameplay.Player
             }
 
             base.UpdateInputs(time);
+
+            // Publish pitch to remote peers (debounced, with silence grace period).
+            if (GameManager.IsOnline && !Player.IsReplay && !Player.IsRemote)
+            {
+                bool isSinging = IsInThreshold(time, _lastSingTime);
+
+                if (isSinging)
+                {
+                    _vocalPitchSilencePendingAt = double.NaN;
+                }
+                else if (_lastVocalPitchIsSingingSent && double.IsNaN(_vocalPitchSilencePendingAt))
+                {
+                    _vocalPitchSilencePendingAt = time;
+                }
+
+                bool stillInGrace = !isSinging
+                    && _lastVocalPitchIsSingingSent
+                    && !double.IsNaN(_vocalPitchSilencePendingAt)
+                    && (time - _vocalPitchSilencePendingAt) < VocalPitchSilenceGraceSeconds;
+                bool effectiveIsSinging = isSinging || stillInGrace;
+
+                bool stateChanged = effectiveIsSinging != _lastVocalPitchIsSingingSent;
+                bool dueForSample = effectiveIsSinging
+                    && (time - _lastVocalPitchSendTime) >= VocalPitchSendInterval;
+
+                if (stateChanged || dueForSample)
+                {
+                    YARG.Online.OnlineSessionDirector.Current?
+                        .SendLocalVocalPitch(time, Engine.PitchSang, effectiveIsSinging);
+                    _lastVocalPitchSendTime       = time;
+                    _lastVocalPitchIsSingingSent  = effectiveIsSinging;
+
+                    if (!effectiveIsSinging)
+                    {
+                        _vocalPitchSilencePendingAt = double.NaN;
+                    }
+                }
+            }
         }
 
         private bool IsInThreshold(double currentTime, double? lastTime)
@@ -303,6 +386,46 @@ namespace YARG.Gameplay.Player
             }
 
             return currentTime - lastTime.Value <= 1f / EngineParams.ApproximateVocalFps + 0.05;
+        }
+
+        // Returns the active pitched vocal note at songTime, or null if between phrases.
+        private VocalNote FindRemoteTargetNoteAt(double songTime)
+        {
+            var notes = NoteTrack?.Notes;
+            if (notes is null || notes.Count == 0)
+            {
+                return null;
+            }
+
+            // Reset the cursor if the player rewound past the cached phrase.
+            if (_remoteTargetPhraseCursor > 0 && songTime < notes[_remoteTargetPhraseCursor].Time)
+            {
+                _remoteTargetPhraseCursor = 0;
+            }
+
+            // Advance past phrases whose end-of-tail is in the past.
+            while (_remoteTargetPhraseCursor < notes.Count - 1
+                   && songTime > notes[_remoteTargetPhraseCursor].TotalTimeEnd)
+            {
+                _remoteTargetPhraseCursor++;
+            }
+
+            var phrase = notes[_remoteTargetPhraseCursor];
+            if (songTime < phrase.Time || songTime > phrase.TotalTimeEnd)
+            {
+                return null;
+            }
+
+            foreach (var child in phrase.ChildNotes)
+            {
+                if (child.IsPercussion) continue;
+                if (songTime >= child.Time && songTime <= child.TotalTimeEnd)
+                {
+                    return child;
+                }
+            }
+
+            return null;
         }
 
         protected override void UpdateVisuals(double visualTime)
@@ -406,13 +529,70 @@ namespace YARG.Gameplay.Player
 
             const float NEEDLE_ROT_LERP = 25f;
 
-            // Get the appropriate sing time
-            var singTime = GameManager.InputTime;
+            // LOCAL: pitch from mic input. REMOTE: interpolated from network pitch packets.
+            float pitchSang;
+            bool  isCurrentlySinging;
+            bool  isHittingTarget;
+            if (Player.IsRemote)
+            {
+                var director = YARG.Online.OnlineSessionDirector.Current;
+                (float remotePitch, bool remoteSinging) = director != null
+                    ? director.GetRemoteVocalPitch(Player.RemotePeerId, GameManager.SongTime)
+                    : (0f, false);
 
-            // Get whether or not the player has sang within the time threshold.
-            // We gotta use a threshold here because microphone inputs are passed every X seconds,
-            // not in a constant stream.
-            if (!IsInThreshold(singTime, _lastSingTime) || _shouldHideNeedle)
+                // Sticky _lastTargetNote: only update when a note is found, never
+                // clear to null. Mirrors local where OnTargetNoteChanged only fires
+                // when the engine finds a note -- between phrases, local retains the
+                // last note for octave correction in the "not hitting" branch.
+                var currentNote = FindRemoteTargetNoteAt(GameManager.SongTime);
+                if (currentNote != null)
+                    _lastTargetNote = currentNote;
+
+                isCurrentlySinging = remoteSinging;
+                pitchSang = remotePitch;
+
+                // Hit detection using the engine's exact formula + hysteresis.
+                // Local: OnHit(true) fires when CanVocalNoteBeHit returns true,
+                // _lastHitTime is set, IsInThreshold provides the grace period.
+                isHittingTarget = false;
+                if (remoteSinging && currentNote is not null)
+                {
+                    if (currentNote.IsNonPitched)
+                    {
+                        _remoteLastHitTime = GameManager.SongTime;
+                        isHittingTarget = true;
+                    }
+                    else
+                    {
+                        float expectedPitch = currentNote.PitchAtSongTime(GameManager.SongTime);
+                        float dist = PitchDistanceForEngine(remotePitch, expectedPitch);
+                        if (dist <= EngineParams.PitchWindow)
+                        {
+                            _remoteLastHitTime = GameManager.SongTime;
+                            isHittingTarget = true;
+                        }
+                        else
+                        {
+                            isHittingTarget = IsInThreshold(GameManager.SongTime, _remoteLastHitTime);
+                        }
+                    }
+                }
+                else
+                {
+                    // Between phrases or not singing: check grace period like local.
+                    isHittingTarget = remoteSinging
+                        && IsInThreshold(GameManager.SongTime, _remoteLastHitTime);
+                }
+            }
+            else
+            {
+                var singTime = GameManager.InputTime;
+                pitchSang          = Engine.PitchSang;
+                isCurrentlySinging = IsInThreshold(singTime, _lastSingTime);
+                isHittingTarget    = _lastTargetNote is not null && IsInThreshold(singTime, _lastHitTime);
+            }
+
+            if (!isCurrentlySinging || _shouldHideNeedle)
             {
                 // Hide the needle if there's no singing
                 if (_needleVisualContainer.activeSelf)
@@ -430,14 +610,14 @@ namespace YARG.Gameplay.Player
                 {
                     _needleVisualContainer.SetActive(true);
 
-                    // Lerp X times faster if we've just started showing the needle
+                    // Lerp faster on first appearance so the needle reaches pitch quickly.
                     lerpRate *= NEEDLE_POS_SNAP_MULTIPLIER;
                 }
 
                 var transformCache = transform;
                 float lastNotePitch = _lastTargetNote?.PitchAtSongTime(GameManager.SongTime) ?? -1f;
 
-                if (_lastTargetNote is not null && IsInThreshold(singTime, _lastHitTime))
+                if (isHittingTarget)
                 {
                     // Show particles if hitting (as long as we aren't rewinding)
                     if (!GameManager.Rewinding)
@@ -455,13 +635,13 @@ namespace YARG.Gameplay.Player
 
                         // Rotate the needle a little bit depending on how off it is (unless it's non-pitched)
                         // Get how off the player is
-                        (float pitchDist, _) = GetPitchDistanceIgnoringOctave(lastNotePitch, Engine.PitchSang);
+                        (float pitchDist, _) = GetPitchDistanceIgnoringOctave(lastNotePitch, pitchSang);
                         targetRotation = GetNeedleRotation(pitchDist);
                     }
                     else
                     {
                         // If the note is non-pitched, just use the singing position
-                        pitch = Engine.PitchSang + 12f;
+                        pitch = pitchSang + 12f;
                     }
 
                     // Transform!
@@ -478,7 +658,7 @@ namespace YARG.Gameplay.Player
 
                     // Since the player is not hitting the note here, we need to offset it correctly.
                     // Get the pitch, and move to the correct octave.
-                    float pitch = Engine.PitchSang;
+                    float pitch = pitchSang;
                     if (_lastTargetNote is not null && !_lastTargetNote.IsNonPitched)
                     {
                         (_, int octaveShift) = GetPitchDistanceIgnoringOctave(lastNotePitch, pitch);
@@ -486,7 +666,7 @@ namespace YARG.Gameplay.Player
                         int lastNoteOctave = (int) (lastNotePitch / 12f);
 
                         // Set the pitch's octave to the target one
-                        pitch = Engine.PitchSang % 12f;
+                        pitch = pitchSang % 12f;
                         pitch += 12f * (lastNoteOctave + octaveShift);
                     }
                     else
@@ -534,10 +714,7 @@ namespace YARG.Gameplay.Player
 
         private bool ShouldAdvancePhraseIndex(double time)
         {
-            // Since phrases start at the note, and not sometime before it, use
-            // the end times of phrases instead (where the phrase lines are). Problem
-            // with this is that we still gotta account for the first phrase, so use
-            // an index of -1 for that.
+            // Use phrase end-times for advancement; index -1 handles the first phrase.
             bool beforeFirstPhrase = _phraseIndex == -1;
             if (beforeFirstPhrase)
             {
@@ -582,6 +759,21 @@ namespace YARG.Gameplay.Player
             return false;
         }
 
+        /// <summary>
+        /// Replicates YargVocalsEngine.CanVocalNoteBeHit's distance formula:
+        /// absolute pitch distance ignoring octave, 0 to 6 semitones.
+        /// </summary>
+        private static float PitchDistanceForEngine(float sung, float expected)
+        {
+            return Mathf.Min(PosMod(sung - expected, 12f), PosMod(expected - sung, 12f));
+
+            static float PosMod(float a, float b)
+            {
+                var r = a % b;
+                return r < 0 ? r + b : r;
+            }
+        }
+
         public override void SetPracticeSection(uint start, uint end)
         {
             var practiceNotes = OriginalNoteTrack.Notes.Where(n => IsVocalPhraseInPracticeRange(n, start, end)).ToList();
@@ -622,7 +814,7 @@ namespace YARG.Gameplay.Player
         }
 
         /// <returns>
-        /// The first value in the pair (<c>Distance</c>) is the distance between <paramref name="target"/> and '
+        /// The first value in the pair (<c>Distance</c>) is the distance between <paramref name="target"/> and
         /// <paramref name="other"/> ignoring the octave.<br/>
         /// The second value in the pair (<c>OctaveShift</c>) is how much the <paramref name="target"/> octave
         /// had to be shifted in order for the closest distance to be found.

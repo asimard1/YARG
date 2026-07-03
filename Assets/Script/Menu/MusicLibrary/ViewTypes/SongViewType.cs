@@ -148,6 +148,20 @@ namespace YARG.Menu.MusicLibrary
 
         public override void PrimaryButtonClick()
         {
+            if (MusicLibraryMenu.PickerMode)
+            {
+                // Capture locally first -- the exit fires OnDisable which clears
+                // the static. Null the field before exiting so an exception in
+                // the callback can't leak state. The exit helper routes back to
+                // LobbyView via SetActiveMenuExclusive when invoked from an
+                // online lobby session; otherwise it falls back to PopMenu.
+                var cb = MusicLibraryMenu.SongPickedCallback;
+                MusicLibraryMenu.SongPickedCallback = null;
+                MusicLibraryMenu.ExitFromPickerConfirm();
+                cb?.Invoke(SongEntry.Hash);
+                return;
+            }
+
             base.PrimaryButtonClick();
 
             if (PlayerContainer.Players.Count <= 0)

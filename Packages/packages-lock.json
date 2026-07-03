@@ -195,6 +195,15 @@
         "com.unity.modules.uielements": "1.0.0"
       }
     },
+    "com.unity.multiplayer.playmode": {
+      "version": "2.0.2",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.nuget.newtonsoft-json": "2.0.2"
+      },
+      "url": "https://packages.unity.com"
+    },
     "com.unity.nuget.mono-cecil": {
       "version": "1.11.6",
       "depth": 3,
@@ -363,6 +372,18 @@
     },
     "in.yarg.core": {
       "version": "file:../YARG.Core/YARG.Core",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {}
+    },
+    "in.yarg.online-game-contracts": {
+      "version": "file:../YARG.Online.Game.Contracts",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {}
+    },
+    "in.yarg.online-lobbies-contracts": {
+      "version": "file:../YARG.Online.Lobbies.Contracts",
       "depth": 0,
       "source": "local",
       "dependencies": {}

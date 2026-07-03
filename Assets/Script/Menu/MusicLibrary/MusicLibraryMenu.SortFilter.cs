@@ -112,7 +112,8 @@ namespace YARG.Menu.MusicLibrary
 
             if (SongContainer.Count > RecommendedSongs.RECOMMEND_SONGS_COUNT)
             {
-                _recommendedSongs = RecommendedSongs.GetRecommendedSongs();
+                _recommendedSongs = RecommendedSongs.GetRecommendedSongs(AllowedSongHashes);
+                if (_recommendedSongs.Length == 0) _recommendedSongs = null;
             }
             else
             {
@@ -134,6 +135,13 @@ namespace YARG.Menu.MusicLibrary
             {
                 _sortedSongs = _searchField.Search(SettingsManager.Settings.LibrarySort);
                 // _sortedSongs = ApplyCollapsedSectionsForCurrentSort(_sortedSongs);
+
+                var allowed = AllowedSongHashes;
+                if (allowed != null)
+                {
+                    _sortedSongs = ApplyFilterPredicate(_sortedSongs, s => allowed.Contains(s.Hash));
+                }
+
                 _searchField.gameObject.SetActive(true);
             }
             else
@@ -144,6 +152,9 @@ namespace YARG.Menu.MusicLibrary
                 int count = 0;
                 foreach (var hash in SelectedPlaylist.SongHashes)
                 {
+                    if (AllowedSongHashes != null && !AllowedSongHashes.Contains(hash))
+                        continue;
+
                     // Get the first song with the specified hash
                     if (SongContainer.SongsByHash.TryGetValue(hash, out var song))
                     {
@@ -521,6 +532,15 @@ namespace YARG.Menu.MusicLibrary
 
             menu.gameObject.SetActive(true);
             _sidebar.SetDifficultiesVisible(false);
+        }
+
+        private void OpenSongSpeedPopup()
+        {
+            if (_songSpeedPopup == null) return;
+            StopPreview();
+            // Re-push the nav scheme on close so the Yellow label picks up the new speed.
+            _songSpeedPopup.OnClosed = () => SetNavigationScheme(reset: true);
+            _songSpeedPopup.gameObject.SetActive(true);
         }
 
         private static bool IsFiltersMenuOpen()
