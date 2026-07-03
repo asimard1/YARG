@@ -377,13 +377,13 @@
       "dependencies": {}
     },
     "in.yarg.online-game-contracts": {
-      "version": "file:../YARG.Online.Game.Contracts",
+      "version": "file:../YARG.Online/src/YARG.Online.Game.Contracts",
       "depth": 0,
       "source": "local",
       "dependencies": {}
     },
     "in.yarg.online-lobbies-contracts": {
-      "version": "file:../YARG.Online.Lobbies.Contracts",
+      "version": "file:../YARG.Online/src/YARG.Online.Lobbies.Contracts",
       "depth": 0,
       "source": "local",
       "dependencies": {}

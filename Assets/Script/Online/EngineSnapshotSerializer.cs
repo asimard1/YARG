@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using LiteNetLib.Utils;
 using YARG.Core.Engine;
 using YARG.Core.Engine.Drums;
