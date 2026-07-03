@@ -44,8 +44,10 @@ namespace YARG
         public SceneIndex CurrentScene { get; private set; } = SceneIndex.Persistent;
 
         public string CurrentVersion { get; private set; } = "v0.15";
-
         public const string OnlineVersion = "online-alpha-v0.2.2";
+
+        private float _nextLocalizationUpdate;
+        private const float LOCALIZATION_UPDATE_INTERVAL = 1800f;
 
         protected override void SingletonAwake()
         {
