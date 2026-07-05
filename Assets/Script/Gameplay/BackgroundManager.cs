@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using Cinemachine;
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
@@ -216,6 +217,9 @@ namespace YARG.Gameplay
             // Load Metal shaders, if necessary
             shaderBundle = await BackgroundHelper.LoadMetalShaders(bundle, bg, BackgroundHelper.ExportType.Background);
 
+            // Load custom audio
+            await LoadCustomAudioAssets(bg, bundle);
+
             // Hookup song-specific textures
             var textureManager = GetComponent<TextureManager>();
             // Load SongBackground here to determine if textures need to be replaced
@@ -255,6 +259,43 @@ namespace YARG.Gameplay
             if (characterManager != null)
             {
                 characterManager.Initialize();
+            }
+        }
+
+        private static async UniTask LoadCustomAudioAssets(GameObject bg, AssetBundle bundle)
+        {
+            if (!SettingsManager.Settings.UseVenueSfx.Value)
+            {
+                return;
+            }
+
+            var customSfx = bg.GetComponentInChildren<CustomSFX>();
+            if (customSfx != null)
+            {
+                var assetPaths = bundle.GetAllAssetNames();
+                var sfxAssets = new Dictionary<string, byte[]>();
+                foreach (var assetPath in assetPaths)
+                {
+                    if (!assetPath.Contains(BundleBackgroundManager.AUDIO_PATH.ToLowerInvariant()))
+                    {
+                        continue;
+                    }
+
+                    if (BundleBackgroundManager.AUDIO_FILE_EXTENSIONS.Any(s => assetPath.EndsWith(s + ".bytes", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var sampleName = Path.GetFileNameWithoutExtension(assetPath);
+                        if (!sfxAssets.ContainsKey(assetPath))
+                        {
+                            var audioAsset = (TextAsset) await bundle.LoadAssetAsync<TextAsset>(assetPath);
+                            sfxAssets.Add(sampleName, audioAsset.bytes);
+                        }
+                    }
+                }
+
+                if (sfxAssets.Count > 0)
+                {
+                    CustomSFX.AddClips(sfxAssets);
+                }
             }
         }
 
