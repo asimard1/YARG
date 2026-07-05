@@ -186,10 +186,19 @@ namespace YARG.Gameplay
             _backgroundDimmer.color = colorDim;
 
             _type = result.Type;
+
+            // Start crowd event handler now if we aren't waiting on a yarground
+            // TODO: Figure out how to decouple this
+            if (_type != BackgroundType.Yarground)
+            {
+                GameManager.CrowdEventHandler.Start();
+            }
+
             switch (_type)
             {
                 case BackgroundType.Yarground:
                     await LoadYarground(result);
+                    GameManager.CrowdEventHandler.Start();
                     break;
                 case BackgroundType.Video:
                     LoadVideoBackground(result);
