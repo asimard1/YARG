@@ -1,3 +1,6 @@
 [submodule "Assets/Plugins/YARG.Core"]
 	path = YARG.Core
 	url = https://github.com/pythonology/YARG.Core
+[submodule "Yarg.Online"]
+	path = Yarg.Online
+	url = https://github.com/chandler14362/YARG.Online
