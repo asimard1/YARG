@@ -1,4 +1,4 @@
-using Minis;
+﻿using Minis;
 using UnityEngine;
 using YARG.Input;
 using YARG.Player;
@@ -41,7 +41,7 @@ namespace YARG.Menu.ProfileInfo
 
             foreach (var control in _binding.Bindings)
             {
-                if (control.Control is MidiNoteControl)
+                if (control.Control is MidiButtonControl)
                 {
                     _header.AddBinding<SingleMidiNoteBindView, float, ButtonBinding, SingleButtonBinding>(
                         _midiNoteViewPrefab, _binding, control);
