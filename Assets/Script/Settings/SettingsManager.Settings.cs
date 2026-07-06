@@ -426,6 +426,14 @@ namespace YARG.Settings
                     CountdownDisplayMode.Disabled
                 };
 
+            public DropdownSetting<UnisonDisplaySetting> UnisonDisplay { get; }
+                = new(UnisonDisplaySetting.MultiplayerOnly)
+                {
+                    UnisonDisplaySetting.Always,
+                    UnisonDisplaySetting.MultiplayerOnly,
+                    UnisonDisplaySetting.Disabled
+                };
+
             public ToggleSetting ShowPlayerNameWhenStartingSong { get; } = new(true);
 
             public ToggleSetting ShowRemoteHighways { get; } = new(true);
