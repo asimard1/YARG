@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using YARG.Core.Logging;
@@ -21,6 +22,8 @@ namespace YARG.Core.Audio
         protected internal int MaximumBufferLength;
 
         protected internal abstract ReadOnlySpan<string> SupportedFormats { get; }
+        protected readonly ConcurrentDictionary<string, object> VenueSamples = new();
+
 
         internal StemMixer? LoadCustomFile(string name, Stream stream, float speed, double volume, bool normalize, SongStem stem = SongStem.Song)
         {
