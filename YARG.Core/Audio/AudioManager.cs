@@ -17,6 +17,7 @@ namespace YARG.Core.Audio
         protected internal DrumSampleChannel[]      DrumSfxSamples   = new DrumSampleChannel[AudioHelpers.DrumSamples.Count];
         protected internal VoxSampleChannel[]       VoxSamples       = new VoxSampleChannel[AudioHelpers.VoxSamples.Count];
         protected internal MetronomeSampleChannel[] MetronomeSamples = new MetronomeSampleChannel[AudioHelpers.MetronomeSamples.Count];
+        protected internal Dictionary<string, VenueSampleChannel>  VenueSamples     = new();
         protected internal int PlaybackLatency;
         protected internal int MinimumBufferLength;
         protected internal int MaximumBufferLength;
@@ -75,6 +76,10 @@ namespace YARG.Core.Audio
         protected internal abstract OutputDevice? GetOutputDevice(string name);
 
         protected internal abstract void SetMasterVolume(double volume);
+
+        public abstract void LoadVenueSample(string name, byte[] sampleData, OutputChannel? outputChannel = null);
+
+        public abstract void ClearVenueSamples();
 
         protected internal virtual void SetOutputChannel(OutputChannel channel)
         {
@@ -206,6 +211,21 @@ namespace YARG.Core.Audio
                     }
 
                     foreach (var sample in DrumSfxSamples)
+                    {
+                        sample?.Dispose();
+                    }
+
+                    foreach (var sample in VoxSamples)
+                    {
+                        sample?.Dispose();
+                    }
+
+                    foreach (var sample in MetronomeSamples)
+                    {
+                        sample?.Dispose();
+                    }
+
+                    foreach (var sample in VenueSamples.Values)
                     {
                         sample?.Dispose();
                     }
