@@ -24,6 +24,7 @@ using YARG.Scores;
 using YARG.Settings.Metadata;
 using YARG.Settings.Types;
 using YARG.Song;
+using YARG.Song.Exporters;
 using YARG.Venue;
 using YARG.Venue.Characters;
 
@@ -480,6 +481,11 @@ namespace YARG.Settings
             public void ExportSongsCsv()
             {
                 SongExport.Export(SongExport.ExportFormat.Csv);
+            }
+
+            public void ExportSongsWeb()
+            {
+                SongExport.Export(SongExport.ExportFormat.WebBrowser);
             }
 
             public void CopyCurrentSongTextFilePath()

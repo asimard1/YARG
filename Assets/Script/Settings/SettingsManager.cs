@@ -195,7 +195,8 @@ namespace YARG.Settings
                 new ButtonRowMetadata(
                     nameof(Settings.ExportSongsJson),
                     nameof(Settings.ExportSongsText),
-                    nameof(Settings.ExportSongsCsv)
+                    nameof(Settings.ExportSongsCsv),
+                    nameof(Settings.ExportSongsWeb)
                 ),
                 new HeaderMetadata("PathsAndFolders"),
                 new ButtonRowMetadata(
