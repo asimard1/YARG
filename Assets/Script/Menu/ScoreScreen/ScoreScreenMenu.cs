@@ -114,7 +114,7 @@ namespace YARG.Menu.ScoreScreen
 
             ShowReplayAnalysis(song, scoreScreenStats);
 
-            _humanPlayerCount = scoreScreenStats.PlayerScores.Count(p => !p.Player.Profile.IsBot);
+            _humanPlayerCount = scoreScreenStats.PlayerScores.Count(p => !(p.Player.Profile.IsBot || p.Player.IsRemote));
             _songHashKey = song.Hash.ToString();
             _offsets = SongOffsetContainer.LoadOffsets();
 
