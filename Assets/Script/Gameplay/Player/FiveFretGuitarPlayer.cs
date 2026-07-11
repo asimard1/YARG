@@ -220,6 +220,9 @@ namespace YARG.Gameplay.Player
 
             engine.OnCountdownChange += OnCountdownChange;
 
+            EngineContainer.OnHappinessOverFail += OnHappinessOverFail;
+            EngineContainer.OnHappinessNearFail += OnHappinessNearFail;
+
             return engine;
         }
 

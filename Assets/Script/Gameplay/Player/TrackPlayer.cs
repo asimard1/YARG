@@ -461,6 +461,9 @@ namespace YARG.Gameplay.Player
             }
 
             EnableRemoteBreSubscription();
+
+            GameManager.EngineManager.OnPlayerFailed += OnPlayerFailed;
+            GameManager.EngineManager.OnPlayerRevived += OnPlayerRevived;
         }
 
         protected void ResetNoteCounters()
@@ -1263,6 +1266,42 @@ namespace YARG.Gameplay.Player
         {
             base.OnStarPowerReady();
             TrackView.ShowStarPowerReady();
+        }
+
+        protected void OnHappinessOverFail()
+        {
+            TrackMaterial.FailState = 0f;
+        }
+
+        protected void OnHappinessNearFail()
+        {
+            TrackMaterial.FailState = 1f;
+        }
+
+        protected void OnPlayerFailed(int engineId)
+        {
+            if (engineId != EngineContainer.EngineId)
+            {
+                // Not for us
+                return;
+            }
+
+            // Mark as failed and lower highway
+            PlayerHasFailed = true;
+            CameraPositioner.Lower(false);
+
+        }
+
+        protected void OnPlayerRevived()
+        {
+            if (!PlayerHasFailed)
+            {
+                return;
+            }
+
+            // Unfail and raise highway
+            PlayerHasFailed = false;
+            CameraPositioner.Raise(false);
         }
 
         public override void GameplayUpdate()

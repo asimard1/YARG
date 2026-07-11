@@ -72,7 +72,7 @@ namespace YARG.Gameplay.Player
                 };
             }
 
-                return action switch
+            return action switch
                 {
                     DrumsAction.Kick =>         (int) FourLaneDrumPad.Kick,
                     DrumsAction.RedDrum =>      (int) FourLaneDrumPad.RedDrum,
@@ -213,6 +213,9 @@ namespace YARG.Gameplay.Player
             engine.OnCountdownChange += OnCountdownChange;
 
             engine.OnPadHit += OnPadHit;
+
+            EngineContainer.OnHappinessNearFail += OnHappinessNearFail;
+            EngineContainer.OnHappinessOverFail += OnHappinessOverFail;
 
             // Forward free-play pad hits (BRE/coda/freestyle) so remotes see them.
             if (GameManager.IsOnline && !Player.IsReplay && !Player.IsRemote)

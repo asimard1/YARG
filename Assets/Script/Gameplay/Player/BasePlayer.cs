@@ -139,6 +139,8 @@ namespace YARG.Gameplay.Player
 
         protected EngineManager.EngineContainer EngineContainer;
 
+        protected bool PlayerHasFailed;
+
         protected override void GameplayAwake()
         {
             _replayInputs = new List<GameInput>();
@@ -392,7 +394,7 @@ namespace YARG.Gameplay.Player
         protected void OnGameInput(ref GameInput input)
         {
             // Ignore completely if the song hasn't started yet or player failed
-            if (!GameManager.Started || GameManager.PlayerHasFailed)
+            if (!GameManager.Started || PlayerHasFailed)
                 return;
 
             // Ignore while paused

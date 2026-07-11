@@ -209,6 +209,9 @@ public override bool ShouldUpdateInputsOnResume => true;
 
             engine.OnCountdownChange += OnCountdownChange;
 
+            EngineContainer.OnHappinessNearFail += OnHappinessNearFail;
+            EngineContainer.OnHappinessOverFail += OnHappinessOverFail;
+
             return engine;
         }
 
