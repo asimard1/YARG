@@ -276,7 +276,7 @@ namespace YARG.Gameplay
                 {
                     EngineManager.OnSongFailed += OnSongFailed;
 
-                    EngineManager.InitializeHappiness();
+                    EngineManager.InitializeHappiness(SettingsManager.Settings.NoFail.Value != NoFailMode.Off);
 
                     SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
                     SettingsManager.Settings.AutoCalibrateAudio.Value = false;
