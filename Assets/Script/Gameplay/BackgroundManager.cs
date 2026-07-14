@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using Unity.Cinemachine;
+using Cinemachine;
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using UniHumanoid;
