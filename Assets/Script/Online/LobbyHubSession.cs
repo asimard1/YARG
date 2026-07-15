@@ -420,24 +420,6 @@ namespace YARG.Online
             }
         }
 
-        // Idempotent by construction: unsubscribe-then-subscribe means re-entering a lobby
-        // (or CreateLobby/EnterLobby racing LeaveLobby) can never double up the handler.
-        private void SubscribeToGameplayHashBackfill()
-        {
-            LocalSongLibrary.BackfillBatchCompleted -= OnGameplayHashBackfillBatch;
-            LocalSongLibrary.BackfillBatchCompleted += OnGameplayHashBackfillBatch;
-        }
-
-        private void UnsubscribeFromGameplayHashBackfill()
-        {
-            LocalSongLibrary.BackfillBatchCompleted -= OnGameplayHashBackfillBatch;
-        }
-
-        // LocalSongLibrary documents this event as firing off the main thread (the backfill
-        // runs on the thread pool), but SnapshotLocalHashes() must be called on the main
-        // thread -- so this has to marshal over before touching it, not call it directly.
-        private void OnGameplayHashBackfillBatch() => PushGameplayHashUpdateAsync().Forget();
-
         private async UniTaskVoid PushGameplayHashUpdateAsync()
         {
             await UniTask.SwitchToMainThread();

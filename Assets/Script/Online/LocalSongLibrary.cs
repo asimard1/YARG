@@ -5,6 +5,13 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using YARG.Core.Song;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using Cysharp.Threading.Tasks;
+using UnityEngine;
+using YARG.Core.Song;
 using YARG.Song;
 
 namespace YARG.Online
@@ -13,6 +20,19 @@ namespace YARG.Online
     /// Snapshots the local player's installed song hashes. The snapshot is streamed to the
     /// lobby hub (see <see cref="LobbyHubSession"/>) so the server can compute the lobby-wide
     /// shared library (intersection of every member's library).
+    ///
+    /// Each song contributes BOTH its strict hash and its gameplay hash (when known) to the
+    /// same set. The server's intersection logic is untouched and untyped -- it just treats
+    /// these as opaque strings -- so two players end up "sharing" a song if either value
+    /// matches. Strict takes precedence automatically wherever it's checked downstream
+    /// (queueing prefers it when both are present in the synced shared library).
+    ///
+    /// Gameplay hashes require a full LoadChart() per song, so they can't be computed eagerly
+    /// for the whole library without hurting scan performance. Instead, this class backfills
+    /// them in the background, starting the moment a scan finishes (not when a lobby is
+    /// joined) so someone who scans in new songs and immediately hosts isn't starting from
+    /// zero, and prioritizing whatever was just added, since that's what they're most likely
+    /// about to try to play with someone else.
     ///
     /// Each song contributes BOTH its strict hash and its gameplay hash (when known) to the
     /// same set. The server's intersection logic is untouched and untyped -- it just treats
@@ -43,12 +63,11 @@ namespace YARG.Online
         private static CancellationTokenSource _backfillCts;
 
         /// <summary>
-        /// Fired on the calling (background) thread each time a batch of gameplay hashes
-        /// finishes computing. <see cref="LobbyHubSession"/> subscribes to this only while a
-        /// lobby session is active, re-streaming the snapshot in response -- with no active
-        /// session, this simply has no listeners and nothing gets sent anywhere. Since this
-        /// fires off the main thread, subscribers that need the main thread must marshal
-        /// back themselves.
+        /// Fired on the calling (background) thread once a background gameplay-hash backfill
+        /// completes and discovers at least one new gameplay hash. <see cref="LobbyHubSession"/>
+        /// subscribes to this only while a lobby session is active, re-streaming the updated
+        /// snapshot in response. Since this fires off the main thread, subscribers that need
+        /// the main thread must marshal back themselves.
         /// </summary>
         public static event Action BackfillBatchCompleted;
 
@@ -113,6 +132,7 @@ namespace YARG.Online
                 b.Value[0].GetLastWriteTime().CompareTo(a.Value[0].GetLastWriteTime()));
 
             int sinceLastBatch = 0;
+            bool anyNewHashes = false;
 
             foreach (var kv in librarySnapshot)
             {
@@ -146,13 +166,13 @@ namespace YARG.Online
                 GameplayHashCache.Set(strict, gameplayHash.ToString());
                 SongContainer.RegisterGameplayHash(kv.Key, gameplayHash);
                 sinceLastBatch++;
+                anyNewHashes = true;
 
                 await UniTask.Delay(SongDelay, cancellationToken: ct);
 
                 if (sinceLastBatch >= BACKFILL_BATCH_SIZE)
                 {
                     GameplayHashCache.Flush();
-                    BackfillBatchCompleted?.Invoke();
                     sinceLastBatch = 0;
                 }
             }
@@ -160,6 +180,10 @@ namespace YARG.Online
             if (sinceLastBatch > 0)
             {
                 GameplayHashCache.Flush();
+            }
+
+            if (anyNewHashes)
+            {
                 BackfillBatchCompleted?.Invoke();
             }
         }
