@@ -620,12 +620,6 @@ namespace YARG.Menu.Online
                 }
             }
 
-            if (requiredInstruments.Count == 0)
-            {
-                // No instruments known yet -- fall back to the raw lobby library.
-                return lobby.LobbySongLibrary;
-            }
-
             // Pre-resolve GameModes. Fully qualified to avoid conflict with the contract enum.
             var memberGameModes = new YARG.Core.GameMode[requiredInstruments.Count];
             for (int i = 0; i < requiredInstruments.Count; i++)
@@ -633,15 +627,38 @@ namespace YARG.Menu.Online
                 memberGameModes[i] = requiredInstruments[i].ToNativeGameMode();
             }
 
-            var playable = new HashSet<HashWrapper>();
+            // Resolve the shared-library hash set down to one entry per underlying song,
+            // not one per matching hash -- a song shared via BOTH its strict and gameplay
+            // hash would otherwise appear twice in the picker. Strict always wins when both
+            // are present: it's checked first, and once a song is claimed by its strict
+            // hash, a later gameplay-hash entry for the same song is skipped rather than
+            // overwriting it.
+            var resolvedByEntry = new Dictionary<SongEntry, HashWrapper>();
             foreach (var hash in lobby.LobbySongLibrary)
             {
-                if (!SongContainer.SongsByHash.TryGetValue(hash, out var entries) || entries.Count == 0)
+                if (SongContainer.SongsByHash.TryGetValue(hash, out var strictEntries) && strictEntries.Count > 0)
                 {
-                    continue;
+                    resolvedByEntry[strictEntries[0]] = hash;
                 }
+                else if (SongContainer.SongsByGameplayHash.TryGetValue(hash, out var looseEntries)
+                    && looseEntries.Count > 0)
+                {
+                    if (!resolvedByEntry.ContainsKey(looseEntries[0]))
+                    {
+                        resolvedByEntry.Add(looseEntries[0], hash);
+                    }
+                }
+            }
 
-                var entry = entries[0];
+            if (requiredInstruments.Count == 0)
+            {
+                // No instruments known yet -- fall back to whichever hash resolved each song.
+                return new HashSet<HashWrapper>(resolvedByEntry.Values);
+            }
+
+            var playable = new HashSet<HashWrapper>();
+            foreach (var (entry, hash) in resolvedByEntry)
+            {
                 bool playableForAll = true;
                 for (int i = 0; i < memberGameModes.Length; i++)
                 {
