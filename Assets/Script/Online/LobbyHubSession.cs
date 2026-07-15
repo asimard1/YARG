@@ -364,6 +364,7 @@ namespace YARG.Online
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby ok -- id={result.Lobby.Id}");
+            SubscribeToGameplayHashBackfill();
             CurrentLobbyChanged?.Invoke();
             return result;
         }
@@ -386,6 +387,7 @@ namespace YARG.Online
                 $"LobbyHubSession[#{_instanceId}]: EnterLobby ok -- id={result.Lobby.Id}, "
                 + $"members={_currentLobby.Members.Count}, "
                 + $"lobbyLibrary={_currentLobby.LobbySongLibrary.Count}");
+            SubscribeToGameplayHashBackfill();
             CurrentLobbyChanged?.Invoke();
             return result;
         }
@@ -408,12 +410,50 @@ namespace YARG.Online
             }
             finally
             {
+                UnsubscribeFromGameplayHashBackfill();
                 await UniTask.SwitchToMainThread();
                 if (Volatile.Read(ref _disposing) == 0 && _currentLobby != null)
                 {
                     _currentLobby = null;
                     CurrentLobbyChanged?.Invoke();
                 }
+            }
+        }
+
+        // Idempotent by construction: unsubscribe-then-subscribe means re-entering a lobby
+        // (or CreateLobby/EnterLobby racing LeaveLobby) can never double up the handler.
+        private void SubscribeToGameplayHashBackfill()
+        {
+            LocalSongLibrary.BackfillBatchCompleted -= OnGameplayHashBackfillBatch;
+            LocalSongLibrary.BackfillBatchCompleted += OnGameplayHashBackfillBatch;
+        }
+
+        private void UnsubscribeFromGameplayHashBackfill()
+        {
+            LocalSongLibrary.BackfillBatchCompleted -= OnGameplayHashBackfillBatch;
+        }
+
+        // LocalSongLibrary documents this event as firing off the main thread (the backfill
+        // runs on the thread pool), but SnapshotLocalHashes() must be called on the main
+        // thread -- so this has to marshal over before touching it, not call it directly.
+        private void OnGameplayHashBackfillBatch() => PushGameplayHashUpdateAsync().Forget();
+
+        private async UniTaskVoid PushGameplayHashUpdateAsync()
+        {
+            await UniTask.SwitchToMainThread();
+            if (Volatile.Read(ref _disposing) != 0 || _currentLobby == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await UpdateLibraryAsync(LocalSongLibrary.SnapshotLocalHashes());
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogWarning(
+                    $"LobbyHubSession[#{_instanceId}]: gameplay-hash backfill push failed -- {ex.Message}");
             }
         }
 
@@ -683,7 +723,9 @@ namespace YARG.Online
                 foreach (var h in e.Added)
                 {
                     var hw = ToHashWrapper(h);
-                    if (SongContainer.SongsByHash.ContainsKey(hw) && library.Add(hw))
+                    bool recognized = SongContainer.SongsByHash.ContainsKey(hw)
+                        || SongContainer.SongsByGameplayHash.ContainsKey(hw);
+                    if (recognized && library.Add(hw))
                         addedCount++;
                 }
             }
