@@ -461,6 +461,9 @@ namespace YARG.Settings
 
             public ToggleSetting GraphicalProgressOnScoreBox { get; } = new(true);
 
+            public ColorSetting GraphicalSongProgressTint { get; }
+                = new ColorSetting(Color.white, false);
+
             public ToggleSetting KeepSongInfoVisible { get; } = new(false);
 
             #endregion
