@@ -77,6 +77,25 @@ namespace YARG.Menu.MusicLibrary
         /// Use <see cref="NotifyAllowedSongsChanged"/> to refresh the active menu after mutation.
         /// </summary>
         public static HashSet<HashWrapper>? AllowedSongHashes;
+
+        /// <summary>
+        /// Whether <paramref name="entry"/> is visible under the current allow-list.
+        /// Checks the strict hash first, then falls back to the cached gameplay hash
+        /// so songs that only match via <see cref="GameplayHashCache"/> still show up.
+        /// </summary>
+        public static bool IsAllowed(SongEntry entry) => AllowedSongHashes == null
+            || AllowedSongHashes.Contains(entry.Hash)
+            || (GameplayHashCache.TryGet(entry.Hash.ToString(), out var gameplayHash)
+                && AllowedSongHashes.Contains(HashWrapper.FromString(gameplayHash)));
+
+        /// <summary>
+        /// Hash-only overload of <see cref="IsAllowed(SongEntry)"/> for call sites that
+        /// only have a <see cref="HashWrapper"/> on hand (e.g. playlist entries).
+        /// </summary>
+        public static bool IsAllowed(HashWrapper hash) => AllowedSongHashes == null
+            || AllowedSongHashes.Contains(hash)
+            || (GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash)
+                && AllowedSongHashes.Contains(HashWrapper.FromString(gameplayHash)));
 #nullable disable
 
         private static MusicLibraryMenu _activeInstance;
@@ -1151,16 +1170,16 @@ namespace YARG.Menu.MusicLibrary
         private void RefreshForAllowedSongsChange()
         {
             // Capture BEFORE Refresh -- that rebuilds ViewList and may invalidate CurrentSelection.
-            var currentSongHash = (CurrentSelection as SongViewType)?.SongEntry.Hash;
+            var currentSongEntry = (CurrentSelection as SongViewType)?.SongEntry;
             var snapshot = CaptureSelectionSnapshot();
             Refresh();
 
             // Hash-based ContentStableId match inside RestoreSelectionSnapshot handles the happy
             // path automatically. When the previously-selected song is gone, we explicitly land
             // at index 0 instead of clamping to the old index near a different song.
-            bool selectedSongFilteredOut = currentSongHash.HasValue
+            bool selectedSongFilteredOut = currentSongEntry != null
                 && AllowedSongHashes != null
-                && !AllowedSongHashes.Contains(currentSongHash.Value);
+                && !IsAllowed(currentSongEntry);
 
             if (selectedSongFilteredOut && ViewList.Count > 0)
             {
