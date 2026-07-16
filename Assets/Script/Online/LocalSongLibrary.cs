@@ -1,4 +1,11 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using Cysharp.Threading.Tasks;
+using UnityEngine;
+using YARG.Core.Song;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -13,6 +20,19 @@ namespace YARG.Online
     /// Snapshots the local player's installed song hashes. The snapshot is streamed to the
     /// lobby hub (see <see cref="LobbyHubSession"/>) so the server can compute the lobby-wide
     /// shared library (intersection of every member's library).
+    ///
+    /// Each song contributes BOTH its strict hash and its gameplay hash (when known) to the
+    /// same set. The server's intersection logic is untouched and untyped -- it just treats
+    /// these as opaque strings -- so two players end up "sharing" a song if either value
+    /// matches. Strict takes precedence automatically wherever it's checked downstream
+    /// (queueing prefers it when both are present in the synced shared library).
+    ///
+    /// Gameplay hashes require a full LoadChart() per song, so they can't be computed eagerly
+    /// for the whole library without hurting scan performance. Instead, this class backfills
+    /// them in the background, starting the moment a scan finishes (not when a lobby is
+    /// joined) so someone who scans in new songs and immediately hosts isn't starting from
+    /// zero, and prioritizing whatever was just added, since that's what they're most likely
+    /// about to try to play with someone else.
     ///
     /// Each song contributes BOTH its strict hash and its gameplay hash (when known) to the
     /// same set. The server's intersection logic is untouched and untyped -- it just treats
@@ -98,6 +118,7 @@ namespace YARG.Online
             // real file I/O and parsing work per song, not something the UI thread should
             // be blocked on for however long a library takes to backfill.
             await UniTask.SwitchToThreadPool();
+            GameplayHashCache.Flush(); // recreate file if it was deleted mid-session
 
             // Snapshotted once, up front, rather than enumerated live: SongsByHash gets
             // fully cleared and rebuilt by the next scan (possibly from the main thread
@@ -119,8 +140,9 @@ namespace YARG.Online
                 ct.ThrowIfCancellationRequested();
 
                 string strict = kv.Key.ToString();
-                if (GameplayHashCache.TryGet(strict, out _))
+                if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
                 {
+                    SongContainer.RegisterGameplayHash(kv.Key, HashWrapper.FromString(cachedGameplayHash));
                     continue; // already known, possibly from a previous session -- no
                               // LoadChart() needed, so nothing to throttle or pause for
                 }
