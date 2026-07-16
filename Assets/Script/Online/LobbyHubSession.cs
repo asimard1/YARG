@@ -367,6 +367,7 @@ namespace YARG.Online
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
+            LocalSongLibrary.EnsureBackfillRunning();
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby ok -- id={result.Lobby.Id}");
             CurrentLobbyChanged?.Invoke();
             return result;
@@ -386,6 +387,7 @@ namespace YARG.Online
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromEnter(result);
+            LocalSongLibrary.EnsureBackfillRunning();
             YargLogger.LogInfo(
                 $"LobbyHubSession[#{_instanceId}]: EnterLobby ok -- id={result.Lobby.Id}, "
                 + $"members={_currentLobby.Members.Count}, "
