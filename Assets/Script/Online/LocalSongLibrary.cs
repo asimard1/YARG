@@ -110,9 +110,9 @@ namespace YARG.Online
                 string strict = kv.Key.ToString();
                 hashes.Add(strict);
 
-                if (GameplayHashCache.TryGet(strict, out var gameplay))
+                if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
                 {
-                    hashes.Add(gameplay);
+                    hashes.Add(cachedGameplayHash);
                 }
             }
 
