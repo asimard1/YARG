@@ -95,6 +95,7 @@ namespace YARG.Online
             _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
             _instanceId = Interlocked.Increment(ref _instanceCounter);
             Application.quitting += OnApplicationQuitting;
+            LocalSongLibrary.BackfillBatchCompleted += PushGameplayHashUpdate;
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: created");
         }
 
@@ -266,6 +267,7 @@ namespace YARG.Online
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: disposing");
 
             Application.quitting -= OnApplicationQuitting;
+            LocalSongLibrary.BackfillBatchCompleted -= PushGameplayHashUpdate;
 
             // Best-effort leave RPCs before cancel so server state cleans up promptly.
             // Short timeout because this may run from Application.quitting.
@@ -435,6 +437,8 @@ namespace YARG.Online
                     $"LobbyHubSession[#{_instanceId}]: gameplay-hash backfill push failed -- {ex.Message}");
             }
         }
+
+        private void PushGameplayHashUpdate() => PushGameplayHashUpdateAsync().Forget();
 
         /// <summary>Queue a song. State is mutated by the server's broadcast callback, not here.</summary>
         public async UniTask<QueuedSongDto> QueueSongAsync(
