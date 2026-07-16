@@ -368,6 +368,7 @@ namespace YARG.Online
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
             LocalSongLibrary.EnsureBackfillRunning();
+            DumpLibraryDiff(_currentLobby);
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby ok -- id={result.Lobby.Id}");
             CurrentLobbyChanged?.Invoke();
             return result;
@@ -388,6 +389,7 @@ namespace YARG.Online
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromEnter(result);
             LocalSongLibrary.EnsureBackfillRunning();
+            DumpLibraryDiff(_currentLobby);
             YargLogger.LogInfo(
                 $"LobbyHubSession[#{_instanceId}]: EnterLobby ok -- id={result.Lobby.Id}, "
                 + $"members={_currentLobby.Members.Count}, "
@@ -684,6 +686,31 @@ namespace YARG.Online
                     // Starting -> SongSelect means the allocator failed.
                     ToastManager.ToastWarning("Game start failed. No servers available.");
                 }
+            }
+        }
+
+        public static void DumpLibraryDiff(LobbyRoomState lobby)
+        {
+            YargLogger.LogInfo($"[LibDiag] remote count={lobby.LobbySongLibrary.Count}");
+            const int ChunkSize = 200; // hashes per log line, tune if still too long
+            var hashes = lobby.LobbySongLibrary.ToList();
+            for (int i = 0; i < hashes.Count; i += ChunkSize)
+            {
+                var chunk = hashes.Skip(i).Take(ChunkSize);
+                YargLogger.LogInfo($"[LibDiag] remote [{i}-{Math.Min(i + ChunkSize, hashes.Count) - 1}]: {string.Join(", ", chunk)}");
+            }
+
+            foreach (var kv in SongContainer.SongsByHash)
+            {
+                var strict = kv.Key;
+                if (lobby.LobbySongLibrary.Contains(strict)) continue;
+
+                GameplayHashCache.TryGet(strict.ToString(), out var soft);
+                var softHw = soft != null ? (HashWrapper?)HashWrapper.FromString(soft) : null;
+                if (softHw.HasValue && lobby.LobbySongLibrary.Contains(softHw.Value)) continue;
+
+                YargLogger.LogInfo(
+                    $"[LibDiag] Not matching: {kv.Value[0].Name} hard={strict} soft={soft ?? "none"}");
             }
         }
 
