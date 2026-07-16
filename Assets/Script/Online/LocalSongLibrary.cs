@@ -84,6 +84,15 @@ namespace YARG.Online
             SongContainer.OnSongsRefreshed += RestartBackfill;
         }
 
+        public static void EnsureBackfillRunning()
+        {
+            if (_backfillCts != null && !_backfillCts.IsCancellationRequested)
+            {
+                return;
+            }
+            RestartBackfill();
+        }
+
         private static void RestartBackfill()
         {
             // A fresh scan (manual rescan, or one that was already running) always

@@ -96,6 +96,19 @@ namespace YARG.Menu.MusicLibrary
             || AllowedSongHashes.Contains(hash)
             || (GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash)
                 && AllowedSongHashes.Contains(HashWrapper.FromString(gameplayHash)));
+
+        public static HashWrapper ResolvePickerHash(SongEntry entry)
+        {
+            if (AllowedSongHashes == null || AllowedSongHashes.Contains(entry.Hash))
+                return entry.Hash;
+
+            if (GameplayHashCache.TryGet(entry.Hash.ToString(), out var gameplayHash))
+            {
+                var gw = HashWrapper.FromString(gameplayHash);
+                if (AllowedSongHashes.Contains(gw)) return gw;
+            }
+            return entry.Hash;
+        }
 #nullable disable
 
         private static MusicLibraryMenu _activeInstance;
