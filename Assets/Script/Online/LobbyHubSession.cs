@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -364,7 +364,6 @@ namespace YARG.Online
             if (Volatile.Read(ref _disposing) != 0) return result;
             _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby ok -- id={result.Lobby.Id}");
-            SubscribeToGameplayHashBackfill();
             CurrentLobbyChanged?.Invoke();
             return result;
         }
@@ -387,7 +386,6 @@ namespace YARG.Online
                 $"LobbyHubSession[#{_instanceId}]: EnterLobby ok -- id={result.Lobby.Id}, "
                 + $"members={_currentLobby.Members.Count}, "
                 + $"lobbyLibrary={_currentLobby.LobbySongLibrary.Count}");
-            SubscribeToGameplayHashBackfill();
             CurrentLobbyChanged?.Invoke();
             return result;
         }
@@ -410,7 +408,6 @@ namespace YARG.Online
             }
             finally
             {
-                UnsubscribeFromGameplayHashBackfill();
                 await UniTask.SwitchToMainThread();
                 if (Volatile.Read(ref _disposing) == 0 && _currentLobby != null)
                 {
