@@ -90,13 +90,14 @@ namespace YARG.Online
         private readonly CancellationTokenSource _lifetimeCts = new();
         private int _disposing; // 0 = alive, 1 = disposing/disposed
         private int _inflightHandlers; // Track() bodies in flight; DisposeAsync drains to zero
+        private void PushGameplayHashUpdate() => PushGameplayHashUpdateAsync().Forget();
 
         private LobbyHubSession(OnlineAccessTokenProvider tokenProvider)
         {
             _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
             _instanceId = Interlocked.Increment(ref _instanceCounter);
             Application.quitting += OnApplicationQuitting;
-            LocalSongLibrary.BackfillBatchCompleted += PushGameplayHashUpdateAsync;
+            LocalSongLibrary.BackfillBatchCompleted += PushGameplayHashUpdate;
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: created");
         }
 
@@ -268,7 +269,7 @@ namespace YARG.Online
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: disposing");
 
             Application.quitting -= OnApplicationQuitting;
-            LocalSongLibrary.BackfillBatchCompleted -= PushGameplayHashUpdateAsync;
+            LocalSongLibrary.BackfillBatchCompleted -= PushGameplayHashUpdate;
 
             // Best-effort leave RPCs before cancel so server state cleans up promptly.
             // Short timeout because this may run from Application.quitting.
@@ -420,7 +421,7 @@ namespace YARG.Online
             }
         }
 
-        private async void PushGameplayHashUpdateAsync()
+        private async UniTaskVoid PushGameplayHashUpdateAsync()
         {
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0 || _currentLobby == null)
