@@ -118,6 +118,7 @@ namespace YARG.Online
             // real file I/O and parsing work per song, not something the UI thread should
             // be blocked on for however long a library takes to backfill.
             await UniTask.SwitchToThreadPool();
+            GameplayHashCache.Flush(); // recreate file if it was deleted mid-session
 
             // Snapshotted once, up front, rather than enumerated live: SongsByHash gets
             // fully cleared and rebuilt by the next scan (possibly from the main thread
@@ -139,8 +140,10 @@ namespace YARG.Online
                 ct.ThrowIfCancellationRequested();
 
                 string strict = kv.Key.ToString();
-                if (GameplayHashCache.TryGet(strict, out _))
+                if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
                 {
+                    SongContainer.RegisterGameplayHash(kv.Key, HashWrapper.FromString(cachedGameplayHash));
+                    anyNewHashes = true;
                     continue; // already known, possibly from a previous session -- no
                               // LoadChart() needed, so nothing to throttle or pause for
                 }

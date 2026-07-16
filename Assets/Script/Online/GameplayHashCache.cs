@@ -71,7 +71,7 @@ namespace YARG.Online
         /// </summary>
         public static void Flush()
         {
-            if (!_dirty)
+            if (!_dirty && File.Exists(CachePath))
             {
                 return;
             }
