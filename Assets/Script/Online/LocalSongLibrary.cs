@@ -143,6 +143,7 @@ namespace YARG.Online
                 if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
                 {
                     SongContainer.RegisterGameplayHash(kv.Key, HashWrapper.FromString(cachedGameplayHash));
+                    anyNewHashes = true;
                     continue; // already known, possibly from a previous session -- no
                               // LoadChart() needed, so nothing to throttle or pause for
                 }
