@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -95,7 +96,7 @@ namespace YARG.Online
             _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
             _instanceId = Interlocked.Increment(ref _instanceCounter);
             Application.quitting += OnApplicationQuitting;
-            LocalSongLibrary.BackfillBatchCompleted += PushGameplayHashUpdate;
+            LocalSongLibrary.BackfillBatchCompleted += PushGameplayHashUpdateAsync;
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: created");
         }
 
@@ -267,7 +268,7 @@ namespace YARG.Online
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: disposing");
 
             Application.quitting -= OnApplicationQuitting;
-            LocalSongLibrary.BackfillBatchCompleted -= PushGameplayHashUpdate;
+            LocalSongLibrary.BackfillBatchCompleted -= PushGameplayHashUpdateAsync;
 
             // Best-effort leave RPCs before cancel so server state cleans up promptly.
             // Short timeout because this may run from Application.quitting.
@@ -419,7 +420,7 @@ namespace YARG.Online
             }
         }
 
-        private async UniTaskVoid PushGameplayHashUpdateAsync()
+        private async void PushGameplayHashUpdateAsync()
         {
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0 || _currentLobby == null)
@@ -429,7 +430,8 @@ namespace YARG.Online
 
             try
             {
-                await UpdateLibraryAsync(LocalSongLibrary.SnapshotLocalHashes());
+                var hashes = LocalSongLibrary.SnapshotLocalHashes();
+                await UpdateLibraryAsync(hashes);
             }
             catch (Exception ex)
             {
@@ -437,8 +439,6 @@ namespace YARG.Online
                     $"LobbyHubSession[#{_instanceId}]: gameplay-hash backfill push failed -- {ex.Message}");
             }
         }
-
-        private void PushGameplayHashUpdate() => PushGameplayHashUpdateAsync().Forget();
 
         /// <summary>Queue a song. State is mutated by the server's broadcast callback, not here.</summary>
         public async UniTask<QueuedSongDto> QueueSongAsync(
@@ -690,6 +690,8 @@ namespace YARG.Online
             catch (OperationCanceledException) { return; }
             if (!IsForCurrentLobby(e.LobbyId)) return;
 
+            YargLogger.LogInfo(
+                $"Gameplay dictionary contains {SongContainer.SongsByGameplayHash.Count} hashes.");
             var library = _currentLobby.LobbySongLibrary;
             int removedCount = 0;
             int addedCount = 0;
@@ -706,10 +708,31 @@ namespace YARG.Online
                 foreach (var h in e.Added)
                 {
                     var hw = ToHashWrapper(h);
-                    bool recognized = SongContainer.SongsByHash.ContainsKey(hw)
-                        || SongContainer.SongsByGameplayHash.ContainsKey(hw);
+
+                    bool strict = SongContainer.SongsByHash.ContainsKey(hw);
+                    bool gameplay = SongContainer.SongsByGameplayHash.ContainsKey(hw);
+
+                    YargLogger.LogInfo(
+                        $"Lobby library update:\n" +
+                        $"  Incoming:  {h}\n" +
+                        $"  Wrapper:   {hw}\n" +
+                        $"  Strict:    {strict}\n" +
+                        $"  Gameplay:  {gameplay}");
+
+                    if (!gameplay)
+                    {
+                        foreach (var key in SongContainer.SongsByGameplayHash.Keys.Take(5))
+                        {
+                            YargLogger.LogInfo($"Gameplay key sample: {key}");
+                        }
+                    }
+
+                    bool recognized = strict || gameplay;
+
                     if (recognized && library.Add(hw))
+                    {
                         addedCount++;
+                    }
                 }
             }
 
