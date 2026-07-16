@@ -12,6 +12,13 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using YARG.Core.Song;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using Cysharp.Threading.Tasks;
+using UnityEngine;
+using YARG.Core.Song;
 using YARG.Song;
 
 namespace YARG.Online
@@ -103,9 +110,9 @@ namespace YARG.Online
                 string strict = kv.Key.ToString();
                 hashes.Add(strict);
 
-                if (GameplayHashCache.TryGet(strict, out var gameplay))
+                if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
                 {
-                    hashes.Add(gameplay);
+                    hashes.Add(cachedGameplayHash);
                 }
             }
 
