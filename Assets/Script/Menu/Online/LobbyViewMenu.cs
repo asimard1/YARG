@@ -19,6 +19,7 @@ using YARG.Online.Lobbies.Contracts.Enums;
 using YARG.Online.Lobbies.Contracts.Hubs;
 using YARG.Player;
 using YARG.Song;
+using System.Linq;
 
 namespace YARG.Menu.Online
 {
@@ -708,7 +709,19 @@ namespace YARG.Menu.Online
                 // PersistentState resets) so it travels with the queue entry and
                 // applies for everyone at game start.
                 float songSpeed = SongSpeedMenu.SongSpeedMultiplier;
-                await session.QueueSongAsync(hash, songSpeed, CancellationToken.None);
+                GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash);
+
+                YargLogger.LogInfo(
+                    $"QUEUE DEBUG: hard={hash}, soft={gameplayHash ?? "NULL"}");
+
+                YargLogger.LogInfo(
+                    $"QUEUE DEBUG: LocalSongLibrary contains soft={gameplayHash != null && LocalSongLibrary.SnapshotLocalHashes().Contains(gameplayHash)}");
+
+                await session.QueueSongAsync(
+                    hash,
+                    gameplayHash,
+                    songSpeed,
+                    CancellationToken.None);
             }
             catch (Exception ex)
             {
