@@ -621,6 +621,12 @@ namespace YARG.Menu.Online
                 }
             }
 
+            if (requiredInstruments.Count == 0)
+            {
+                // No instruments known yet -- fall back to the raw lobby library.
+                return lobby.LobbySongLibrary;
+            }
+
             // Pre-resolve GameModes. Fully qualified to avoid conflict with the contract enum.
             var memberGameModes = new YARG.Core.GameMode[requiredInstruments.Count];
             for (int i = 0; i < requiredInstruments.Count; i++)
