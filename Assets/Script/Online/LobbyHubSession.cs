@@ -447,26 +447,14 @@ namespace YARG.Online
 
         /// <summary>Queue a song. State is mutated by the server's broadcast callback, not here.</summary>
         public async UniTask<QueuedSongDto> QueueSongAsync(
-            HashWrapper hash,
-            string? gameplayHash,
-            float songSpeed,
-            CancellationToken ct = default)
+            HashWrapper hash, float songSpeed, CancellationToken ct = default)
         {
             var conn = RequireConnection();
-
-            var args = new QueueSongArgs(hash.ToString(), gameplayHash?.ToString())
-            {
-                SongSpeed = songSpeed
-            };
-
-            YargLogger.LogInfo(
-                    $"QUEUE DEBUG: LocalSongLibrary contains soft={gameplayHash != null && LocalSongLibrary.SnapshotLocalHashes().Contains(gameplayHash)}");
-            YargLogger.LogInfo(
-                $"QUEUE justbefore-RESULT DEBUG: hard={hash.ToString()}, soft={gameplayHash?.ToString() ?? "NULL"}");
-            var result = await conn.InvokeAsync<QueuedSongDto>(nameof(ILobbyHub.QueueSong), args, ct);
-            YargLogger.LogInfo(
-                $"QUEUE RESULT DEBUG: hard={result.SongHash}, soft={result.SongGameplayHash ?? "NULL"}");
-
+            var args = new QueueSongArgs(hash.ToString()) { SongSpeed = songSpeed };
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong hash={args.SongHash} Sent hash={hash.ToString()} speed={songSpeed}");
+            var result = await conn.InvokeAsync<QueuedSongDto>(
+                nameof(ILobbyHub.QueueSong), args, ct);
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong ok -- sequence={result.Sequence}");
             return result;
         }
 
