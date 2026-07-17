@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -459,8 +459,11 @@ namespace YARG.Online
                 SongSpeed = songSpeed
             };
 
-            var result = await conn.InvokeAsync<QueuedSongDto>(
-                nameof(ILobbyHub.QueueSong), args, ct);
+            YargLogger.LogInfo(
+                    $"QUEUE DEBUG: LocalSongLibrary contains soft={gameplayHash != null && LocalSongLibrary.SnapshotLocalHashes().Contains(gameplayHash)}");
+            YargLogger.LogInfo(
+                $"QUEUE justbefore-RESULT DEBUG: hard={hash.ToString()}, soft={gameplayHash?.ToString() ?? "NULL"}");
+            var result = await conn.InvokeAsync<QueuedSongDto>(nameof(ILobbyHub.QueueSong), args, ct);
             YargLogger.LogInfo(
                 $"QUEUE RESULT DEBUG: hard={result.SongHash}, soft={result.SongGameplayHash ?? "NULL"}");
 
