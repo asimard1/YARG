@@ -711,12 +711,6 @@ namespace YARG.Menu.Online
                 float songSpeed = SongSpeedMenu.SongSpeedMultiplier;
                 GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash);
 
-                YargLogger.LogInfo(
-                    $"QUEUE DEBUG: hard={hash}, soft={gameplayHash ?? "NULL"}");
-
-                YargLogger.LogInfo(
-                    $"QUEUE DEBUG: LocalSongLibrary contains soft={gameplayHash != null && LocalSongLibrary.SnapshotLocalHashes().Contains(gameplayHash)}");
-
                 await session.QueueSongAsync(
                     hash,
                     gameplayHash,
