@@ -19,7 +19,6 @@ using YARG.Online.Lobbies.Contracts.Enums;
 using YARG.Online.Lobbies.Contracts.Hubs;
 using YARG.Player;
 using YARG.Song;
-using System.Linq;
 
 namespace YARG.Menu.Online
 {
@@ -709,11 +708,25 @@ namespace YARG.Menu.Online
                 // PersistentState resets) so it travels with the queue entry and
                 // applies for everyone at game start.
                 float songSpeed = SongSpeedMenu.SongSpeedMultiplier;
-                GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash);
+
+                var hashToSend = hash;
+                if (GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash))
+                {
+                    var gameplayHw = HashWrapper.FromString(gameplayHash);
+
+                    // Only use the gameplay hash if it already survived the lobby's
+                    // library intersection -- i.e. every member (including ones on
+                    // the unmodified client, which never pushes a gameplay hash)
+                    // has reported this exact value. Otherwise fall back to the
+                    // strict hash so their client can still resolve the song.
+                    if (session.CurrentLobby?.LobbySongLibrary.Contains(gameplayHw) == true)
+                    {
+                        hashToSend = gameplayHw;
+                    }
+                }
 
                 await session.QueueSongAsync(
-                    hash,
-                    gameplayHash,
+                    hashToSend,
                     songSpeed,
                     CancellationToken.None);
             }
