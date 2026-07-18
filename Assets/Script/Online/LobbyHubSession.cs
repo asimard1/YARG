@@ -813,9 +813,19 @@ namespace YARG.Online
             if (e.Song.RequesterId != _tokenProvider.UserId)
             {
                 var hash = HashWrapper.FromString(e.Song.SongHash);
-                string songLabel = SongContainer.SongsByHash.TryGetValue(hash, out var songs)
-                    ? songs[0].Name
-                    : e.Song.SongHash;
+                string songLabel;
+                if (SongContainer.SongsByHash.TryGetValue(hash, out var songs) && songs.Count > 0)
+                {
+                    songLabel = songs[0].Name;
+                }
+                else if (SongContainer.SongsByGameplayHash.TryGetValue(hash, out var looseSongs) && looseSongs.Count > 0)
+                {
+                    songLabel = looseSongs[0].Name;
+                }
+                else
+                {
+                    songLabel = e.Song.SongHash;
+                }
                 string requesterName = _currentLobby.GetDisplayName(e.Song.RequesterId);
                 LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.SongQueued", requesterName, songLabel));
             }
@@ -831,9 +841,18 @@ namespace YARG.Online
             if (idx >= 0)
             {
                 var hash = HashWrapper.FromString(_currentLobby.SongQueue[idx].SongHash);
-                songLabel = SongContainer.SongsByHash.TryGetValue(hash, out var songs)
-                    ? songs[0].Name
-                    : _currentLobby.SongQueue[idx].SongHash;
+                if (SongContainer.SongsByHash.TryGetValue(hash, out var songs) && songs.Count > 0)
+                {
+                    songLabel = songs[0].Name;
+                }
+                else if (SongContainer.SongsByGameplayHash.TryGetValue(hash, out var looseSongs) && looseSongs.Count > 0)
+                {
+                    songLabel = looseSongs[0].Name;
+                }
+                else
+                {
+                    songLabel = _currentLobby.SongQueue[idx].SongHash;
+                }
             }
             _currentLobby.SongQueue.RemoveAll(q => q.Sequence == e.Sequence);
             CurrentLobbyChanged?.Invoke();
