@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -621,12 +621,12 @@ namespace YARG.Menu.ScoreScreen
 
             if (_offsetModified)
             {
-                ToastManager.ToastSuccess("{0}ms offset removed", offsetMs);
+                ToastManager.ToastSuccess($"{offsetMs}ms offset removed");
                 AddSongOffsetJson(_songHashKey, -offsetMs);
             }
             else
             {
-                ToastManager.ToastSuccess("{0}ms offset added", offsetMs);
+                ToastManager.ToastSuccess($"{offsetMs}ms offset added");
                 AddSongOffsetJson(_songHashKey, offsetMs);
             }
             _offsetModified = !_offsetModified;

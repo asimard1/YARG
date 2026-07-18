@@ -1,9 +1,10 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
 using YARG.Core.Logging;
 using YARG.Helpers;
+using YARG.Menu.Persistent;
 
 namespace YARG.Song
 {
@@ -25,7 +26,7 @@ namespace YARG.Song
             }
             catch (Exception ex)
             {
-                YargLogger.LogError(ex, "Failed to load song offsets");
+                YargLogger.LogException(ex, "Failed to load song offsets");
                 return new Dictionary<string, long>();
             }
         }
@@ -51,7 +52,7 @@ namespace YARG.Song
             }
             catch (Exception ex)
             {
-                ToastManager.ToastError(ex, "Failed to save song offsets");
+                ToastManager.ToastError($"{ex} Failed to save song offsets");
             }
         }
 
