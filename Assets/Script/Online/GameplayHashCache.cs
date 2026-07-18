@@ -1,25 +1,59 @@
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
+using YARG.Core.Song;
 using YARG.Helpers;
 
 namespace YARG.Online
 {
-    /// <summary>
+/// <summary>
     /// Persists the (expensive) mapping from a song's strict hash to its gameplay hash,
     /// so it's only ever computed once per song, not once per session.
     ///
     /// Keyed by strict hash rather than file path on purpose: if the source file changes,
-    /// its strict hash changes too, so a stale entry is simply orphaned (and ignored) --
-    /// no explicit invalidation or cache-version bump needed.
+    /// its strict hash changes too, so a stale entry is simply orphaned (and ignored).
+    ///
+    /// Cache file name is suffixed with <see cref="GameplayHasher.HASH_VERSION"/>; bumping
+    /// that version starts a fresh file, and stale versioned files are deleted automatically.
     /// </summary>
     internal static class GameplayHashCache
     {
         private static readonly string CachePath =
-            Path.Combine(PathHelper.PersistentDataPath, "gameplay_hash_cache.json");
+            Path.Combine(PathHelper.PersistentDataPath, $"GameplayHashCache{GameplayHasher.HASH_VERSION}.json");
 
         private static Dictionary<string, string> _map;
         private static bool _dirty;
+       private static bool _staleFilesDeleted;
+
+        private static void DeleteStaleCacheFiles()
+        {
+            if (_staleFilesDeleted) return;
+            _staleFilesDeleted = true;
+
+            try
+            {
+                var dir = Path.GetDirectoryName(CachePath);
+                var currentFile = Path.GetFileName(CachePath);
+                foreach (var file in Directory.EnumerateFiles(dir, "GameplayHashCache*.json"))
+                {
+                    if (Path.GetFileName(file) != currentFile)
+                    {
+                        File.Delete(file);
+                    }
+                }
+
+                // Pre-versioning legacy filename -- doesn't match the glob above :(
+                var legacyFile = Path.Combine(dir, "gameplay_hash_cache.json");
+                if (File.Exists(legacyFile))
+                {
+                    File.Delete(legacyFile);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup. A leftover file just wastes a little disk space :)
+            }
+        }
 
         private static Dictionary<string, string> Map
         {
@@ -29,6 +63,8 @@ namespace YARG.Online
                 {
                     return _map;
                 }
+                DeleteStaleCacheFiles();
+
 
                 if (File.Exists(CachePath))
                 {
