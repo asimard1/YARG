@@ -183,11 +183,17 @@ namespace YARG.Menu.Online
             _previewSongSpeed = topSpeed;
 
             SongEntry songToLock = null;
-            if (!string.IsNullOrEmpty(topHash)
-                && SongContainer.SongsByHash.TryGetValue(HashWrapper.FromString(topHash), out var entries)
-                && entries.Count > 0)
+            if (!string.IsNullOrEmpty(topHash))
             {
-                songToLock = entries[0];
+                var topHashWrapper = HashWrapper.FromString(topHash);
+                if (SongContainer.SongsByHash.TryGetValue(topHashWrapper, out var entries) && entries.Count > 0)
+                {
+                    songToLock = entries[0];
+                }
+                else if (SongContainer.SongsByGameplayHash.TryGetValue(topHashWrapper, out var looseEntries) && looseEntries.Count > 0)
+                {
+                    songToLock = looseEntries[0];
+                }
             }
 
             MusicPlayer.SetLockedSong(songToLock, topSpeed);
