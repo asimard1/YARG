@@ -5,20 +5,6 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using YARG.Core.Song;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using Cysharp.Threading.Tasks;
-using UnityEngine;
-using YARG.Core.Song;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using Cysharp.Threading.Tasks;
-using UnityEngine;
-using YARG.Core.Song;
 using YARG.Song;
 
 namespace YARG.Online
@@ -205,6 +191,8 @@ namespace YARG.Online
             {
                 BackfillBatchCompleted?.Invoke();
             }
+
+            ToastManager.ToastSuccess("Background scan completed");
         }
     }
 }
