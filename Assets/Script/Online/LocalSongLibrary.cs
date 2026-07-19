@@ -5,6 +5,7 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using YARG.Core.Song;
+using YARG.Menu.Persistent;
 using YARG.Song;
 
 namespace YARG.Online
