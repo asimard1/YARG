@@ -600,6 +600,7 @@ namespace YARG.Menu.Online
             }
 
             MusicLibraryMenu.AllowedSongHashes = BuildPlayableSongSet(lobby);
+            MusicLibraryMenu.NotifyAllowedSongsChanged();
 
             MusicLibraryMenu.SongPickedCallback = OnSongPicked;
             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.MusicLibrary);

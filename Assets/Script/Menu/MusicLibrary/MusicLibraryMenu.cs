@@ -21,6 +21,7 @@ using YARG.Playlists;
 using YARG.Scores;
 using YARG.Settings;
 using YARG.Song;
+using YARG.Core.Logging;
 using static YARG.Menu.Navigation.Navigator;
 using Random = UnityEngine.Random;
 
@@ -261,6 +262,11 @@ namespace YARG.Menu.MusicLibrary
             }
             else if (_currentSong != null)
             {
+                UpdateSearch(true);
+            }
+            else
+            {
+                YargLogger.LogInfo("_currentSong is null, but update still");
                 UpdateSearch(true);
             }
 

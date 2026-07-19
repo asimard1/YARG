@@ -150,7 +150,8 @@ namespace YARG.Song
 
             if (_songsByGameplayHash.TryGetValue(gameplayHash, out var list))
             {
-                list.AddRange(entries);
+                foreach (var e in entries)
+                    if (!list.Contains(e)) list.Add(e);
             }
             else
             {
@@ -675,6 +676,7 @@ namespace YARG.Song
             static SongEntry[] SetAllSongs(Dictionary<HashWrapper, List<SongEntry>> entries)
             {
                 _songsByHash.Clear();
+                _songsByGameplayHash.Clear();
 
                 int songCount = 0;
                 foreach (var node in entries)
