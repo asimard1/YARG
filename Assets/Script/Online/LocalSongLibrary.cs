@@ -191,6 +191,8 @@ namespace YARG.Online
             {
                 BackfillBatchCompleted?.Invoke();
             }
+
+            ToastManager.ToastSuccess("Background scan completed");
         }
     }
 }
