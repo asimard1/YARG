@@ -17,6 +17,7 @@ namespace YARG.Menu
             ProfileList,
             ProfileInfo,
             History,
+            Content,
             Online,
             CreateLobby,
             LobbyView,
@@ -30,6 +31,7 @@ namespace YARG.Menu
         {
             Menu.MusicLibrary,
             Menu.History,
+            Menu.Content,
             Menu.LobbyView,
         };
 

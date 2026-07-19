@@ -514,7 +514,7 @@ namespace YARG.Menu.MusicLibrary
                     OnOrangeHit, OnOrangeRelease),
             };
 
-            Navigator.Instance.PushScheme(new NavigationScheme(entries, false));
+            _ = Navigator.Instance.PushScheme(new NavigationScheme(entries, false));
         }
 
         protected override void OnSelectedIndexChanged()
