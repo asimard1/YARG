@@ -600,6 +600,7 @@ namespace YARG.Menu.Online
             }
 
             MusicLibraryMenu.AllowedSongHashes = BuildPlayableSongSet(lobby);
+            MusicLibraryMenu.NotifyAllowedSongsChanged();
 
             MusicLibraryMenu.SongPickedCallback = OnSongPicked;
             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.MusicLibrary);
@@ -690,6 +691,7 @@ namespace YARG.Menu.Online
                     playable.Add(hash);
                 }
             }
+            YargLogger.LogInfo($"Library: {resolvedByEntry.Count}, Playable with instrument: {playable.Count}");
             return playable;
         }
 
