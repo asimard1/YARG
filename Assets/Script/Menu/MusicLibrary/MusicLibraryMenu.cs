@@ -263,6 +263,11 @@ namespace YARG.Menu.MusicLibrary
             {
                 UpdateSearch(true);
             }
+            else
+            {
+                YargLogger.LogInfo("_currentSong is null, but update still");
+                UpdateSearch(true);
+            }
 
             if (MenuState == MenuState.Library && _hasSavedSelectionSnapshot)
             {
