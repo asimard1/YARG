@@ -113,7 +113,16 @@ namespace YARG.Gameplay.HUD
                 UnisonDisplaySetting.Disabled        => int.MaxValue,
                 _                                    => throw new ArgumentOutOfRangeException(),
             };
-            var maxParticipants = GameManager.EngineManager.UnisonEvents.Max(e => e.PartCount);
+            var unisonEvents = GameManager.EngineManager.UnisonEvents;
+
+            if (!unisonEvents.Any())
+            {
+                Debug.LogWarning("No unison events were generated for this song.");
+                gameObject.SetActive(false);
+                return;
+            }
+
+            var maxParticipants = unisonEvents.Max(e => e.PartCount);
 
             if (SettingsManager.Settings.UnisonDisplay.Value == UnisonDisplaySetting.Disabled ||
                 maxParticipants < minPlayers)
