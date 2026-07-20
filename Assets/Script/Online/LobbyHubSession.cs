@@ -732,15 +732,7 @@ namespace YARG.Online
                     bool strict = SongContainer.SongsByHash.ContainsKey(hw);
                     bool gameplay = SongContainer.SongsByGameplayHash.ContainsKey(hw);
 
-                    YargLogger.LogInfo(
-                        $"Lobby library update:\n" +
-                        $"  Incoming:  {h}\n" +
-                        $"  Wrapper:   {hw}\n" +
-                        $"  Strict:    {strict}\n" +
-                        $"  Gameplay:  {gameplay}");
-
                     bool recognized = strict || gameplay;
-
                     if (recognized && library.Add(hw))
                     {
                         addedCount++;

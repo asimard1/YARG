@@ -579,6 +579,7 @@ namespace YARG.Gameplay.HUD
             }
 
             _unsubscribeActions.Clear();
+            _completeSequence?.Kill();
         }
 
         private readonly struct TransitionTiming

@@ -1293,7 +1293,7 @@ namespace YARG.Gameplay
 
         private void OnUnisonPhraseSuccess()
         {
-            if (_unisonDisplay.gameObject.activeSelf)
+            if (_unisonDisplay != null && _unisonDisplay.gameObject.activeSelf)
             {
                 _unisonDisplay.OnUnisonPhraseSuccess();
             }

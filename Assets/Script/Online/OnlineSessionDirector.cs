@@ -313,17 +313,17 @@ namespace YARG.Online
             // in-between notes as implicit misses on the next Hit transition packet.
             if (_lastSentNoteOutcome == false)
             {
-                YargLogger.LogFormatTrace(
-                    "Prediction[local-send] NoteMissed (suppressed -- same run): peer={0} noteIndex={1}",
-                    _localPeerId, noteIndex);
+                // YargLogger.LogFormatTrace(
+                //     "Prediction[local-send] NoteMissed (suppressed -- same run): peer={0} noteIndex={1}",
+                //     _localPeerId, noteIndex);
                 return;
             }
             _lastSentNoteOutcome = false;
 
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
-            YargLogger.LogFormatTrace(
-                "Prediction[local-send] NoteMissed (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
-                _localPeerId, noteIndex, hitTime);
+            // YargLogger.LogFormatTrace(
+            //     "Prediction[local-send] NoteMissed (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
+            //     _localPeerId, noteIndex, hitTime);
             _session.SendNoteMissed(noteIndex, hitTime);
         }
 
@@ -334,33 +334,33 @@ namespace YARG.Online
             // RLE gate: skip if we're already in a hit run.
             if (_lastSentNoteOutcome == true)
             {
-                YargLogger.LogFormatTrace(
-                    "Prediction[local-send] NoteHit (suppressed -- same run): peer={0} noteIndex={1}",
-                    _localPeerId, noteIndex);
-                return;
+                // YargLogger.LogFormatTrace(
+                //     "Prediction[local-send] NoteHit (suppressed -- same run): peer={0} noteIndex={1}",
+                //     _localPeerId, noteIndex);
+                // return;
             }
             _lastSentNoteOutcome = true;
 
             double hitTime = _localEngineForStats?.CurrentTime ?? 0.0;
-            YargLogger.LogFormatTrace(
-                "Prediction[local-send] NoteHit (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
-                _localPeerId, noteIndex, hitTime);
-            _session.SendNoteHit(noteIndex, hitTime);
+            // YargLogger.LogFormatTrace(
+            //     "Prediction[local-send] NoteHit (transition): peer={0} noteIndex={1} hitTime={2:0.000}",
+            //     _localPeerId, noteIndex, hitTime);
+            // _session.SendNoteHit(noteIndex, hitTime);
         }
 
         private void OnLocalEngineStarPowerActivated(double songTime)
         {
-            YargLogger.LogFormatTrace(
-                "Prediction[local-send] StarPowerActivated: peer={0} songTime={1:0.000}",
-                _localPeerId, songTime);
+            // YargLogger.LogFormatTrace(
+            //     "Prediction[local-send] StarPowerActivated: peer={0} songTime={1:0.000}",
+            //     _localPeerId, songTime);
             _session.SendStarPowerActivated(songTime);
         }
 
         private void OnLocalEngineWhammy(double songTime, float value)
         {
-            YargLogger.LogFormatTrace(
-                "Prediction[local-send] Whammy: peer={0} songTime={1:0.000} value={2:0.00}",
-                _localPeerId, songTime, value);
+            // YargLogger.LogFormatTrace(
+            //     "Prediction[local-send] Whammy: peer={0} songTime={1:0.000} value={2:0.00}",
+            //     _localPeerId, songTime, value);
             _session.SendWhammy(songTime, value);
         }
 
@@ -381,17 +381,17 @@ namespace YARG.Online
 
         private void OnLocalEngineSustainReleased(int noteIndex, double songTime)
         {
-            YargLogger.LogFormatTrace(
-                "Prediction[local-send] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000}",
-                _localPeerId, noteIndex, songTime);
+            // YargLogger.LogFormatTrace(
+            //     "Prediction[local-send] SustainReleased: peer={0} noteIndex={1} songTime={2:0.000}",
+            //     _localPeerId, noteIndex, songTime);
             _session.SendSustainReleased(noteIndex, songTime);
         }
 
         private void OnLocalEngineOverstrum(double songTime)
         {
-            YargLogger.LogFormatTrace(
-                "Prediction[local-send] Overstrum: peer={0} songTime={1:0.000}",
-                _localPeerId, songTime);
+            // YargLogger.LogFormatTrace(
+            //     "Prediction[local-send] Overstrum: peer={0} songTime={1:0.000}",
+            //     _localPeerId, songTime);
             _session.SendOverstrum(songTime);
         }
 
@@ -729,9 +729,9 @@ namespace YARG.Online
             else
             {
                 // Pre-game: _peerToPlayer is empty until GameStart fires.
-                YargLogger.LogFormatTrace(
-                    "OnlineSessionDirector: remote peer {0} left before YargPlayer mapping was established (pre-game).",
-                    peerId);
+                // YargLogger.LogFormatTrace(
+                //     "OnlineSessionDirector: remote peer {0} left before YargPlayer mapping was established (pre-game).",
+                //     peerId);
             }
 
             UnregisterRemoteSimulator(peerId);
