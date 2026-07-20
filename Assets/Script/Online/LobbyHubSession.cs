@@ -701,9 +701,6 @@ namespace YARG.Online
                 GameplayHashCache.TryGet(strict.ToString(), out var soft);
                 var softHw = soft != null ? (HashWrapper?)HashWrapper.FromString(soft) : null;
                 if (softHw.HasValue && lobby.LobbySongLibrary.Contains(softHw.Value)) continue;
-
-                YargLogger.LogInfo(
-                    $"[LibDiag] Not matching: {kv.Value[0].Name} hard={strict} soft={soft ?? "none"}");
             }
         }
 
@@ -741,14 +738,6 @@ namespace YARG.Online
                         $"  Wrapper:   {hw}\n" +
                         $"  Strict:    {strict}\n" +
                         $"  Gameplay:  {gameplay}");
-
-                    if (!gameplay)
-                    {
-                        foreach (var key in SongContainer.SongsByGameplayHash.Keys.Take(5))
-                        {
-                            YargLogger.LogInfo($"Gameplay key sample: {key}");
-                        }
-                    }
 
                     bool recognized = strict || gameplay;
 
