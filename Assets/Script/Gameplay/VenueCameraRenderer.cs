@@ -330,7 +330,10 @@ namespace YARG.Gameplay
             var posterizeEffect = stack.GetComponent<PosterizeComponent>();
             if (posterizeEffect.IsActive())
             {
-                YargLogger.LogFormatTrace("Venue PP: posterize, steps: {0}", posterizeEffect.Steps.value);
+                if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                {
+                    YargLogger.LogFormatTrace("Venue PP: posterize, steps: {0}", posterizeEffect.Steps.value);
+                }
                 Shader.SetGlobalInteger(_posterizeStepsId, posterizeEffect.Steps.value);
             }
 
@@ -348,7 +351,10 @@ namespace YARG.Gameplay
                         Shader.DisableKeyword(_mirrorKeywords[i]);
                     }
                 }
-                YargLogger.LogFormatTrace("Venue PP: mirror, wipeStart: {0}", mirrorEffect.startTime.value);
+                if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                {
+                    YargLogger.LogFormatTrace("Venue PP: mirror, wipeStart: {0}", mirrorEffect.startTime.value);
+                }
                 Shader.SetGlobalFloat(_wipeTimeId, mirrorEffect.wipeTime.value);
                 Shader.SetGlobalFloat(_startTimeId, mirrorEffect.startTime.value);
             }
@@ -356,7 +362,10 @@ namespace YARG.Gameplay
             var scanlineEffect = stack.GetComponent<ScanlineComponent>();
             if (scanlineEffect.IsActive())
             {
-                YargLogger.LogFormatTrace("Venue PP: scanline, line count: {0}", scanlineEffect.scanlineCount.value);
+                if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                {
+                    YargLogger.LogFormatTrace("Venue PP: scanline, line count: {0}", scanlineEffect.scanlineCount.value);
+                }
                 Shader.SetGlobalFloat(_scanlineIntensityId, scanlineEffect.intensity.value);
                 Shader.SetGlobalInt(_scanlineSizeId, scanlineEffect.scanlineCount.value);
             }
@@ -364,7 +373,10 @@ namespace YARG.Gameplay
             var trailsEffect = stack.GetComponent<TrailsComponent>();
             if (trailsEffect.IsActive() )
             {
-                YargLogger.LogFormatTrace("Venue PP: trails, length: {0}", trailsEffect.length.value);
+                if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                {
+                    YargLogger.LogFormatTrace("Venue PP: trails, length: {0}", trailsEffect.length.value);
+                }
                 var adjustedLength = Mathf.Pow(trailsEffect.Length, ActualFPS / 60f);
                 Shader.SetGlobalFloat(_trailsLengthId, adjustedLength);
             }

@@ -434,7 +434,10 @@ namespace YARG.Venue.Characters
         {
             if (_animationEvents.TryGet(animation, out var animInfo))
             {
-                // YargLogger.LogDebug($"Animation {animInfo} triggered");
+                if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                {
+                    YargLogger.LogDebug($"Animation {animInfo} triggered");
+                }
                 SetTrigger(animInfo);
                 return;
             }

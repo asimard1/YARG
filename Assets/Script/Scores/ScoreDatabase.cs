@@ -129,39 +129,57 @@ namespace YARG.Scores
         private void Insert(object record)
         {
             int rows = _db.Insert(record);
-            YargLogger.LogFormatTrace("Inserted {0} rows into score database.", rows);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+{
+    YargLogger.LogFormatTrace("Inserted {0} rows into score database.", rows);
+}
         }
 
         private void InsertAll(IEnumerable record)
         {
             int rows = _db.InsertAll(record);
-            YargLogger.LogFormatTrace("Inserted {0} rows into score database.", rows);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+{
+    YargLogger.LogFormatTrace("Inserted {0} rows into score database.", rows);
+}
         }
 
         private void Update(object record)
         {
             int rows = _db.Update(record);
-            YargLogger.LogFormatTrace("Updated {0} rows in score database.", rows);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+{
+    YargLogger.LogFormatTrace("Updated {0} rows in score database.", rows);
+}
         }
 
         private List<T> Query<T>(string query, params object[] args)
             where T : new()
         {
-            YargLogger.LogFormatTrace("Query text:\n{0}", query);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+{
+    YargLogger.LogFormatTrace("Query text:\n{0}", query);
+}
             return _db.Query<T>(query, args);
         }
 
         private IEnumerable<T> DeferredQuery<T>(string query, params object[] args)
             where T : new()
         {
-            YargLogger.LogFormatTrace("Query text:\n{0}", query);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+{
+    YargLogger.LogFormatTrace("Query text:\n{0}", query);
+}
             return _db.DeferredQuery<T>(query, args);
         }
 
         private T FindWithQuery<T>(string query, params object[] args)
             where T : new()
         {
-            YargLogger.LogFormatTrace("Query text:\n{0}", query);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+{
+    YargLogger.LogFormatTrace("Query text:\n{0}", query);
+}
             return _db.FindWithQuery<T>(query, args);
         }
 

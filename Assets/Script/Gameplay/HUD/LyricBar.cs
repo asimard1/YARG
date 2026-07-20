@@ -246,8 +246,11 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
-            YargLogger.LogFormatTrace("Lyric bar fade {0} complete at time {1}", _fadeIndex,
-                GameManager.VisualTime);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+            {
+                YargLogger.LogFormatTrace("Lyric bar fade {0} complete at time {1}", _fadeIndex,
+                    GameManager.VisualTime);
+            }
             if (_fadeIndex == _fadeStartTimings.Count - 1)
             {
                 // No more fades, lyric bar is done

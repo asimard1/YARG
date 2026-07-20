@@ -93,7 +93,10 @@ namespace YARG.Gameplay.HUD
             if (time > currentPhrase.TransitionOut.TimeEnd)
             {
                 _currentPhraseIndex++;
-                YargLogger.LogFormatTrace("Advancing to unison phrase {0}", _currentPhraseIndex);
+                if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                {
+                    YargLogger.LogFormatTrace("Advancing to unison phrase {0}", _currentPhraseIndex);
+                }
                 ResetState();
             }
         }
@@ -407,7 +410,10 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
-            YargLogger.LogFormatTrace("Engine {0} failed a unison phrase at time {1}", engineId, note.Time);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+            {
+                YargLogger.LogFormatTrace("Engine {0} failed a unison phrase at time {1}", engineId, note.Time);
+            }
             _unisonState[engineId].HasFailedCurrentPhrase = true;
             _headerText.color = _failColor;
             _backgroundImage.sprite = _failSprite;
@@ -432,7 +438,10 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
-            YargLogger.LogFormatTrace("Engine {0} hit a note in a unison phrase at time {1}", engineId, note.Time);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+            {
+                YargLogger.LogFormatTrace("Engine {0} hit a note in a unison phrase at time {1}", engineId, note.Time);
+            }
 
             unisonState.NotesHitInCurrentPhrase++;
             SetProgress(engineId);
@@ -541,8 +550,11 @@ namespace YARG.Gameplay.HUD
             }
 
             var unisonEvent = _unisonState[engineId];
-            YargLogger.LogFormatTrace("Engine {0} progress in unison phrase: {1}/{2}", engineId,
-                unisonEvent.NotesHitInCurrentPhrase, participant.NoteCount);
+            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+            {
+                YargLogger.LogFormatTrace("Engine {0} progress in unison phrase: {1}/{2}", engineId,
+                    unisonEvent.NotesHitInCurrentPhrase, participant.NoteCount);
+            }
             _activeUnisonObject.SetNotesHit(engineId, unisonEvent.NotesHitInCurrentPhrase);
         }
 

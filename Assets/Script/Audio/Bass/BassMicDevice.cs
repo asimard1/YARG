@@ -116,7 +116,10 @@ namespace YARG.Audio.BASS
                 int handle = Bass.RecordStart(sampleRate, 1, BassFlags.Default, devPeriod, procedure, IntPtr.Zero);
                 if (handle == 0)
                 {
-                    YargLogger.LogFormatTrace("Failed to start clean recording at {0} Hz: {1}!", sampleRate, Bass.LastError);
+                    if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                    {
+                        YargLogger.LogFormatTrace("Failed to start clean recording at {0} Hz: {1}!", sampleRate, Bass.LastError);
+                    }
                     continue;
                 }
 
@@ -285,7 +288,10 @@ namespace YARG.Audio.BASS
                     bytesRead = Bass.ChannelGetData(_recordHandle.ProcessedHandle, (IntPtr) buffer, bufferLength);
                     if (bytesRead >= 0)
                     {
-                        YargLogger.LogFormatTrace("Cleared {0} bytes from processed recording buffer", bytesRead);
+                        if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                        {
+                            YargLogger.LogFormatTrace("Cleared {0} bytes from processed recording buffer", bytesRead);
+                        }
                     }
                 } while(bytesRead > 0);
 
