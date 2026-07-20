@@ -706,12 +706,6 @@ namespace YARG.Menu.ScoreScreen
                 _continueButtonEntry,
             };
 
-            // Only show the restart button if we aren't playing online
-            if (LobbyHubSession.Current == null || LobbyHubSession.Current.CurrentLobby == null)
-            {
-                buttons.Add(_restartButtonEntry);
-            }
-
             var isReplay = GlobalVariables.State.IsReplay;
             var song = GlobalVariables.State.CurrentSong;
             var isFavorited = PlaylistContainer.FavoritesPlaylist.ContainsSong(song);
@@ -720,7 +714,8 @@ namespace YARG.Menu.ScoreScreen
             {
                 buttons.Add(_viewReplayButtonEntry);
             }
-            else
+            // Only show the restart button if we aren't playing online
+            else if (LobbyHubSession.Current == null || LobbyHubSession.Current.CurrentLobby == null)
             {
                 buttons.Add(_restartButtonEntry);
             }
