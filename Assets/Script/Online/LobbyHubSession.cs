@@ -692,13 +692,6 @@ namespace YARG.Online
         public static void DumpLibraryDiff(LobbyRoomState lobby)
         {
             YargLogger.LogInfo($"[LibDiag] remote count={lobby.LobbySongLibrary.Count}");
-            const int ChunkSize = 200; // hashes per log line, tune if still too long
-            var hashes = lobby.LobbySongLibrary.ToList();
-            for (int i = 0; i < hashes.Count; i += ChunkSize)
-            {
-                var chunk = hashes.Skip(i).Take(ChunkSize);
-                YargLogger.LogInfo($"[LibDiag] remote [{i}-{Math.Min(i + ChunkSize, hashes.Count) - 1}]: {string.Join(", ", chunk)}");
-            }
 
             foreach (var kv in SongContainer.SongsByHash)
             {
