@@ -74,7 +74,6 @@ namespace YARG.Playback
         #region Times
 
         public const  double SONG_START_DELAY       = 2;
-        private const double MAX_START_FRAME_LENGTH = 0.1;
 
         /// <summary>
         /// The time into the song, accounting for song speed and audio calibration.<br/>
@@ -294,11 +293,10 @@ namespace YARG.Playback
             if (Started) return;
             YargLogger.LogFormatDebug("Beginning song runner playback (preRoll={0:0.000}s)", preRollSeconds);
 
-            // Re-anchor the input/song-time reference so the sync thread sees songTime =
-            // -preRollSeconds RIGHT NOW. It then ramps forward in wall-clock time; mixer
-            // plays once songTime crosses 0. Pre-roll length can exceed the constructor-time
-            // startDelay (online uses this to extend it across the wall-clock-alignment wait).
             InitializeSongTime(0, preRollSeconds);
+            double startInputTime = InputTime;
+            PrepareAudioAt(startInputTime);
+            PlayPreparedAudioAt(startInputTime);
 
             Started = true;
         }
