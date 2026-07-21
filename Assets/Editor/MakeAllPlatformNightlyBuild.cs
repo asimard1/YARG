@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -37,29 +37,46 @@ namespace Editor
                 (BuildTarget.StandaloneLinux64,     "Linux",   "YARG.x86_64"),
             };
 
-            foreach (var (target, folderName, exeName) in platforms)
+            try
             {
-                string platformDir = Path.Combine(root, folderName);
-                string locationPathName = Path.Combine(platformDir, exeName);
-
-                var result = BuildOnePlatform(target, locationPathName);
-
-                if (result != BuildResult.Succeeded)
+                foreach (var (target, folderName, exeName) in platforms)
                 {
-                    Debug.LogError($"{target}: build did not succeed ({result}) -- skipping cleanup/zip for this platform.");
-                    continue;
+                    try
+                    {
+                        string platformDir = Path.Combine(root, folderName);
+                        string locationPathName = Path.Combine(platformDir, exeName);
+
+                        var result = BuildOnePlatform(target, locationPathName);
+
+                        if (result != BuildResult.Succeeded)
+                        {
+                            Debug.LogError($"Stopping nightly build because {target} failed ({result}).");
+                            return;
+                        }
+
+                        RemoveBurstDebugFolder(platformDir);
+                        ZipPlatformFolder(platformDir, root, folderName);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex);
+                        Debug.LogError($"Stopping nightly build because an exception occurred while building {target}.");
+                        return;
+                    }
                 }
-
-                RemoveBurstDebugFolder(platformDir);
-                ZipPlatformFolder(platformDir, root, folderName);
             }
-
-            // Building for Mac/Linux leaves the Editor on that platform, which
-            // triggers a reimport next time you hit Play. Switch back to Windows.
-            if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64)
+            finally
             {
-                Debug.Log("Switching active build target back to Windows...");
-                EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Standalone, BuildTarget.StandaloneWindows64);
+                // Building for Mac/Linux leaves the Editor on that platform, which
+                // triggers a reimport next time you hit Play. Switch back to Windows.
+                if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64)
+                {
+                    Debug.Log("Switching active build target back to Windows...");
+
+                    EditorUserBuildSettings.SwitchActiveBuildTarget(
+                        BuildPipeline.GetBuildTargetGroup(BuildTarget.StandaloneWindows64),
+                        BuildTarget.StandaloneWindows64);
+                }
             }
 
             Debug.Log($"Nightly build run complete. Output: {root}");
@@ -69,6 +86,47 @@ namespace Editor
         {
             Debug.Log($"Building {target} -> {locationPathName} ...");
 
+            // Explicitly switch to the target platform before building so Unity has a
+            // chance to reimport platform-specific assets (especially shaders).
+            if (EditorUserBuildSettings.activeBuildTarget != target)
+            {
+                Debug.Log($"Switching active build target to {target}...");
+
+                try
+                {
+                    bool switched = EditorUserBuildSettings.SwitchActiveBuildTarget(
+                        BuildPipeline.GetBuildTargetGroup(target),
+                        target);
+
+                    if (!switched)
+                    {
+                        Debug.LogError(
+                            $"SwitchActiveBuildTarget returned false. " +
+                            $"Current={EditorUserBuildSettings.activeBuildTarget}, Requested={target}");
+
+                        return BuildResult.Failed;
+                    }
+
+                    if (EditorUserBuildSettings.activeBuildTarget != target)
+                    {
+                        Debug.LogError(
+                            $"SwitchActiveBuildTarget claimed success but active target is " +
+                            $"{EditorUserBuildSettings.activeBuildTarget} instead of {target}.");
+
+                        return BuildResult.Failed;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                    return BuildResult.Failed;
+                }
+
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                Debug.Log($"Active build target is now {EditorUserBuildSettings.activeBuildTarget}");
+            }
+
             // Same enabled-scenes list Unity's own Build Settings window uses.
             var scenes = EditorBuildSettings.scenes
                 .Where(s => s.enabled)
@@ -76,14 +134,14 @@ namespace Editor
                 .ToArray();
 
             // Standalone (Windows/Mac/Linux) all share one scripting-define group.
-            var buildGroup = BuildTargetGroup.Standalone;
-            PlayerSettings.GetScriptingDefineSymbolsForGroup(buildGroup, out var originalDefines);
-            originalDefines ??= Array.Empty<string>();
-
-            var defines = originalDefines;
+            var buildGroup = BuildPipeline.GetBuildTargetGroup(target);
+            var originalDefineString = PlayerSettings.GetScriptingDefineSymbolsForGroup(buildGroup);
+            var defines = originalDefineString?.Split(';') ?? Array.Empty<string>();
             if (!defines.Contains(YARG_NIGHTLY_BUILD))
             {
-                ArrayUtility.Add(ref defines, YARG_NIGHTLY_BUILD);
+                var defineList = defines.ToList();
+                defineList.Add(YARG_NIGHTLY_BUILD);
+                defines = defineList.ToArray();
             }
 
             var options = new BuildPlayerOptions
@@ -94,13 +152,52 @@ namespace Editor
                 extraScriptingDefines = defines
             };
 
-            var report = BuildPipeline.BuildPlayer(options);
+            if (EditorUserBuildSettings.activeBuildTarget != target)
+            {
+                Debug.LogError(
+                    $"Refusing to build. Active target is {EditorUserBuildSettings.activeBuildTarget} but expected {target}.");
+
+                return BuildResult.Failed;
+            }
+
+            Debug.Log($"Beginning build for {target}...");
+
+            BuildReport report;
+            try
+            {
+                string outputDirectory = Path.GetDirectoryName(locationPathName)!;
+
+                Debug.Log($"Preparing output directory: {outputDirectory}");
+
+                if (Directory.Exists(outputDirectory))
+                {
+                    Directory.Delete(outputDirectory, true);
+                }
+
+                Directory.CreateDirectory(outputDirectory);
+
+                report = BuildPipeline.BuildPlayer(options);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+                return BuildResult.Failed;
+            }
+
+            Debug.Log(
+                $"Build finished for {target}. " +
+                $"Result={report.summary.result}, " +
+                $"Warnings={report.summary.totalWarnings}, " +
+                $"Errors={report.summary.totalErrors}, " +
+                $"Size={(report.summary.totalSize > long.MaxValue ? report.summary.totalSize.ToString("N0") + " bytes" : EditorUtility.FormatBytes((long) report.summary.totalSize))}");
 
             if (report.summary.result != BuildResult.Succeeded)
             {
-                Debug.LogError($"Build FAILED for {target}: {report.summary.result} " +
-                                $"({report.summary.totalErrors} errors). " +
-                                $"Check that the build module for this platform is installed in Unity Hub.");
+                Debug.LogError(
+                    $"Build FAILED for {target}: {report.summary.result}\n" +
+                    $"Output: {locationPathName}\n" +
+                    $"Errors: {report.summary.totalErrors}\n" +
+                    $"Warnings: {report.summary.totalWarnings}");
             }
 
             return report.summary.result;
@@ -132,7 +229,8 @@ namespace Editor
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Failed to create {zipPath}: {ex}");
+                Debug.LogException(ex);
+                Debug.LogError($"Failed to create {zipPath}");
             }
         }
     }

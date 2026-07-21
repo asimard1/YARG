@@ -622,8 +622,11 @@ namespace YARG.Online
                         }
                         catch (Exception ex)
                         {
-                            YargLogger.LogException(ex,
-                                $"Prediction[director-dispatch] failed to deserialize/apply snapshot from peerId={snap.PeerId} kind={snap.SnapshotKind} bytes={snap.SnapshotData?.Length ?? 0}");
+                            if (YargLogger.IsLevelEnabled(LogLevel.Trace))
+                            {
+                                YargLogger.LogException(ex,
+                                    $"Prediction[director-dispatch] failed to deserialize/apply snapshot from peerId={snap.PeerId} kind={snap.SnapshotKind} bytes={snap.SnapshotData?.Length ?? 0}");
+                            }
                         }
                         break;
                     }
