@@ -1318,6 +1318,8 @@ namespace YARG.Gameplay.Player
 
         protected override void GameplayDestroy()
         {
+            base.GameplayDestroy();
+
             GameManager.EngineManager.OnPlayerFailed -= OnPlayerFailed;
             GameManager.EngineManager.OnPlayerRevived -= OnPlayerRevived;
         }
