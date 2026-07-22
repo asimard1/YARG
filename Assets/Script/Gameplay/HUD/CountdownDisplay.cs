@@ -149,6 +149,7 @@ namespace YARG.Gameplay.HUD
             // Fade in
             yield return _canvasGroup
                 .DOFade(1f, FADE_ANIM_LENGTH)
+                .SetLink(_canvasGroup.gameObject)
                 .WaitForCompletion();
         }
 
@@ -157,6 +158,7 @@ namespace YARG.Gameplay.HUD
             // Fade out
             yield return _canvasGroup
                 .DOFade(0f, FADE_ANIM_LENGTH)
+                .SetLink(_canvasGroup.gameObject)
                 .WaitForCompletion();
 
             gameObject.SetActive(false);

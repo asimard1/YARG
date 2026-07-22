@@ -79,6 +79,7 @@ namespace YARG.Gameplay.HUD
             // Fade in the box
             yield return _soloBoxCanvasGroup
                 .DOFade(1f, 0.25f)
+                .SetLink(_soloBoxCanvasGroup.gameObject)
                 .WaitForCompletion();
         }
 
@@ -168,6 +169,7 @@ namespace YARG.Gameplay.HUD
             // Fade out the box
             yield return _soloBoxCanvasGroup
                 .DOFade(0f, 0.25f)
+                .SetLink(_soloBoxCanvasGroup.gameObject)
                 .WaitForCompletion();
 
             _soloBox.gameObject.SetActive(false);

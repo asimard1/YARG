@@ -306,7 +306,10 @@ namespace YARG.Gameplay.Player
         {
             base.OnOverhit();
 
-            _keysArray.PlayMissAnimation(key);
+            if (key >= 0)
+            {
+                _keysArray.PlayMissAnimation(key);
+            }
         }
 
         private void OnSustainStart(ProKeysNote parent)

@@ -89,7 +89,10 @@ namespace YARG.Gameplay.HUD
 
             bool isRemote = _player != null && _player.IsRemote;
             float endAlpha = isRemote ? RemoteHoldAlpha : 0f;
-            yield return _canvasGroup.DOFade(endAlpha, FadeDuration).WaitForCompletion();
+            yield return _canvasGroup
+                .DOFade(endAlpha, FadeDuration)
+                .SetLink(_canvasGroup.gameObject)
+                .WaitForCompletion();
 
             if (!isRemote)
             {

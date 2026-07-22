@@ -68,7 +68,10 @@ namespace YARG.Gameplay.HUD
             yield return new WaitForSeconds(10f);
 
             // Then fade to 0 in a second
-            yield return _canvasGroup.DOFade(0f, 1f).WaitForCompletion();
+            yield return _canvasGroup
+                .DOFade(0f, 1f)
+                .SetLink(_canvasGroup.gameObject)
+                .WaitForCompletion();
         }
 
         private static string AddAlphaReset(string text, string alpha)

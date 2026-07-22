@@ -87,6 +87,7 @@ namespace YARG.Gameplay.HUD
             // Fade in the box
             yield return _breBoxCanvasGroup
                 .DOFade(1f, 0.25f)
+                .SetLink(_breBoxCanvasGroup.gameObject)
                 .WaitForCompletion();
         }
 
@@ -166,7 +167,10 @@ namespace YARG.Gameplay.HUD
             }
 
             // Fade out the box
-            yield return _breBoxCanvasGroup.DOFade(0f, 0.25f).WaitForCompletion();
+            yield return _breBoxCanvasGroup
+                .DOFade(0f, 0.25f)
+                .SetLink(_breBoxCanvasGroup.gameObject)
+                .WaitForCompletion();
 
             _breBox.gameObject.SetActive(false);
             _currentCoroutine = null;

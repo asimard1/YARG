@@ -54,6 +54,7 @@ namespace YARG.Menu.Persistent
             _canvasGroup.alpha = 0f;
             yield return _canvasGroup
                 .DOFade(1f, 0.25f)
+                .SetLink(gameObject)
                 .SetUpdate(true)
                 .WaitForCompletion();
 
@@ -73,6 +74,7 @@ namespace YARG.Menu.Persistent
             // Fade out
             yield return _canvasGroup
                 .DOFade(0f, FADE_DURATION)
+                .SetLink(gameObject)
                 .SetUpdate(true)
                 .WaitForCompletion();
 
@@ -114,7 +116,7 @@ namespace YARG.Menu.Persistent
             }
 
             _canvasGroup.DOComplete();
-            _canvasGroup.DOFade(HOVER_FADE, FADE_DURATION);
+            _canvasGroup.DOFade(HOVER_FADE, FADE_DURATION).SetLink(gameObject);
         }
 
         public void OnPointerExit(PointerEventData eventData)
@@ -125,7 +127,7 @@ namespace YARG.Menu.Persistent
             }
 
             _canvasGroup.DOComplete();
-            _canvasGroup.DOFade(1f, FADE_DURATION);
+            _canvasGroup.DOFade(1f, FADE_DURATION).SetLink(gameObject);
         }
     }
 }
