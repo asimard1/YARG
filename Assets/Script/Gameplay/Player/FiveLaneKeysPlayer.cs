@@ -490,7 +490,7 @@ public override bool ShouldUpdateInputsOnResume => true;
             }
             else
             {
-                lane.MultiplyScale(0.85f);
+                lane.MultiplyScale(0.85f * 5 / LaneCount);
             }
         }
 
