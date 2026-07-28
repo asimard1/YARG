@@ -282,6 +282,9 @@ namespace YARG.Gameplay
                     SettingsManager.Settings.AutoCalibrateVideo.Value = false;
                 }
 
+            var noFail = ReplayData?.NoFail ?? SettingsManager.Settings.NoFail.Value != NoFailMode.Off;
+            EngineManager.InitializeHappiness(noFail);
+
                 EngineManager.OnCodaStart += StartCoda;
                 EngineManager.OnCodaEnd += EndCoda;
                 EngineManager.OnUnisonPhraseSuccess += OnUnisonPhraseSuccess;
