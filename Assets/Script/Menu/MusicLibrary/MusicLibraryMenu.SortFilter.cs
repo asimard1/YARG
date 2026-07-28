@@ -527,7 +527,10 @@ namespace YARG.Menu.MusicLibrary
 
             var menu = YARG.Menu.Filters.FiltersMenu.Instance;
             if (menu == null)
+            {
+                ToastManager.ToastError("Filters menu is not available.");
                 return;
+            }
 
             menu.gameObject.SetActive(true);
             _sidebar.SetDifficultiesVisible(false);
