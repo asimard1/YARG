@@ -21,6 +21,7 @@ using YARG.Playback;
 using YARG.Player;
 using YARG.Scores;
 using YARG.Settings;
+using YARG.Settings.Types;
 using YARG.Song;
 
 namespace YARG.Gameplay
@@ -207,11 +208,11 @@ namespace YARG.Gameplay
             FinalizeChart();
 
             // Add the offset read from the .json file placed in PathHelper.PersistentDataPath
-            var totalOffsetSeconds = Song.SongOffsetSeconds;
+            double offsetOverrideSeconds = 0;
             if (SettingsManager.Settings.UseSongOffsetCalibration.Value)
             {
                 var offsetOverrideMs = SongOffsetContainer.GetOffsetMilliseconds(Song.Hash.ToString());
-                totalOffsetSeconds += offsetOverrideMs / 1000.0;
+                offsetOverrideSeconds = offsetOverrideMs / 1000.0;
             }
 
                 _songRunner = new SongRunner(
@@ -219,7 +220,15 @@ namespace YARG.Gameplay
                     startTime: 0,
                     startDelay: SONG_START_DELAY,
                     GlobalVariables.State.SongSpeed,
-                    totalOffsetSeconds);
+                    chartSongOffset: Song.SongOffsetSeconds,
+                    songOffsetOverride: offsetOverrideSeconds);
+
+                // Lets the pause menu display/edit this song's specific offset, and persists
+                // changes (manual or auto-calibrated) to the song offsets JSON file.
+                SongOffsetOverride = new SongOffsetSetting(Song.Hash.ToString(), onChange: offsetMs =>
+                {
+                    _songRunner.SetSongOffsetOverride(offsetMs / 1000.0);
+                });
 
                 // Spawn players
                 CreatePlayers();
@@ -280,6 +289,7 @@ namespace YARG.Gameplay
                     SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
                     SettingsManager.Settings.AutoCalibrateAudio.Value = false;
                     SettingsManager.Settings.AutoCalibrateVideo.Value = false;
+                    SettingsManager.Settings.AutoCalibrateOffset.Value = false;
                 }
 
             var noFail = ReplayData?.NoFail ?? SettingsManager.Settings.NoFail.Value != NoFailMode.Off;
