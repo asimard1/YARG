@@ -216,6 +216,14 @@ namespace YARG.Menu.DifficultySelect
                 _songList = new List<SongEntry> { GlobalVariables.State.CurrentSong };
             }
 
+            // Starting a fresh selection session: discard any session-scoped modifiers
+            // imposed by a previous song (see ApplySessionModifiers) so each player's
+            // own saved selection is what shows and is edited here.
+            foreach (var player in PlayerContainer.Players)
+            {
+                player.Profile.RestoreSavedModifiers();
+            }
+
             // ChangePlayer(0) will update for the current player
             _playerIndex = 0;
             _vocalModifierSelectIndex = -1;
@@ -695,7 +703,8 @@ namespace YARG.Menu.DifficultySelect
                     // Call the player with the selected modifiers, the "primary player"
                     var primaryPlayer = PlayerContainer.Players[_vocalModifierSelectIndex];
 
-                    // Copy modifiers to all other vocal players
+                    // Apply the primary player's modifiers to the other vocal players
+                    // for this session only, so their own saved selections survive
                     foreach (var player in PlayerContainer.Players)
                     {
                         if (player.SittingOut) continue;
@@ -703,7 +712,7 @@ namespace YARG.Menu.DifficultySelect
 
                         if (player.Profile.GameMode == GameMode.Vocals)
                         {
-                            player.Profile.CopyModifiers(primaryPlayer.Profile);
+                            player.Profile.ApplySessionModifiers(primaryPlayer.Profile);
                         }
                     }
                 }
