@@ -401,7 +401,7 @@ namespace YARG.Gameplay.Player
 
             phrases.AddRange(EngineContainer.UnisonPhrases);
 
-            var effects = TrackEffect.PhrasesToEffects(phrases);
+            var effects = TrackEffect.PhrasesToEffects(Notes, phrases);
             _trackEffects.AddRange(effects);
         }
 
@@ -903,9 +903,9 @@ namespace YARG.Gameplay.Player
             SpawnLanesFromNote(parentNote);
         }
 
-        private void SpawnLanesFromNote(TNote parentNote)
+        protected virtual void SpawnLanesFromNote(TNote parentNote)
         {
-            if (!Engine.LanesExist || !Engine.BaseParameters.EnableLanes)
+            if (!Engine.BaseParameters.EnableLanes)
             {
                 return;
             }

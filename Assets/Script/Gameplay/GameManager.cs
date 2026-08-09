@@ -1148,7 +1148,7 @@ namespace YARG.Gameplay
                 return null;
             }
 
-            var noFail = SettingsManager.Settings.NoFail.Value == NoFailMode.On;
+            var noFail = SettingsManager.Settings.NoFail.Value != NoFailMode.Off;
             var stars = StarAmountHelper.GetStarsFromInt(Mathf.FloorToInt(bandStars));
             ReplayData = new ReplayData(colorProfiles, cameraPresets, rockMeterPresets, noFail, frames.ToArray(), _frameTimes.ToArray());
 
@@ -1361,25 +1361,18 @@ namespace YARG.Gameplay
 
         public void StartCoda(CodaSection _)
         {
-            if (_breBoxActive)
-            {
-                return;
-            }
-
-            _breBoxActive = true;
             _breBox.StartCoda(EngineManager);
         }
 
         public void EndCoda(CodaSection coda)
         {
             var songEnding = SongTime >= LastNoteTime;
-            _breBox.EndCoda(EngineManager.TotalCodaBonus, songEnding, () => { _breBoxActive = false; });
+            _breBox.EndCoda(EngineManager.TotalCodaBonus, songEnding, null);
         }
 
         public void ResetCoda()
         {
             _breBox.ForceReset();
-            _breBoxActive = false;
         }
     }
 }

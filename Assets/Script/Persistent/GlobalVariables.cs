@@ -200,9 +200,15 @@ namespace YARG
             foreach (var profile in PlayerContainer.Profiles)
             {
                 var bindings = BindingsContainer.GetBindingsForProfile(profile);
-                if (bindings?.Microphone is BassMicDevice microphone)
+                if (bindings is not null)
                 {
-                    microphones.Add(microphone);
+                    foreach (var mic in bindings.Microphones)
+                    {
+                        if (mic is BassMicDevice microphone)
+                        {
+                            microphones.Add(microphone);
+                        }
+                    }
                 }
             }
 

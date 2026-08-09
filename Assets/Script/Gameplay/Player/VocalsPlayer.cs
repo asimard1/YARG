@@ -11,6 +11,7 @@ using YARG.Core.Engine.Vocals.Engines;
 using YARG.Core.Input;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
+using YARG.Gameplay.Visuals;
 using YARG.Helpers;
 using YARG.Input;
 using YARG.Player;
@@ -34,6 +35,10 @@ namespace YARG.Gameplay.Player
         [SerializeField]
         private ParticleGroup _hittingParticleGroup;
 
+        private static readonly int OutlineWidthID = Shader.PropertyToID("_OutlineWidth");
+        private static readonly int OutlineColorID = Shader.PropertyToID("_OutlineColor");
+        private const float OUTLINE_WIDTH = 7f;
+
         public override bool ShouldUpdateInputsOnResume => false;
 
         protected override float[] StarMultiplierThresholds { get; set; } =
@@ -52,6 +57,8 @@ namespace YARG.Gameplay.Player
         private double    _previousStarPowerPercent;
         private bool      _hotStartChecked;
         private bool      _newHighScoreShown;
+        private bool      _outlineEnabled;
+        private MaterialPropertyBlock _needleMaterialPropertyBlock;
 
         private VocalsPlayerHUD _hud;
         private VocalPercussionTrack _percussionTrack;
@@ -105,6 +112,11 @@ namespace YARG.Gameplay.Player
             var materialPath = $"VocalNeedle/{needleIndex}";
             _needleRenderer.material = Addressables.LoadAssetAsync<Material>(materialPath).WaitForCompletion();
 
+            MaterialPropertyInstance.Instance.SetColor(OutlineColorID, VocalTrack.Colors[Player.Profile.HarmonyIndex]);
+            MaterialPropertyInstance.Instance.SetFloat(OutlineWidthID, 0f);
+            _needleRenderer.SetPropertyBlock(MaterialPropertyInstance.Instance);
+            _outlineEnabled = false;
+
             // Get the notes from the specific harmony or solo part
 
             var multiTrack = chart.GetVocalsTrack(Player.Profile.CurrentInstrument);
@@ -145,9 +157,9 @@ namespace YARG.Gameplay.Player
             _hud.ShowPlayerName(player, needleIndex);
 
             // Remote players have no local mic; their pitch arrives over the network.
-            if (!Player.IsReplay && !Player.IsRemote && player.Bindings.Microphone != null)
+            if (!Player.IsReplay && !Player.IsRemote && player.Bindings.Microphones.Count > 0)
             {
-                _inputContext = new MicInputContext(player.Bindings.Microphone, GameManager);
+                _inputContext = new MicInputContext(player.Bindings.Microphones, GameManager);
                 _inputContext.Start();
             }
 
@@ -250,6 +262,8 @@ namespace YARG.Gameplay.Player
                 }
 
                 LastCombo = Combo;
+
+                _hud.SetFullCombo(false);
             };
 
             engine.OnSing += (singing) =>
@@ -290,6 +304,7 @@ namespace YARG.Gameplay.Player
         {
             _lastTargetNote = null;
             _phraseIndex = -1;
+            _hud.SetFullCombo(IsFc);
         }
 
         public override void ResetPracticeSection()
@@ -522,6 +537,19 @@ namespace YARG.Gameplay.Player
             return Mathf.Min(0.0f, pitchDist + deadZoneInSemitones);
         }
 
+        private void SetOutline(bool enableOutline)
+        {
+            if (_outlineEnabled == enableOutline)
+            {
+                return;
+            }
+            MaterialPropertyInstance.Instance.SetFloat(OutlineWidthID, enableOutline ? OUTLINE_WIDTH : 0f);
+            // Not sure if I need to set this every time, but it was being weird if I didn't
+            MaterialPropertyInstance.Instance.SetColor(OutlineColorID, VocalTrack.Colors[Player.Profile.HarmonyIndex]);
+            _needleRenderer.SetPropertyBlock(MaterialPropertyInstance.Instance);
+            _outlineEnabled = enableOutline;
+        }
+
         private void UpdateSingNeedle()
         {
             const float NEEDLE_POS_LERP = 30f;
@@ -624,6 +652,7 @@ namespace YARG.Gameplay.Player
                     {
                         _hittingParticleGroup.Play();
                     }
+                    SetOutline(!GameManager.Rewinding);
 
                     float pitch;
                     float targetRotation = 0f;
@@ -655,6 +684,7 @@ namespace YARG.Gameplay.Player
                 {
                     // Stop particles if not hitting
                     _hittingParticleGroup.Stop();
+                    SetOutline(false);
 
                     // Since the player is not hitting the note here, we need to offset it correctly.
                     // Get the pitch, and move to the correct octave.
