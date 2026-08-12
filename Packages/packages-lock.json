@@ -1,10 +1,11 @@
 {
   "dependencies": {
     "com.alexeyperov.unity-dependencies-hunter": {
-      "version": "file:LocalPackages/Unity-Dependencies-Hunter",
+      "version": "https://github.com/AlexeyPerov/Unity-Dependencies-Hunter.git#upm",
       "depth": 0,
-      "source": "local",
-      "dependencies": {}
+      "source": "git",
+      "dependencies": {},
+      "hash": "052f444be96a58116570594544189a277dca6202"
     },
     "com.coffee.softmask-for-ugui": {
       "version": "3.5.0",
@@ -16,10 +17,11 @@
       "url": "https://package.openupm.com"
     },
     "com.cysharp.csprojmodifier": {
-      "version": "file:LocalPackages/CsprojModifier/src/CsprojModifier/Assets/CsprojModifier",
+      "version": "https://github.com/Cysharp/CsprojModifier.git?path=src/CsprojModifier/Assets/CsprojModifier",
       "depth": 0,
-      "source": "local",
-      "dependencies": {}
+      "source": "git",
+      "dependencies": {},
+      "hash": "160444836baf08941528a3667220600cb9047452"
     },
     "com.cysharp.unitask": {
       "version": "2.5.3",
@@ -36,10 +38,11 @@
       "url": "https://package.openupm.com"
     },
     "com.lukestilson.openvat": {
-      "version": "file:LocalPackages/openvat-unity",
+      "version": "https://github.com/sharpen3d/openvat-unity.git",
       "depth": 0,
-      "source": "local",
-      "dependencies": {}
+      "source": "git",
+      "dependencies": {},
+      "hash": "e264f863ce29d7e3e081f81daf784a1fde02a661"
     },
     "com.marijnzwemmer.unity-toolbar-extender": {
       "version": "1.4.2",
@@ -49,10 +52,11 @@
       "url": "https://package.openupm.com"
     },
     "com.nobi.roundedcorners": {
-      "version": "file:LocalPackages/Unity-UI-Rounded-Corners",
+      "version": "https://github.com/kirevdokimov/Unity-UI-Rounded-Corners.git",
       "depth": 0,
-      "source": "local",
-      "dependencies": {}
+      "source": "git",
+      "dependencies": {},
+      "hash": "33135342e868201eb0d4cef821ecab90caca373e"
     },
     "com.starasgames.tmpro-dynamic-data-cleaner": {
       "version": "1.0.0",
@@ -350,31 +354,34 @@
       }
     },
     "com.vrmc.gltf": {
-      "version": "file:LocalPackages/UniVRM/Packages/UniGLTF",
+      "version": "https://github.com/vrm-c/UniVRM.git?path=/Packages/UniGLTF#v0.131.0",
       "depth": 0,
-      "source": "local",
+      "source": "git",
       "dependencies": {
         "com.unity.modules.animation": "1.0.0",
         "com.unity.modules.imgui": "1.0.0",
         "com.unity.modules.imageconversion": "1.0.0",
         "com.unity.test-framework": "1.4.6",
         "com.unity.mathematics": "1.2.6"
-      }
+      },
+      "hash": "3b99078d26b362733ad9bf463f98c83b8a1b4c9f"
     },
     "com.vrmc.vrm": {
-      "version": "file:LocalPackages/UniVRM/Packages/VRM10",
+      "version": "https://github.com/vrm-c/UniVRM.git?path=/Packages/VRM10#v0.131.0",
       "depth": 0,
-      "source": "local",
+      "source": "git",
       "dependencies": {
         "com.unity.timeline": "1.7.6",
         "com.vrmc.gltf": "0.131.0"
-      }
+      },
+      "hash": "3b99078d26b362733ad9bf463f98c83b8a1b4c9f"
     },
     "com.yasirkula.simplefilebrowser": {
-      "version": "file:LocalPackages/UnitySimpleFileBrowser",
+      "version": "https://github.com/yasirkula/UnitySimpleFileBrowser.git",
       "depth": 0,
-      "source": "local",
-      "dependencies": {}
+      "source": "git",
+      "dependencies": {},
+      "hash": "4666cc7af1073faab6f38bfa4f944fcaab15d4d4"
     },
     "in.yarg.core": {
       "version": "file:../YARG.Core/YARG.Core",
@@ -395,12 +402,13 @@
       "dependencies": {}
     },
     "jp.keijiro.minis": {
-      "version": "file:LocalPackages/Minis/Packages/jp.keijiro.minis",
+      "version": "https://github.com/TheNathannator/Minis.git?path=/Packages/jp.keijiro.minis#yarg",
       "depth": 0,
-      "source": "local",
+      "source": "git",
       "dependencies": {
         "com.unity.inputsystem": "1.0.1"
-      }
+      },
+      "hash": "9d46941453e544ad33653273829ee3cfab0240c0"
     },
     "com.unity.modules.accessibility": {
       "version": "1.0.0",
