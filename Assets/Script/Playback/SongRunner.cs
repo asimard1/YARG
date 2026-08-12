@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using DG.Tweening;
@@ -256,6 +256,9 @@ namespace YARG.Playback
         /// <param name="chartSongOffset">
         /// The chart's audio offset, in seconds. This value is negated for internal use.
         /// </param>
+        /// <param name="chartSongOffset">
+        /// The chart's audio offset, in seconds. This value is negated for internal use.
+        /// </param>
         /// <param name="songOffsetOverride">
         /// A per-song offset override on top of <paramref name="chartSongOffset"/>, in seconds
         /// (not negated), sourced from the user's recorded/manually-set song offset.
@@ -290,6 +293,11 @@ namespace YARG.Playback
             SongOffsetOverride = songOffsetOverride;
             SongOffset = -(_chartSongOffset + SongOffsetOverride);
             AnchorTimeline(InputTime);
+        }
+
+        ~SongRunner()
+        {
+            Dispose();
         }
 
         public void Dispose()

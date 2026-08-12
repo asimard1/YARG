@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Cysharp.Threading.Tasks;
@@ -21,6 +21,7 @@ using YARG.Playback;
 using YARG.Player;
 using YARG.Scores;
 using YARG.Settings;
+using YARG.Settings.Types;
 using YARG.Settings.Types;
 using YARG.Song;
 
@@ -215,20 +216,29 @@ namespace YARG.Gameplay
                 offsetOverrideSeconds = offsetOverrideMs / 1000.0;
             }
 
-                _songRunner = new SongRunner(
-                    _mixer,
-                    startTime: 0,
-                    startDelay: SONG_START_DELAY,
-                    GlobalVariables.State.SongSpeed,
-                    chartSongOffset: Song.SongOffsetSeconds,
-                    songOffsetOverride: offsetOverrideSeconds);
+            // Initialize song runner
+            _songRunner = new SongRunner(
+                _mixer,
+                startTime: 0,
+                startDelay: SONG_START_DELAY,
+                GlobalVariables.State.SongSpeed,
+                chartSongOffset: Song.SongOffsetSeconds,
+                songOffsetOverride: offsetOverrideSeconds);
 
-                // Lets the pause menu display/edit this song's specific offset, and persists
-                // changes (manual or auto-calibrated) to the song offsets JSON file.
-                SongOffsetOverride = new SongOffsetSetting(Song.Hash.ToString(), onChange: offsetMs =>
-                {
-                    _songRunner.SetSongOffsetOverride(offsetMs / 1000.0);
-                });
+            // Lets the pause menu display/edit this song's specific offset, and persists
+            // changes (manual or auto-calibrated) to the song offsets JSON file.
+            SongOffsetOverride = new SongOffsetSetting(Song.Hash.ToString(), onChange: offsetMs =>
+            {
+                _songRunner.SetSongOffsetOverride(offsetMs / 1000.0);
+            });
+
+            _metronomeScheduler = new MetronomeScheduler(_mixer);
+            _metronomeScheduler.Schedule(_songRunner, Chart.SyncTrack, SongLength);
+
+            _crowdClapScheduler = new CrowdClapScheduler(_mixer);
+            _crowdClapScheduler.Schedule(_songRunner, Chart.SyncTrack, Chart.CrowdEvents,
+                FirstNoteTime, LastNoteTime, SongLength);
+            CrowdEventHandler.SetClapScheduler(_crowdClapScheduler);
 
                 // Spawn players
                 CreatePlayers();
@@ -286,11 +296,11 @@ namespace YARG.Gameplay
 
                     EngineManager.InitializeHappiness(SettingsManager.Settings.NoFail.Value != NoFailMode.Off);
 
-                    SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
-                    SettingsManager.Settings.AutoCalibrateAudio.Value = false;
-                    SettingsManager.Settings.AutoCalibrateVideo.Value = false;
-                    SettingsManager.Settings.AutoCalibrateOffset.Value = false;
-                }
+                SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
+                SettingsManager.Settings.AutoCalibrateAudio.Value = false;
+                SettingsManager.Settings.AutoCalibrateVideo.Value = false;
+                SettingsManager.Settings.AutoCalibrateOffset.Value = false;
+            }
 
             var noFail = ReplayData?.NoFail ?? SettingsManager.Settings.NoFail.Value != NoFailMode.Off;
             EngineManager.InitializeHappiness(noFail);
