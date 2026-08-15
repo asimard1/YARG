@@ -1008,6 +1008,7 @@ namespace YARG.Menu.MusicLibrary
                 GlobalVariables.State.SongSpeed,
                 delay,
                 FADE_DURATION,
+                SettingsManager.Settings.CensorMatureContent.Value,
                 canceller.Token);
             if (context != null)
             {

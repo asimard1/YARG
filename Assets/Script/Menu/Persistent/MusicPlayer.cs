@@ -147,8 +147,8 @@ namespace YARG.Menu.Persistent
                 Task<StemMixer> task;
                 lock (_lock)
                 {
-                    float audioSpeed = speed;
-                    _current = task = Task.Run(() => entry.LoadAudio(audioSpeed, SettingsManager.Settings.MusicPlayerVolume.Value, SongStem.Crowd));
+                    _current = task = Task.Run(() => entry.LoadAudio(speed, SettingsManager.Settings.MusicPlayerVolume.Value,
+                        SettingsManager.Settings.CensorMatureContent.Value, SongStem.Crowd));
                 }
 
                 var mixer = await task;
