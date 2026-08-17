@@ -513,6 +513,7 @@ public override bool ShouldUpdateInputsOnResume => true;
         protected override void OnCodaStart(CodaSection coda)
         {
             base.OnCodaStart(coda);
+            ResetLastHitTimes();
             CurrentCoda.OnLaneHit += OnLaneHit;
             CurrentCoda.SetLaneIndexes(new()
             {

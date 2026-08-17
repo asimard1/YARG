@@ -4724,7 +4724,6 @@ GameObject:
   - component: {fileID: 4030813025972567530}
   - component: {fileID: 4030813025972567531}
   - component: {fileID: 7263609878391083263}
-  - component: {fileID: 812953725024813641}
   m_Layer: 5
   m_Name: Search Field
   m_TagString: Untagged
@@ -4918,21 +4917,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _searchField: {fileID: 4030813025972567531}
+  _focusBorder: {fileID: 0}
+  _focusBackground: {fileID: 0}
   _searchPlaceholderText: {fileID: 4030813024926863517}
   _searchFilters: {fileID: 4272568898245629614}
---- !u!114 &812953725024813641
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4030813025972567529}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f644969860af1cf4aaeaf4d71293368f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  _textField: {fileID: 4030813025972567531}
 --- !u!1 &4030813026092309319
 GameObject:
   m_ObjectHideFlags: 0
@@ -7554,12 +7542,14 @@ MonoBehaviour:
   _favoriteButton: {fileID: 7245200975423601239}
   _favoriteButtonImage: {fileID: 2342133780687937856}
   _sidebarContents: {fileID: 5958352450756398038}
+  _difficultiesContainer: {fileID: 0}
   _difficultiesDisplay: {fileID: 5958352450117307646}
   _albumTitleContainer: {fileID: 5180982014109557589}
   _timeContainer: {fileID: 5958352449830330596}
   _sourceContainer: {fileID: 4755058591897142603}
   _charterContainer: {fileID: 5710763846721672194}
   _genreContainer: {fileID: 1844083253397971378}
+  _genreSpacer: {fileID: 0}
   _contentRatingImage: {fileID: 2179431986232809938}
   _contentRatingIcons:
   - {fileID: -22552776, guid: d654eff7c3ab0b04a8e5c22100a037fe, type: 3}
