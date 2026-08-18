@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net;
 using System.Threading;
 using Cysharp.Threading.Tasks;
@@ -245,9 +245,18 @@ namespace YARG.Online
 
                 // v1: a single local player. Multi-profile lobby support comes later.
                 var profile = PlayerContainer.Players[0].Profile;
+
+                var wantedDifficulty = (byte) profile.CurrentDifficulty;
+
+                if (profile.CurrentInstrument == Core.Instrument.Harmony)
+                {
+                    wantedDifficulty += (byte)((profile.HarmonyIndex + 1) * 10);
+                }
+
                 _gameSession.SendLoadout(
                     (InstrumentId)profile.CurrentInstrument,
-                    (DifficultyId)profile.CurrentDifficulty,
+                    //(DifficultyId)profile.CurrentDifficulty,
+                    (DifficultyId)wantedDifficulty,
                     profile.EnginePreset,
                     profile.NoteSpeed,
                     (ulong)profile.CurrentModifiers,

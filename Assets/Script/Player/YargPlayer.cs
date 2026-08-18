@@ -3,6 +3,7 @@ using YARG.Core;
 using YARG.Core.Engine;
 using YARG.Core.Game;
 using YARG.Core.Input;
+using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Input;
 using YARG.Online.Game.Contracts.Packets;
@@ -88,10 +89,11 @@ namespace YARG.Player
                 GameMode = instrument.ToNativeGameMode(),
                 CurrentInstrument = instrument,
                 PreferredInstrument = instrument,
-                CurrentDifficulty = (Difficulty)(byte)loadout.Difficulty,
-                DifficultyFallback = (Difficulty)(byte)loadout.Difficulty,
+                CurrentDifficulty = (Difficulty)(((byte)loadout.Difficulty) % 10),
+                DifficultyFallback = (Difficulty)(((byte)loadout.Difficulty) % 10),
                 EnginePreset = loadout.EnginePreset,
                 NoteSpeed = loadout.NoteSpeed,
+                HarmonyIndex = (byte)(((byte)loadout.Difficulty / 10) - 1),
             };
 
             // CurrentModifiers has a private setter; apply the bitmask via the public OR-in
