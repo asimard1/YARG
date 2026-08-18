@@ -89,11 +89,11 @@ namespace YARG.Player
                 GameMode = instrument.ToNativeGameMode(),
                 CurrentInstrument = instrument,
                 PreferredInstrument = instrument,
-                CurrentDifficulty = (Difficulty)(((byte)loadout.Difficulty) % 10),
-                DifficultyFallback = (Difficulty)(((byte)loadout.Difficulty) % 10),
+                CurrentDifficulty = (Difficulty)(((byte)loadout.Difficulty) % 10), // HARMONY HACK, REMOVE IF OR WHEN BETTER SOLUTION //CurrentDifficulty = (Difficulty)(byte)loadout.Difficulty,
+                DifficultyFallback = (Difficulty)(((byte)loadout.Difficulty) % 10), // HARMONY HACK //DifficultyFallback = (Difficulty)(byte)loadout.Difficulty,
                 EnginePreset = loadout.EnginePreset,
                 NoteSpeed = loadout.NoteSpeed,
-                HarmonyIndex = (byte)(((byte)loadout.Difficulty / 10) - 1),
+                HarmonyIndex = (byte)(((byte)loadout.Difficulty / 10) - 1), // HARMONY HACK, FIX IF OR WHEN BETTER SOLUTION
             };
 
             // CurrentModifiers has a private setter; apply the bitmask via the public OR-in

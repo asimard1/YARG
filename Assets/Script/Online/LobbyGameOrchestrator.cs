@@ -246,8 +246,8 @@ namespace YARG.Online
                 // v1: a single local player. Multi-profile lobby support comes later.
                 var profile = PlayerContainer.Players[0].Profile;
 
-                var wantedDifficulty = (byte) profile.CurrentDifficulty;
-
+                // HARMONY HACK. REMOVE IF OR WHEN BETTER SOLUTION.
+                var wantedDifficulty = (byte)profile.CurrentDifficulty;
                 if (profile.CurrentInstrument == Core.Instrument.Harmony)
                 {
                     wantedDifficulty += (byte)((profile.HarmonyIndex + 1) * 10);
@@ -255,8 +255,7 @@ namespace YARG.Online
 
                 _gameSession.SendLoadout(
                     (InstrumentId)profile.CurrentInstrument,
-                    //(DifficultyId)profile.CurrentDifficulty,
-                    (DifficultyId)wantedDifficulty,
+                    (DifficultyId)wantedDifficulty, // HARMONY HACK //(DifficultyId)profile.CurrentDifficulty,
                     profile.EnginePreset,
                     profile.NoteSpeed,
                     (ulong)profile.CurrentModifiers,
