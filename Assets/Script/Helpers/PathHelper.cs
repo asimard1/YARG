@@ -134,9 +134,24 @@ namespace YARG.Helpers
 
             // Get the launcher paths
 #if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
-            // Thanks Apple
-            var localAppdata = Path.Combine(Environment.GetEnvironmentVariable("HOME"),
-                "Library", "Application Support");
+            // macOS does not have a LocalApplicationData equivalent.
+            // Use the user's home directory rather than relying on the HOME environment variable,
+            // which may be unset when Unity is launched in some environments.
+            var homePath = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+
+            if (string.IsNullOrEmpty(homePath))
+            {
+                homePath = Environment.GetEnvironmentVariable("HOME");
+            }
+
+            if (string.IsNullOrEmpty(homePath))
+            {
+                Debug.LogError("Unable to determine the macOS user home directory.");
+                PathError = true;
+                return;
+            }
+
+            var localAppdata = Path.Combine(homePath, "Library", "Application Support");
 #else
             var localAppdata = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 #endif
