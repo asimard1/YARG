@@ -459,7 +459,8 @@ namespace YARG.Gameplay.Player
         protected virtual void OnStarPowerStatus(bool active)
         {
             var deploySample = SfxSample.StarPowerDeploy;
-            if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled)
+            if (SettingsManager.Settings.UseCrowdCheering.Value &&
+                !GlobalVariables.State.CrowdSfxVenueOverride)
             {
                 deploySample = SfxSample.StarPowerDeployCrowd;
             }
