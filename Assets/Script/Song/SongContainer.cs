@@ -838,7 +838,9 @@ namespace YARG.Song
 
             static SongCategory[] GetSongLengthSort()
             {
-                if (SettingsManager.Settings.SongLengthLabels.Value == SongLengthLabelMode.RangeLabels)
+                var songLengthLabels = SettingsManager.Settings.SongLengthLabels;
+
+                if (songLengthLabels == null || songLengthLabels.Value == SongLengthLabelMode.RangeLabels)
                 {
                     return Cast(_sortedSongs.SongLengths);
                 }
