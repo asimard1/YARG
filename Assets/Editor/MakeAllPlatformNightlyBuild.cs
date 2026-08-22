@@ -23,34 +23,42 @@ namespace Editor
         private const string YARG_NIGHTLY_BUILD = "YARG_NIGHTLY_BUILD";
         private const string BURST_DEBUG_FOLDER_NAME = "YARG_BurstDebugInformation_DoNotShip";
 
+        // Shared by both the menu entry point (spawns subprocesses) and the
+        // CLI entry point (runs inside a spawned subprocess), so keep it in
+        // one place.
+        private static readonly (BuildTarget target, string folderName, string exeName)[] Platforms =
+        {
+            (BuildTarget.StandaloneWindows64, "Windows", "YARG.exe"),
+            (BuildTarget.StandaloneOSX,        "macOS",   "YARG.app"),
+            (BuildTarget.StandaloneLinux64,     "Linux",   "YARG.x86_64"),
+        };
+
         [MenuItem("File/Make Nightly Build (All Platforms)", false, 221)]
         public static void MakeAllPlatformsClicked()
         {
             // Builds go into a "Builds" folder next to the project folder
             // (i.e. NOT inside Assets, so Unity won't try to import them).
             string root = Path.Combine(Path.GetDirectoryName(Application.dataPath)!, "Builds");
-
-            var platforms = new (BuildTarget target, string folderName, string exeName)[]
-            {
-                (BuildTarget.StandaloneWindows64, "Windows", "YARG.exe"),
-                (BuildTarget.StandaloneOSX,        "macOS",   "YARG.app"),
-                (BuildTarget.StandaloneLinux64,     "Linux",   "YARG.x86_64"),
-            };
+            Directory.CreateDirectory(root);
 
             try
             {
-                foreach (var (target, folderName, exeName) in platforms)
+                foreach (var (target, folderName, exeName) in Platforms)
                 {
                     try
                     {
                         string platformDir = Path.Combine(root, folderName);
-                        string locationPathName = Path.Combine(platformDir, exeName);
 
-                        var result = BuildOnePlatform(target, locationPathName);
+                        // Each platform now builds in its own fresh Unity process, so
+                        // memory used by the shader compiler (and everything else) for
+                        // one platform can't pile up and starve the next one. This is
+                        // what was causing "out of memory during compilation" on Linux
+                        // after Windows + macOS had already built in the same session.
+                        bool succeeded = BuildOnePlatformInSubprocess(root, folderName);
 
-                        if (result != BuildResult.Succeeded)
+                        if (!succeeded)
                         {
-                            Debug.LogError($"Stopping nightly build because {target} failed ({result}).");
+                            Debug.LogError($"Stopping nightly build because {target} failed. Check the per-platform log in {root}.");
                             return;
                         }
 
@@ -80,6 +88,86 @@ namespace Editor
             }
 
             Debug.Log($"Nightly build run complete. Output: {root}");
+        }
+
+        /// <summary>
+        /// Launches a separate, headless Unity process to build a single platform,
+        /// so each platform gets a clean process (and clean RAM) instead of all
+        /// three sharing one long-lived Editor session.
+        /// </summary>
+        private static bool BuildOnePlatformInSubprocess(string root, string folderName)
+        {
+            string projectPath = Path.GetDirectoryName(Application.dataPath)!;
+            string logPath = Path.Combine(root, $"{folderName}.log");
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = EditorApplication.applicationPath,
+                Arguments =
+                    "-batchmode -nographics -quit " +
+                    $"-projectPath \"{projectPath}\" " +
+                    $"-logFile \"{logPath}\" " +
+                    "-executeMethod Editor.MakeAllPlatformNightlyBuild.BuildSinglePlatformCLI " +
+                    $"-buildTargetArg {folderName}",
+                UseShellExecute = false
+            };
+
+            Debug.Log($"Launching isolated build process for {folderName} (log: {logPath})");
+
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc == null)
+            {
+                Debug.LogError($"Failed to start Unity subprocess for {folderName}.");
+                return false;
+            }
+
+            proc.WaitForExit();
+
+            if (proc.ExitCode != 0)
+            {
+                Debug.LogError(
+                    $"Subprocess build for {folderName} exited with code {proc.ExitCode}. " +
+                    $"See {logPath} for details.");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Entry point invoked via -executeMethod inside the spawned subprocess.
+        /// Not meant to be called directly from the Editor UI.
+        /// </summary>
+        public static void BuildSinglePlatformCLI()
+        {
+            var args = Environment.GetCommandLineArgs();
+            int argIndex = Array.IndexOf(args, "-buildTargetArg");
+            string wanted = argIndex >= 0 && argIndex + 1 < args.Length ? args[argIndex + 1] : null;
+
+            var platform = Array.Find(Platforms, p => p.folderName == wanted);
+            if (platform.folderName == null)
+            {
+                Debug.LogError($"BuildSinglePlatformCLI: unknown or missing -buildTargetArg '{wanted}'.");
+                EditorApplication.Exit(1);
+                return;
+            }
+
+            string root = Path.Combine(Path.GetDirectoryName(Application.dataPath)!, "Builds");
+            string platformDir = Path.Combine(root, platform.folderName);
+            string locationPathName = Path.Combine(platformDir, platform.exeName);
+
+            BuildResult result;
+            try
+            {
+                result = BuildOnePlatform(platform.target, locationPathName);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+                result = BuildResult.Failed;
+            }
+
+            EditorApplication.Exit(result == BuildResult.Succeeded ? 0 : 1);
         }
 
         private static BuildResult BuildOnePlatform(BuildTarget target, string locationPathName)
@@ -169,11 +257,18 @@ namespace Editor
 
                 Debug.Log($"Preparing output directory: {outputDirectory}");
 
-                if (Directory.Exists(outputDirectory))
-                {
-                    Directory.Delete(outputDirectory, true);
-                }
-
+                // Previously this deleted and recreated the whole output folder on
+                // every run, forcing Unity to rewrite everything from scratch even
+                // when most assets hadn't changed. Just making sure the folder
+                // exists lets BuildPipeline.BuildPlayer overwrite in place and
+                // reuse what it can, which is noticeably faster.
+                //
+                // Trade-off: files from assets that were removed from the project
+                // since the last build can linger in the output folder. The
+                // DoNotShip folder isn't affected either way since it's
+                // regenerated fresh by the build and stripped below every run.
+                // If you ever suspect stale leftovers, delete the platform's
+                // Builds/<Platform> folder manually before the next run.
                 Directory.CreateDirectory(outputDirectory);
 
                 report = BuildPipeline.BuildPlayer(options);
@@ -224,7 +319,11 @@ namespace Editor
                 if (File.Exists(zipPath))
                     File.Delete(zipPath);
 
-                ZipFile.CreateFromDirectory(platformDir, zipPath, System.IO.Compression.CompressionLevel.Optimal, false);
+                // Fastest instead of Optimal: noticeably quicker for ~0.5GB of build
+                // output, at the cost of a somewhat larger zip. These are nightly
+                // dev builds, not a shipping release archive, so the size trade-off
+                // is worth the time saved.
+                ZipFile.CreateFromDirectory(platformDir, zipPath, System.IO.Compression.CompressionLevel.Fastest, false);
                 Debug.Log($"Zipped {platformDir} -> {zipPath}");
             }
             catch (Exception ex)
