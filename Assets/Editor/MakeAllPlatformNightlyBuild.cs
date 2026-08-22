@@ -36,107 +36,72 @@ namespace Editor
         [MenuItem("File/Make Nightly Build (All Platforms)", false, 221)]
         public static void MakeAllPlatformsClicked()
         {
-            // Builds go into a "Builds" folder next to the project folder
-            // (i.e. NOT inside Assets, so Unity won't try to import them).
-            string root = Path.Combine(Path.GetDirectoryName(Application.dataPath)!, "Builds");
+            // 1. Prompt user to save open scene changes
+            if (!UnityEditor.SceneManagement.EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                Debug.Log("Nightly build cancelled (unsaved changes).");
+                return;
+            }
+
+            // 2. Save all unsaved project assets (ScriptableObjects, Materials, Prefabs)
+            AssetDatabase.SaveAssets();
+
+            string projectPath = Path.GetDirectoryName(Application.dataPath)!;
+            string root = Path.Combine(projectPath, "Builds");
             Directory.CreateDirectory(root);
 
-            try
+            string scriptPath = Path.Combine(projectPath, "Tools", "RunNightlyBuild.ps1");
+            if (!File.Exists(scriptPath))
             {
-                foreach (var (target, folderName, exeName) in Platforms)
-                {
-                    try
-                    {
-                        string platformDir = Path.Combine(root, folderName);
-
-                        // Each platform now builds in its own fresh Unity process, so
-                        // memory used by the shader compiler (and everything else) for
-                        // one platform can't pile up and starve the next one. This is
-                        // what was causing "out of memory during compilation" on Linux
-                        // after Windows + macOS had already built in the same session.
-                        bool succeeded = BuildOnePlatformInSubprocess(root, folderName);
-
-                        if (!succeeded)
-                        {
-                            Debug.LogError($"Stopping nightly build because {target} failed. Check the per-platform log in {root}.");
-                            return;
-                        }
-
-                        RemoveBurstDebugFolder(platformDir);
-                        ZipPlatformFolder(platformDir, root, folderName);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex);
-                        Debug.LogError($"Stopping nightly build because an exception occurred while building {target}.");
-                        return;
-                    }
-                }
-            }
-            finally
-            {
-                // Building for Mac/Linux leaves the Editor on that platform, which
-                // triggers a reimport next time you hit Play. Switch back to Windows.
-                if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64)
-                {
-                    Debug.Log("Switching active build target back to Windows...");
-
-                    EditorUserBuildSettings.SwitchActiveBuildTarget(
-                        BuildPipeline.GetBuildTargetGroup(BuildTarget.StandaloneWindows64),
-                        BuildTarget.StandaloneWindows64);
-                }
+                Debug.LogError($"Can't find {scriptPath}. Nightly build aborted.");
+                return;
             }
 
-            Debug.Log($"Nightly build run complete. Output: {root}");
-        }
+            bool proceed = EditorUtility.DisplayDialog(
+                "Make Nightly Build",
+                "Each platform now builds in its own clean Unity process, one at a time, " +
+                "which means this Editor needs to close first so it isn't holding the " +
+                "project locked.\n\n" +
+                "A console window will open with live progress, and the Editor will " +
+                "reopen automatically once all three platforms are done.",
+                "Build & Close Editor",
+                "Cancel");
 
-        /// <summary>
-        /// Launches a separate, headless Unity process to build a single platform,
-        /// so each platform gets a clean process (and clean RAM) instead of all
-        /// three sharing one long-lived Editor session.
-        /// </summary>
-        private static bool BuildOnePlatformInSubprocess(string root, string folderName)
-        {
-            string projectPath = Path.GetDirectoryName(Application.dataPath)!;
-            string logPath = Path.Combine(root, $"{folderName}.log");
+            if (!proceed)
+            {
+                Debug.Log("Nightly build cancelled.");
+                return;
+            }
+
+            int editorPid = System.Diagnostics.Process.GetCurrentProcess().Id;
 
             var psi = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = EditorApplication.applicationPath,
+                FileName = "powershell.exe",
                 Arguments =
-                    "-batchmode -nographics -quit " +
-                    $"-projectPath \"{projectPath}\" " +
-                    $"-logFile \"{logPath}\" " +
-                    "-executeMethod Editor.MakeAllPlatformNightlyBuild.BuildSinglePlatformCLI " +
-                    $"-buildTargetArg {folderName}",
-                UseShellExecute = false
+                    "-NoProfile -ExecutionPolicy Bypass -File " +
+                    $"\"{scriptPath}\" " +
+                    $"-EditorPid {editorPid} " +
+                    $"-UnityExe \"{EditorApplication.applicationPath}\" " +
+                    $"-ProjectPath \"{projectPath}\" " +
+                    $"-BuildsRoot \"{root}\"",
+                UseShellExecute = true, // needed to get a visible console window
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Normal
             };
 
-            Debug.Log($"Launching isolated build process for {folderName} (log: {logPath})");
+            Debug.Log(
+                "Handing off to RunNightlyBuild.ps1 and closing the Editor. " +
+                "Watch the console window for progress — the Editor reopens automatically when it's done.");
 
-            using var proc = System.Diagnostics.Process.Start(psi);
-            if (proc == null)
-            {
-                Debug.LogError($"Failed to start Unity subprocess for {folderName}.");
-                return false;
-            }
-
-            proc.WaitForExit();
-
-            if (proc.ExitCode != 0)
-            {
-                Debug.LogError(
-                    $"Subprocess build for {folderName} exited with code {proc.ExitCode}. " +
-                    $"See {logPath} for details.");
-                return false;
-            }
-
-            return true;
+            System.Diagnostics.Process.Start(psi);
+            EditorApplication.Exit(0);
         }
 
         /// <summary>
         /// Entry point invoked via -executeMethod inside the spawned subprocess.
-        /// Not meant to be called directly from the Editor UI.
+        /// Runs the whole per-platform pipeline (build, strip DoNotShip, zip) since
+        /// this is the only code that runs while this platform's Unity process is
+        /// alive. Not meant to be called directly from the Editor UI.
         /// </summary>
         public static void BuildSinglePlatformCLI()
         {
@@ -165,6 +130,23 @@ namespace Editor
             {
                 Debug.LogException(ex);
                 result = BuildResult.Failed;
+            }
+
+            if (result == BuildResult.Succeeded)
+            {
+                RemoveBurstDebugFolder(platformDir);
+                ZipPlatformFolder(platformDir, root, platform.folderName);
+            }
+
+            // Whichever platform this process just built may have left the active
+            // build target set to itself (that setting persists to disk). Switch
+            // back to Windows so reopening the Editor afterward doesn't trigger an
+            // unexpected reimport the next time you hit Play.
+            if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64)
+            {
+                EditorUserBuildSettings.SwitchActiveBuildTarget(
+                    BuildPipeline.GetBuildTargetGroup(BuildTarget.StandaloneWindows64),
+                    BuildTarget.StandaloneWindows64);
             }
 
             EditorApplication.Exit(result == BuildResult.Succeeded ? 0 : 1);
