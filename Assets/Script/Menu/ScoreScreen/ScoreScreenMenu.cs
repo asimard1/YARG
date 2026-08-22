@@ -121,12 +121,19 @@ namespace YARG.Menu.ScoreScreen
             _songHashKey = song.Hash.ToString();
             _offsets = SongOffsetContainer.LoadOffsets();
 
+            // Play audience chatter, unless we are viewing a replay score
+            if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled && !GlobalVariables.State.IsReplay)
+            {
+                GlobalAudioHandler.PlaySoundEffect(SfxSample.Chatter, 1.0);
+            }
+=========
         // Play audience chatter, unless we are viewing a replay score
         if (SettingsManager.Settings.UseCrowdCheering.Value &&
             !GlobalVariables.State.CrowdSfxVenueOverride && !GlobalVariables.State.IsReplay)
         {
             GlobalAudioHandler.PlaySoundEffect(SfxSample.Chatter, 1.0);
         }
+>>>>>>>>> Temporary merge branch 2
 
             // Set text
             _songTitle.text = song.Name;
@@ -177,8 +184,13 @@ namespace YARG.Menu.ScoreScreen
 
         private void OnDisable()
         {
-            // The offsets will not be saved if a user exits the game while in result screen
-            SongOffsetContainer.SaveOffsets(_offsets);
+            // Only write back if an offset was actually toggled here; otherwise there's nothing
+            // to persist and re-saving unmodified data risks clobbering entries that couldn't be
+            // recovered from a corrupted file on load.
+            if (_offsetModified)
+            {
+                SongOffsetContainer.SaveOffsets(_offsets);
+            }
             MusicLibraryMenu.CurrentlyPlaying = GlobalVariables.State.CurrentSong;
             if (!GlobalVariables.State.PlayingAShow && !_restartingSong)
             {

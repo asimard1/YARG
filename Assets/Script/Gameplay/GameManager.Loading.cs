@@ -230,6 +230,14 @@ namespace YARG.Gameplay
             SongOffsetOverride = new SongOffsetSetting(Song.Hash.ToString(), onChange: offsetMs =>
             {
                 _songRunner.SetSongOffsetOverride(offsetMs / 1000.0);
+
+                // Music re-syncs itself via the audio synchronizer, but pre-scheduled one-shot
+                // events and the background video don't, so bring them back in line with the
+                // new offset here.
+                _metronomeScheduler.Reschedule(_songRunner, Chart.SyncTrack, SongLength);
+                _crowdClapScheduler.Reschedule(_songRunner, Chart.SyncTrack, Chart.CrowdEvents,
+                    FirstNoteTime, LastNoteTime, SongLength);
+                BackgroundManager.SetTime(_songRunner.GetAudioPlaybackTime(_songRunner.SongTime));
             });
 
             _metronomeScheduler = new MetronomeScheduler(_mixer);
@@ -288,6 +296,13 @@ namespace YARG.Gameplay
                     _failMeter.SetActive(false);
                 }
 
+            // Always reset calibration toggles on load, even for a pure replay, so that stale
+            // auto-calibration from a previous song can't apply itself (and so there's nothing
+            // for AutoCalibrator to adjust while only observing a replay).
+            SettingsManager.Settings.AutoCalibrateAudio.Value = false;
+            SettingsManager.Settings.AutoCalibrateVideo.Value = false;
+            SettingsManager.Settings.AutoCalibrateOffset.Value = false;
+
                 // This is not an else because we still want to subscribe in case the user disables no fail during the song
                 // We check in the callback to determine whether we should actually run the fail routine
                 if (ReplayInfo == null || GlobalVariables.State.PlayingWithReplay)
@@ -297,9 +312,6 @@ namespace YARG.Gameplay
                     EngineManager.InitializeHappiness(SettingsManager.Settings.NoFail.Value != NoFailMode.Off);
 
                 SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
-                SettingsManager.Settings.AutoCalibrateAudio.Value = false;
-                SettingsManager.Settings.AutoCalibrateVideo.Value = false;
-                SettingsManager.Settings.AutoCalibrateOffset.Value = false;
             }
 
             var noFail = ReplayData?.NoFail ?? SettingsManager.Settings.NoFail.Value != NoFailMode.Off;
