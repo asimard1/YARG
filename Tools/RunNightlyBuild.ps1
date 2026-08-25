@@ -88,8 +88,7 @@ try {
     }
 
     Write-Progress -Activity "Nightly Build Pipeline" -Status "Completed!" -Completed
-    Write-Host "`nAll platform builds completed! Relaunching Unity Editor..." -ForegroundColor Cyan
-    Start-Process -FilePath $UnityExe -ArgumentList "-projectPath `"$ProjectPath`""
+    Write-Host "`nAll platform builds completed!" -ForegroundColor Cyan
 
 } finally {
     Stop-ActiveUnityProcess
