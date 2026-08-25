@@ -1125,6 +1125,11 @@ namespace YARG.Gameplay.Player
             if (!Player.Profile.IsBot)
             {
                 _autoCalibrator.RecordAccuracy(Engine.CurrentTime, note.Time);
+
+                var hitWindow = Engine.BaseParameters.HitWindow;
+                double frontEnd = Math.Abs(hitWindow.GetFrontEnd(hitWindow.MaxWindow));
+                double backEnd  = Math.Abs(hitWindow.GetBackEnd(hitWindow.MaxWindow));
+                HitTimingDebug.Show(Engine.CurrentTime - note.Time, frontEnd, backEnd);
             }
 
             if (!GameManager.IsSeekingReplay)
@@ -1158,6 +1163,7 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnNoteMissed(int index, TNote note)
         {
+            HitTimingDebug.ShowMiss();
             if (IsFc)
             {
                 ComboMeter.SetFullCombo(false);
