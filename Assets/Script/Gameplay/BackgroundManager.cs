@@ -61,6 +61,8 @@ namespace YARG.Gameplay
 
         private bool _videoStarted = false;
         private bool _videoSeeking = false;
+        private bool _videoSeekWaitForPause = false;
+        private bool _videoWasPausedBeforeSeek = false;
 
         private const float FADE_DURATION = 0.5f;
 
@@ -638,6 +640,9 @@ namespace YARG.Gameplay
 
                         // Hack to ensure the video stays synced to the audio
                         _videoSeeking = true; // Signaling flag; must come first
+                        _videoSeekWaitForPause = waitForSeek;
+                        _videoWasPausedBeforeSeek = _videoPlayer.isPaused;
+
                         if (waitForSeek && SettingsManager.Settings.WaitForSongVideo.Value)
                             GameManager.OverridePause();
 
@@ -653,10 +658,13 @@ namespace YARG.Gameplay
                 return;
 
             if (!SettingsManager.Settings.WaitForSongVideo.Value || GameManager.OverrideResume())
-                player.Play();
+                if (!_videoWasPausedBeforeSeek)
+                    player.Play();
 
             enabled = !double.IsNaN(_videoEndTime);
             _videoSeeking = false;
+            _videoSeekWaitForPause = false;
+            _videoWasPausedBeforeSeek = false;
         }
 
         public void SetSpeed(float speed)
