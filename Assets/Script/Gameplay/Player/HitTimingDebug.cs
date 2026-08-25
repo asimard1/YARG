@@ -1,32 +1,63 @@
+using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
+using YARG.Gameplay.Visuals;
 
 namespace YARG.Gameplay.Player
 {
     // TEMP debug overlay — Early/Perfect/Late after each hit. Rip out once done testing.
+    // Attach one instance per player, wired via Init() to this player's TrackCamera.
     public class HitTimingDebug : MonoBehaviour
     {
         private const float HideDelaySeconds = 0.5f;
+        private const float FontSizeToWidthRatio = 0.03f; // tune to taste
 
-        private static HitTimingDebug _instance;
+        // Reflection into HighwayCameraRendering's private camera list so we can
+        // look up our own registered index without touching that file.
+        private static readonly FieldInfo CamerasField =
+            typeof(HighwayCameraRendering).GetField("_cameras", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        // Shared across all instances — one renderer manages every highway.
+        private static HighwayCameraRendering _sharedHighwayRendering;
+
+        private Camera _trackCamera;
+        private List<Camera> _camerasList;
 
         private string _text = "";
-        private float _xOffset;
-        private Color _color = Color.white;
-        private float _hideTime;
+        private float  _xOffsetFraction; // -1..1, fraction of half the highway width
+        private Color  _color = Color.white;
+        private float  _hideTime;
 
         private GUIStyle _style;
         private bool _guiWarmedUp;
 
-        [RuntimeInitializeOnLoadMethod]
-        private static void Init()
+        public void Init(Camera trackCamera)
         {
-            var go = new GameObject(nameof(HitTimingDebug));
-            _instance = go.AddComponent<HitTimingDebug>();
-            DontDestroyOnLoad(go);
+            _trackCamera = trackCamera;
+        }
+
+        private HighwayCameraRendering GetHighwayRendering()
+        {
+            if (_sharedHighwayRendering == null)
+            {
+                _sharedHighwayRendering = FindAnyObjectByType<HighwayCameraRendering>();
+            }
+            return _sharedHighwayRendering;
+        }
+
+        private int GetHighwayIndex(HighwayCameraRendering rendering)
+        {
+            _camerasList ??= CamerasField?.GetValue(rendering) as List<Camera>;
+            return _camerasList?.IndexOf(_trackCamera) ?? -1;
         }
 
         private void OnGUI()
         {
+            if (_trackCamera == null)
+            {
+                return;
+            }
+
             if (!_guiWarmedUp)
             {
                 WarmUpGui();
@@ -38,13 +69,36 @@ namespace YARG.Gameplay.Player
                 return;
             }
 
-            var rectHeight = 30;
-            var rectWidth = 200;
-            var rect = new Rect(
-                Screen.width / 2f - rectWidth / 2f + _xOffset,
-                Screen.height - rectHeight,
-                rectWidth,
-                rectHeight);
+            var rendering = GetHighwayRendering();
+            if (rendering == null)
+            {
+                return;
+            }
+
+            int highwayIndex = GetHighwayIndex(rendering);
+            if (highwayIndex < 0)
+            {
+                return; // not registered yet — will self-correct once it is
+            }
+
+            var bounds = rendering.GetTrackBoundsScreenSpace(highwayIndex);
+            if (bounds == null)
+            {
+                return;
+            }
+
+            Rect vp = bounds.Value; // already screen/GUI space (y=0 at top)
+
+            float fontSize   = vp.width * FontSizeToWidthRatio;
+            float rectHeight = fontSize * 1.5f;
+            float rectWidth  = vp.width;
+
+            _style.fontSize = Mathf.RoundToInt(fontSize);
+
+            float centerX = vp.x + vp.width / 2f + _xOffsetFraction * (vp.width / 2f);
+            float boxY = Screen.height - vp.y - rectHeight;
+
+            var rect = new Rect(centerX - rectWidth / 2f, boxY, rectWidth, rectHeight);
 
             // Shadow
             _style.normal.textColor = Color.black;
@@ -77,27 +131,17 @@ namespace YARG.Gameplay.Player
             _guiWarmedUp = true;
         }
 
-        public static void Show(double offset, double frontEnd, double backEnd)
+        public void Show(double offset, double frontEnd, double backEnd)
         {
-            if (_instance == null)
-            {
-                return;
-            }
-
-            _instance.SetText(offset, frontEnd, backEnd);
+            SetText(offset, frontEnd, backEnd);
         }
 
-        public static void ShowMiss()
+        public void ShowMiss()
         {
-            if (_instance == null)
-            {
-                return;
-            }
-
-            _instance._text = "Miss";
-            _instance._xOffset = 0;
-            _instance._color = Color.red;
-            _instance._hideTime = Time.time + HideDelaySeconds;
+            _text = "Miss";
+            _xOffsetFraction = 0;
+            _color = Color.red;
+            _hideTime = Time.time + HideDelaySeconds;
         }
 
         private void SetText(double offset, double frontEnd, double backEnd)
@@ -110,14 +154,14 @@ namespace YARG.Gameplay.Player
 
             if (abs <= perfect)
             {
-                _xOffset = 0;
+                _xOffsetFraction = 0;
                 _text = "Perfect";
                 _color = Color.green;
             }
             else
             {
                 _text = offset < 0 ? "◀◀◀ Early" : "Late ▶▶▶";
-                _xOffset = (offset < 0 ? -40 : 40) * (abs <= close ? 1f : 2f);
+                _xOffsetFraction = (offset < 0 ? -0.2f : 0.2f) * (abs <= close ? 1f : 2f);
                 _color = abs <= close
                     ? new Color(0.3f, 0.6f, 1f)
                     : Color.yellow;
