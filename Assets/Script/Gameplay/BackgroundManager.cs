@@ -608,7 +608,7 @@ namespace YARG.Gameplay
             }
         }
 
-        public void SetTime(double songTime)
+        public void SetTime(double songTime, bool waitForSeek = true)
         {
             switch (_type)
             {
@@ -638,7 +638,7 @@ namespace YARG.Gameplay
 
                         // Hack to ensure the video stays synced to the audio
                         _videoSeeking = true; // Signaling flag; must come first
-                        if (SettingsManager.Settings.WaitForSongVideo.Value)
+                        if (waitForSeek && SettingsManager.Settings.WaitForSongVideo.Value)
                             GameManager.OverridePause();
 
                         _videoPlayer.time = videoTime;
