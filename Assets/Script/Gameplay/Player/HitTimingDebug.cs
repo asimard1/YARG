@@ -67,14 +67,12 @@ namespace YARG.Gameplay.Player
                 alignment = TextAnchor.MiddleCenter
             };
 
-            // Force Unity to initialize the IMGUI text rendering path now,
-            // rather than during the first note hit.
             _style.normal.textColor = Color.clear;
 
-            GUI.Label(
-                new Rect(-1000f, -1000f, 1f, 1f),
-                "Warmup",
-                _style);
+            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "Perfect", _style);
+            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "◀◀◀ Early", _style);
+            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "Late ▶▶▶", _style);
+            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "Miss", _style);
 
             _guiWarmedUp = true;
         }
@@ -105,7 +103,7 @@ namespace YARG.Gameplay.Player
         private void SetText(double offset, double frontEnd, double backEnd)
         {
             double window = offset < 0 ? frontEnd : backEnd;
-            double perfect = window * 0.20;
+            double perfect = window * 0.25;
             double close = window * 0.50;
 
             double abs = System.Math.Abs(offset);
