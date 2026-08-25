@@ -57,6 +57,8 @@ namespace YARG.Gameplay.Player
         [SerializeField]
         protected HitWindowDisplay HitWindowDisplay;
 
+        protected HitTimingDebug _hitTimingDebug;
+
         [SerializeField]
         private Transform _hudLocation;
 
@@ -135,6 +137,9 @@ namespace YARG.Gameplay.Player
                 or Instrument.ProBass_22Fret;
 
             TrackView.ShowPlayerName(player);
+
+            _hitTimingDebug = gameObject.AddComponent<HitTimingDebug>();
+            _hitTimingDebug.Init(TrackCamera);
         }
 
         public override void HideHighway()
@@ -1129,7 +1134,7 @@ namespace YARG.Gameplay.Player
                 var hitWindow = Engine.BaseParameters.HitWindow;
                 double frontEnd = Math.Abs(hitWindow.GetFrontEnd(hitWindow.MaxWindow));
                 double backEnd  = Math.Abs(hitWindow.GetBackEnd(hitWindow.MaxWindow));
-                HitTimingDebug.Show(Engine.CurrentTime - note.Time, frontEnd, backEnd);
+                _hitTimingDebug?.Show(Engine.CurrentTime - note.Time, frontEnd, backEnd);
             }
 
             if (!GameManager.IsSeekingReplay)
@@ -1163,7 +1168,7 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnNoteMissed(int index, TNote note)
         {
-            HitTimingDebug.ShowMiss();
+            _hitTimingDebug?.ShowMiss();
             if (IsFc)
             {
                 ComboMeter.SetFullCombo(false);
