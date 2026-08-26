@@ -34,6 +34,14 @@ namespace YARG.Gameplay.Player
         public void Init(Camera trackCamera)
         {
             _trackCamera = trackCamera;
+
+            var rendering = GetHighwayRendering();
+            if (rendering != null)
+            {
+                GetHighwayIndex(rendering);
+                SetText(0, 1, 1);   // dummy call — forces JIT now
+                _hideTime = 0f;     // hide it immediately, no visible flash
+            }
         }
 
         private HighwayCameraRendering GetHighwayRendering()
@@ -147,8 +155,8 @@ namespace YARG.Gameplay.Player
         private void SetText(double offset, double frontEnd, double backEnd)
         {
             double window = offset < 0 ? frontEnd : backEnd;
-            double perfect = window * 0.25;
-            double close = window * 0.50;
+            double perfect = window * 0.2f;
+            double close = window * 0.6f;
 
             double abs = System.Math.Abs(offset);
 
