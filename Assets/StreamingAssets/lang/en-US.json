@@ -1642,10 +1642,11 @@
             },
             "OutputMode": {
                 "Name": "Output Mode",
-                "Description": "Select standard system audio or an ASIO driver.",
+                "Description": "Select standard system audio, ASIO, or WASAPI Exclusive.",
                 "Dropdown": {
                     "Shared": "Shared Audio",
-                    "Asio": "ASIO"
+                    "Asio": "ASIO",
+                    "WasapiExclusive": "WASAPI Exclusive"
                 }
             },
             "AsioBufferSize": {
@@ -1654,8 +1655,7 @@
                 "DriverDefault": "Driver Default",
                 "DriverDefaultWithSize": "Driver Default ({0} samples)",
                 "DriverControlledWithSize": "Driver controlled ({0} samples)",
-                "Samples": "{0} samples",
-                "SamplesWithDuration": "{0} samples (~{1} ms)"
+                "Samples": "{0} samples"
             },
             "OutputDevice": {
                 "Name": "Output Device",
