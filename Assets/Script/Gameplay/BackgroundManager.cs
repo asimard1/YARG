@@ -657,9 +657,13 @@ namespace YARG.Gameplay
             if (!_videoSeeking)
                 return;
 
-            if (!SettingsManager.Settings.WaitForSongVideo.Value || GameManager.OverrideResume())
+            if (!_videoSeekWaitForPause ||
+                !SettingsManager.Settings.WaitForSongVideo.Value ||
+                GameManager.OverrideResume())
+            {
                 if (!_videoWasPausedBeforeSeek)
                     player.Play();
+            }
 
             enabled = !double.IsNaN(_videoEndTime);
             _videoSeeking = false;
