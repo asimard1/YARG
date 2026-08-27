@@ -14,7 +14,7 @@ namespace YARG.Gameplay.Player
     {
         private const float HOLD_SECONDS           = 0.35f;
         private const float FADE_SECONDS           = 0.15f;
-        private const float FontSizeToWidthRatio   = 0.03f; // tune to taste
+        private const float FontSizeToWidthRatio   = 0.05f; // tune to taste
 
         // Reflection into TrackView's private fields so we can parent to its canvas
         // and read the highway bounds without touching TrackView.cs. Both lookups
@@ -86,9 +86,9 @@ namespace YARG.Gameplay.Player
             }
             else
             {
-                text = offset < 0 ? "<<< Early" : "Late >>>";
+                text = offset < 0 ? "<<<<<   Early" : "Late   >>>>>";
                 color = abs <= close ? new Color(0.3f, 0.6f, 1f) : Color.yellow;
-                xOffsetFraction = (offset < 0 ? -0.2f : 0.2f) * (abs <= close ? 1f : 2f);
+                xOffsetFraction = (offset < 0 ? -1f : 1f) * (0.2f * (abs <= close ? 1f : 2f) + .2f);
             }
 
             Display(text, color, xOffsetFraction);
