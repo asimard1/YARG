@@ -22,7 +22,6 @@ using YARG.Player;
 using YARG.Scores;
 using YARG.Settings;
 using YARG.Settings.Types;
-using YARG.Settings.Types;
 using YARG.Song;
 
 namespace YARG.Gameplay
