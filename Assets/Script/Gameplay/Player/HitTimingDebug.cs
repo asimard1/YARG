@@ -45,7 +45,6 @@ namespace YARG.Gameplay.Player
 
             if (_highwayRenderer == null || _canvasRect == null)
             {
-                YargLogger.LogWarning("HitTimingDebug: couldn't resolve highway renderer or canvas, disabling overlay.");
                 enabled = false;
                 return;
             }

@@ -139,7 +139,7 @@ namespace YARG.Gameplay.Player
             TrackView.ShowPlayerName(player);
 
             _hitTimingDebug = gameObject.AddComponent<HitTimingDebug>();
-            _hitTimingDebug.Init(TrackCamera);
+            _hitTimingDebug.Init(TrackView, HighwayIndex);
         }
 
         public override void HideHighway()
