@@ -1,181 +1,154 @@
-using System.Collections.Generic;
 using System.Reflection;
+using DG.Tweening;
+using TMPro;
 using UnityEngine;
+using YARG.Gameplay.HUD;
 using YARG.Gameplay.Visuals;
+using YARG.Helpers.Extensions;
 
 namespace YARG.Gameplay.Player
 {
     // TEMP debug overlay — Early/Perfect/Late after each hit. Rip out once done testing.
-    // Attach one instance per player, wired via Init() to this player's TrackCamera.
+    // Attach one instance per player, wired via Init() to this player's TrackView.
     public class HitTimingDebug : MonoBehaviour
     {
-        private const float HideDelaySeconds = 0.5f;
-        private const float FontSizeToWidthRatio = 0.03f; // tune to taste
+        private const float HOLD_SECONDS           = 0.35f;
+        private const float FADE_SECONDS           = 0.15f;
+        private const float FontSizeToWidthRatio   = 0.03f; // tune to taste
 
-        // Reflection into HighwayCameraRendering's private camera list so we can
-        // look up our own registered index without touching that file.
-        private static readonly FieldInfo CamerasField =
-            typeof(HighwayCameraRendering).GetField("_cameras", BindingFlags.NonPublic | BindingFlags.Instance);
+        // Reflection into TrackView's private fields so we can parent to its canvas
+        // and read the highway bounds without touching TrackView.cs. Both lookups
+        // happen once in Init() — not per-frame — so this isn't the OnGUI cold path.
+        private static readonly FieldInfo CenterContainerField =
+            typeof(TrackView).GetField("_centerElementContainer", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo HighwayRendererField =
+            typeof(TrackView).GetField("_highwayRenderer", BindingFlags.NonPublic | BindingFlags.Instance);
 
-        // Shared across all instances — one renderer manages every highway.
-        private static HighwayCameraRendering _sharedHighwayRendering;
+        private HighwayCameraRendering _highwayRenderer;
+        private int _highwayIndex;
 
-        private Camera _trackCamera;
-        private List<Camera> _camerasList;
+        private Canvas          _canvas;
+        private RectTransform   _canvasRect;
+        private RectTransform   _rect;
+        private CanvasGroup     _canvasGroup;
+        private TextMeshProUGUI _label;
+        private Sequence        _sequence;
 
-        private string _text = "";
-        private float  _xOffsetFraction; // -1..1, fraction of half the highway width
-        private Color  _color = Color.white;
-        private float  _hideTime;
-
-        private GUIStyle _style;
-        private bool _guiWarmedUp;
-
-        public void Init(Camera trackCamera)
+        public void Init(TrackView trackView, int highwayIndex)
         {
-            _trackCamera = trackCamera;
+            _highwayIndex = highwayIndex;
+            _highwayRenderer = HighwayRendererField?.GetValue(trackView) as HighwayCameraRendering;
 
-            var rendering = GetHighwayRendering();
-            if (rendering != null)
+            var centerContainer = CenterContainerField?.GetValue(trackView) as RectTransform;
+            _canvas = centerContainer != null ? centerContainer.GetComponentInParent<Canvas>() : null;
+            _canvasRect = _canvas != null ? _canvas.transform as RectTransform : null;
+
+            if (_highwayRenderer == null || _canvasRect == null)
             {
-                GetHighwayIndex(rendering);
-                SetText(0, 1, 1);   // dummy call — forces JIT now
-                _hideTime = 0f;     // hide it immediately, no visible flash
+                YargLogger.LogWarning("HitTimingDebug: couldn't resolve highway renderer or canvas, disabling overlay.");
+                enabled = false;
+                return;
             }
+
+            var go = new GameObject("HitTimingDebugLabel", typeof(RectTransform));
+            _rect = (RectTransform) go.transform;
+            _rect.SetParent(_canvasRect, false);
+            _rect.pivot = new Vector2(0.5f, 0.5f);
+
+            _canvasGroup = go.AddComponent<CanvasGroup>();
+            _canvasGroup.alpha = 0f;
+            _canvasGroup.blocksRaycasts = false;
+            _canvasGroup.interactable = false;
+
+            _label = go.AddComponent<TextMeshProUGUI>();
+            _label.alignment = TextAlignmentOptions.Center;
+            _label.fontStyle = FontStyles.Bold;
+            _label.enableWordWrapping = false;
+            _label.outlineWidth = 0.2f;
+            _label.outlineColor = Color.black;
         }
 
-        private HighwayCameraRendering GetHighwayRendering()
+        public void Show(double offset, double frontEnd, double backEnd)
         {
-            if (_sharedHighwayRendering == null)
+            double window = offset < 0 ? frontEnd : backEnd;
+            double perfect = window * 0.2;
+            double close = window * 0.6;
+            double abs = System.Math.Abs(offset);
+
+            string text;
+            Color color;
+            float xOffsetFraction;
+
+            if (abs <= perfect)
             {
-                _sharedHighwayRendering = FindAnyObjectByType<HighwayCameraRendering>();
+                text = "Perfect";
+                color = Color.green;
+                xOffsetFraction = 0f;
             }
-            return _sharedHighwayRendering;
+            else
+            {
+                text = offset < 0 ? "<<< Early" : "Late >>>";
+                color = abs <= close ? new Color(0.3f, 0.6f, 1f) : Color.yellow;
+                xOffsetFraction = (offset < 0 ? -0.2f : 0.2f) * (abs <= close ? 1f : 2f);
+            }
+
+            Display(text, color, xOffsetFraction);
         }
 
-        private int GetHighwayIndex(HighwayCameraRendering rendering)
+        public void ShowMiss()
         {
-            _camerasList ??= CamerasField?.GetValue(rendering) as List<Camera>;
-            return _camerasList?.IndexOf(_trackCamera) ?? -1;
+            Display("Miss", Color.red, 0f);
         }
 
-        private void OnGUI()
+        private void Display(string text, Color color, float xOffsetFraction)
         {
-            if (_trackCamera == null)
+            if (_highwayRenderer == null)
             {
-                return;
+                return; // Init() failed to resolve dependencies — overlay disabled
             }
 
-            if (!_guiWarmedUp)
-            {
-                WarmUpGui();
-                return;
-            }
-
-            if (Time.time > _hideTime || string.IsNullOrEmpty(_text))
-            {
-                return;
-            }
-
-            var rendering = GetHighwayRendering();
-            if (rendering == null)
-            {
-                return;
-            }
-
-            int highwayIndex = GetHighwayIndex(rendering);
-            if (highwayIndex < 0)
-            {
-                return; // not registered yet — will self-correct once it is
-            }
-
-            var bounds = rendering.GetTrackBoundsScreenSpace(highwayIndex);
+            var bounds = _highwayRenderer.GetTrackBoundsScreenSpace(_highwayIndex);
             if (bounds == null)
             {
                 return;
             }
 
-            Rect vp = bounds.Value; // already screen/GUI space (y=0 at top)
+            Rect vp = bounds.Value;
 
-            float fontSize   = vp.width * FontSizeToWidthRatio;
-            float rectHeight = fontSize * 1.5f;
-            float rectWidth  = vp.width;
+            float screenFontSize = vp.width * FontSizeToWidthRatio;
+            float screenBoxHeight = screenFontSize * 1.5f;
+            float scaleFactor = _canvas.scaleFactor;
 
-            _style.fontSize = Mathf.RoundToInt(fontSize);
+            _label.fontSize = screenFontSize / scaleFactor;
+            _rect.sizeDelta = new Vector2(vp.width / scaleFactor, screenBoxHeight / scaleFactor);
 
-            float centerX = vp.x + vp.width / 2f + _xOffsetFraction * (vp.width / 2f);
-            float boxY = Screen.height - vp.y - rectHeight;
+            // Box sits just above the bottom edge of the highway bounds (near the
+            // strike line), matching the original GUI.Label positioning math.
+            var centerScreen = new Vector2(
+                vp.x + vp.width / 2f + xOffsetFraction * (vp.width / 2f),
+                vp.y + screenBoxHeight / 2f);
 
-            var rect = new Rect(centerX - rectWidth / 2f, boxY, rectWidth, rectHeight);
-
-            // Shadow
-            _style.normal.textColor = Color.black;
-            GUI.Label(
-                new Rect(rect.x + 2, rect.y + 2, rect.width, rect.height),
-                _text,
-                _style);
-
-            // Actual text
-            _style.normal.textColor = _color;
-            GUI.Label(rect, _text, _style);
-        }
-
-        private void WarmUpGui()
-        {
-            _style = new GUIStyle(GUI.skin.label)
+            var local = _canvasRect.ScreenPointToLocalPoint(centerScreen);
+            if (local != null)
             {
-                fontSize = 16,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter
-            };
-
-            _style.normal.textColor = Color.clear;
-
-            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "Perfect", _style);
-            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "◀◀◀ Early", _style);
-            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "Late ▶▶▶", _style);
-            GUI.Label(new Rect(-1000f, -1000f, 300f, 30f), "Miss", _style);
-
-            _guiWarmedUp = true;
-        }
-
-        public void Show(double offset, double frontEnd, double backEnd)
-        {
-            SetText(offset, frontEnd, backEnd);
-        }
-
-        public void ShowMiss()
-        {
-            _text = "Miss";
-            _xOffsetFraction = 0;
-            _color = Color.red;
-            _hideTime = Time.time + HideDelaySeconds;
-        }
-
-        private void SetText(double offset, double frontEnd, double backEnd)
-        {
-            double window = offset < 0 ? frontEnd : backEnd;
-            double perfect = window * 0.2f;
-            double close = window * 0.6f;
-
-            double abs = System.Math.Abs(offset);
-
-            if (abs <= perfect)
-            {
-                _xOffsetFraction = 0;
-                _text = "Perfect";
-                _color = Color.green;
-            }
-            else
-            {
-                _text = offset < 0 ? "◀◀◀ Early" : "Late ▶▶▶";
-                _xOffsetFraction = (offset < 0 ? -0.2f : 0.2f) * (abs <= close ? 1f : 2f);
-                _color = abs <= close
-                    ? new Color(0.3f, 0.6f, 1f)
-                    : Color.yellow;
+                _rect.anchoredPosition = local.Value;
             }
 
-            _hideTime = Time.time + HideDelaySeconds;
+            _label.text = text;
+            _label.color = color;
+
+            _sequence?.Kill();
+            _canvasGroup.alpha = 1f;
+            _sequence = DOTween.Sequence()
+                .AppendInterval(HOLD_SECONDS)
+                .Append(_canvasGroup.DOFade(0f, FADE_SECONDS))
+                .SetLink(gameObject)
+                .SetUpdate(true);
+        }
+
+        private void OnDestroy()
+        {
+            _sequence?.Kill();
         }
     }
 }
