@@ -1,6 +1,12 @@
 [submodule "Assets/Plugins/YARG.Core"]
 	path = YARG.Core
-	url = https://github.com/pythonology/YARG.Core
-[submodule "Yarg.Online"]
-	path = Yarg.Online
+	url = https://github.com/YARC-Official/YARG.Core
+[submodule "YARG.Online"]
+	path = YARG.Online
 	url = https://github.com/chandler14362/YARG.Online
+[submodule "vlc/vlc-unity"]
+	path = vlc/vlc-unity
+	url = https://code.videolan.org/videolan/vlc-unity.git
+[submodule "vlc/LibVLCSharp"]
+	path = vlc/LibVLCSharp
+	url = https://code.videolan.org/videolan/LibVLCSharp.git

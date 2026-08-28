@@ -188,6 +188,8 @@ namespace YARG.Gameplay
         private const double FINAL_SNAPSHOT_TIMEOUT_SECONDS = 3.0;
 
         private StemMixer _mixer;
+        public  StemMixer  Mixer => _mixer;
+
         private MetronomeScheduler _metronomeScheduler;
         private CrowdClapScheduler _crowdClapScheduler;
 

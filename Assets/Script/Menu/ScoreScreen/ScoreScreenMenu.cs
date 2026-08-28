@@ -117,23 +117,12 @@ namespace YARG.Menu.ScoreScreen
             _songHashKey = song.Hash.ToString();
             _offsets = SongOffsetContainer.LoadOffsets();
 
-            _humanPlayerCount = scoreScreenStats.PlayerScores.Count(p => !(p.Player.Profile.IsBot || p.Player.IsRemote));
-            _songHashKey = song.Hash.ToString();
-            _offsets = SongOffsetContainer.LoadOffsets();
-
             // Play audience chatter, unless we are viewing a replay score
-            if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled && !GlobalVariables.State.IsReplay)
+            if (SettingsManager.Settings.UseCrowdCheering.Value &&
+                !GlobalVariables.State.CrowdSfxVenueOverride && !GlobalVariables.State.IsReplay)
             {
                 GlobalAudioHandler.PlaySoundEffect(SfxSample.Chatter, 1.0);
             }
-=========
-        // Play audience chatter, unless we are viewing a replay score
-        if (SettingsManager.Settings.UseCrowdCheering.Value &&
-            !GlobalVariables.State.CrowdSfxVenueOverride && !GlobalVariables.State.IsReplay)
-        {
-            GlobalAudioHandler.PlaySoundEffect(SfxSample.Chatter, 1.0);
-        }
->>>>>>>>> Temporary merge branch 2
 
             // Set text
             _songTitle.text = song.Name;
