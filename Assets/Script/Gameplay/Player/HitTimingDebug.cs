@@ -12,8 +12,8 @@ namespace YARG.Gameplay.Player
     // Attach one instance per player, wired via Init() to this player's TrackView.
     public class HitTimingDebug : MonoBehaviour
     {
-        private const float HOLD_SECONDS           = 0.35f;
-        private const float FADE_SECONDS           = 0.15f;
+        private const float HOLD_SECONDS           = 0.4f;
+        private const float FADE_SECONDS           = 0.2f;
         private const float FontSizeToWidthRatio   = 0.05f; // tune to taste
 
         // Reflection into TrackView's private fields so we can parent to its canvas
@@ -32,7 +32,9 @@ namespace YARG.Gameplay.Player
         private RectTransform   _rect;
         private CanvasGroup     _canvasGroup;
         private TextMeshProUGUI _label;
+        private Material        _material;
         private Sequence        _sequence;
+        private bool            _initialized;
 
         public void Init(TrackView trackView, int highwayIndex)
         {
@@ -65,13 +67,15 @@ namespace YARG.Gameplay.Player
             _label.enableWordWrapping = false;
             _label.outlineWidth = 0.2f;
             _label.outlineColor = Color.black;
+
+            _initialized = true;
         }
 
         public void Show(double offset, double frontEnd, double backEnd)
         {
             double window = offset < 0 ? frontEnd : backEnd;
-            double perfect = window * 0.2;
-            double close = window * 0.6;
+            double perfect = window * 1/3;
+            double close = window * 2/3;
             double abs = System.Math.Abs(offset);
 
             string text;
@@ -101,6 +105,10 @@ namespace YARG.Gameplay.Player
 
         private void Display(string text, Color color, float xOffsetFraction)
         {
+            if (!_initialized)
+            {
+                return;
+            }
             if (_highwayRenderer == null)
             {
                 return; // Init() failed to resolve dependencies — overlay disabled
@@ -115,7 +123,7 @@ namespace YARG.Gameplay.Player
             Rect vp = bounds.Value;
 
             float screenFontSize = vp.width * FontSizeToWidthRatio;
-            float screenBoxHeight = screenFontSize * 1.5f;
+            float screenBoxHeight = screenFontSize * 2f;
             float scaleFactor = _canvas.scaleFactor;
 
             _label.fontSize = screenFontSize / scaleFactor;
