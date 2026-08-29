@@ -290,10 +290,10 @@ namespace YARG.Gameplay
 
                 _failMeter.Initialize(EngineManager, this);
 
-                if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || IsPractice)
-                {
-                    _failMeter.SetActive(false);
-                }
+            if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || IsPractice)
+            {
+                _failMeter.SetActive(false);
+            }
 
             // Always reset calibration toggles on load, even for a pure replay, so that stale
             // auto-calibration from a previous song can't apply itself (and so there's nothing
