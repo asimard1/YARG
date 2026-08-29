@@ -1,0 +1,1044 @@
+diff --git a/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.SortFilter.cs b/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.SortFilter.cs
+index 980a07a804..93e151f407 100644
+--- a/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.SortFilter.cs
++++ b/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.SortFilter.cs
+@@ -115,10 +115,9 @@ private void UpdateSearch(bool force)
+                 _sortedSongs = _searchField.Search(SettingsManager.Settings.LibrarySort);
+                 // _sortedSongs = ApplyCollapsedSectionsForCurrentSort(_sortedSongs);
+ 
+-                var allowed = AllowedSongHashes;
+-                if (allowed != null)
++                if (AllowedSongHashes != null)
+                 {
+-                    _sortedSongs = ApplyFilterPredicate(_sortedSongs, s => allowed.Contains(s.Hash));
++                    _sortedSongs = ApplyFilterPredicate(_sortedSongs, IsAllowed);
+                 }
+ 
+                 _searchField.gameObject.SetActive(true);
+@@ -131,7 +130,7 @@ private void UpdateSearch(bool force)
+                 int count = 0;
+                 foreach (var hash in SelectedPlaylist.SongHashes)
+                 {
+-                    if (AllowedSongHashes != null && !AllowedSongHashes.Contains(hash))
++                    if (!IsAllowed(hash))
+                         continue;
+ 
+                     // Get the first song with the specified hash
+diff --git a/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.cs b/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.cs
+index 05077f4585..120892cb57 100644
+--- a/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.cs
++++ b/Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.cs
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.Collections.Generic;
+ using System.Linq;
+ using System.Threading;
+@@ -77,6 +77,38 @@ public partial class MusicLibraryMenu : ListMenu<ViewType, SongView>
+         /// Use <see cref="NotifyAllowedSongsChanged"/> to refresh the active menu after mutation.
+         /// </summary>
+         public static HashSet<HashWrapper>? AllowedSongHashes;
++
++        /// <summary>
++        /// Whether <paramref name="entry"/> is visible under the current allow-list.
++        /// Checks the strict hash first, then falls back to the cached gameplay hash
++        /// so songs that only match via <see cref="GameplayHashCache"/> still show up.
++        /// </summary>
++        public static bool IsAllowed(SongEntry entry) => AllowedSongHashes == null
++            || AllowedSongHashes.Contains(entry.Hash)
++            || (GameplayHashCache.TryGet(entry.Hash.ToString(), out var gameplayHash)
++                && AllowedSongHashes.Contains(HashWrapper.FromString(gameplayHash)));
++
++        /// <summary>
++        /// Hash-only overload of <see cref="IsAllowed(SongEntry)"/> for call sites that
++        /// only have a <see cref="HashWrapper"/> on hand (e.g. playlist entries).
++        /// </summary>
++        public static bool IsAllowed(HashWrapper hash) => AllowedSongHashes == null
++            || AllowedSongHashes.Contains(hash)
++            || (GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash)
++                && AllowedSongHashes.Contains(HashWrapper.FromString(gameplayHash)));
++
++        public static HashWrapper ResolvePickerHash(SongEntry entry)
++        {
++            if (AllowedSongHashes == null || AllowedSongHashes.Contains(entry.Hash))
++                return entry.Hash;
++
++            if (GameplayHashCache.TryGet(entry.Hash.ToString(), out var gameplayHash))
++            {
++                var gw = HashWrapper.FromString(gameplayHash);
++                if (AllowedSongHashes.Contains(gw)) return gw;
++            }
++            return entry.Hash;
++        }
+ #nullable disable
+ 
+         private static MusicLibraryMenu _activeInstance;
+@@ -231,6 +263,11 @@ protected override void OnEnable()
+             {
+                 UpdateSearch(true);
+             }
++            else
++            {
++                YargLogger.LogInfo("_currentSong is null, but update still");
++                UpdateSearch(true);
++            }
+ 
+             if (MenuState == MenuState.Library && _hasSavedSelectionSnapshot)
+             {
+@@ -392,7 +429,31 @@ public void SetNavigationScheme(bool reset = false)
+                 ? new NavigationScheme.Entry(MenuAction.Right, "Menu.MusicLibrary.MoveInPlaylist", MovePlaylistEntryDown)
+                 : new NavigationScheme.Entry(MenuAction.Right, "Menu.MusicLibrary.SkipSection", GoToNextSection);
+ 
+-            Navigator.Instance.PushScheme(new NavigationScheme(new()
++            // Give yellow the same behaviour as green: press to add to set, hold to start the set
++            NavigationScheme.Entry yellowEntry;
++
++            if (SettingsManager.Settings.EnablePlayAShow.Value)
++            {
++                yellowEntry = new NavigationScheme.Entry(
++                        MenuAction.Yellow,
++                        "Menu.MusicLibrary.HoldPlayShow",
++                        () => { }, // tap does nothing
++                        holdSeconds: GREEN_HOLD_SECONDS,
++                        onHoldHandler: EnterShowMode
++                    );
++            }
++            else
++            {
++                yellowEntry = new NavigationScheme.Entry(
++                        MenuAction.Yellow,
++                        "Menu.MusicLibrary.AddHoldStartSet",
++                        _ => AddToPlaylist(),
++                        holdSeconds: GREEN_HOLD_SECONDS,
++                        onHoldHandler: OnGreenHold // Use existing function
++                    );
++            }
++
++            var entries = new List<NavigationScheme.Entry>
+             {
+                 new NavigationScheme.Entry(MenuAction.Up, "Menu.Common.Up",
+                     ctx =>
+@@ -452,14 +513,13 @@ public void SetNavigationScheme(bool reset = false)
+                         hide: true
+                     ),
+                 new NavigationScheme.Entry(MenuAction.Red, "Menu.Common.Back", Back, hide: true),
+-                setListNotEmpty ?
+-                    new NavigationScheme.Entry(MenuAction.Yellow, "Menu.MusicLibrary.StartSet", StartSetlist) :
+-                    new NavigationScheme.Entry(MenuAction.Yellow, "Menu.MusicLibrary.PlayShow", EnterShowMode),
++                yellowEntry,
+                 new NavigationScheme.Entry(MenuAction.Blue, "Menu.MusicLibrary.Filters", OpenFilters),
+                 new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
+                     OnOrangeHit, OnOrangeRelease),
+-            }, false));
++            };
+ 
++            Navigator.Instance.PushScheme(new NavigationScheme(entries, false));
+         }
+ 
+         protected override void OnSelectedIndexChanged()
+@@ -1050,7 +1110,8 @@ public void ExecuteGreenHoldAction()
+ 
+             if (setListNotEmpty)
+             {
+-                // same as Blue: Start Setlist
++                // same as Yellow: Start Setlist
++                // Blue is now used for filters
+                 StartSetlist();
+             }
+             else
+@@ -1151,16 +1212,16 @@ public void CollapseAll()
+         private void RefreshForAllowedSongsChange()
+         {
+             // Capture BEFORE Refresh -- that rebuilds ViewList and may invalidate CurrentSelection.
+-            var currentSongHash = (CurrentSelection as SongViewType)?.SongEntry.Hash;
++            var currentSongEntry = (CurrentSelection as SongViewType)?.SongEntry;
+             var snapshot = CaptureSelectionSnapshot();
+             Refresh();
+ 
+             // Hash-based ContentStableId match inside RestoreSelectionSnapshot handles the happy
+             // path automatically. When the previously-selected song is gone, we explicitly land
+             // at index 0 instead of clamping to the old index near a different song.
+-            bool selectedSongFilteredOut = currentSongHash.HasValue
++            bool selectedSongFilteredOut = currentSongEntry != null
+                 && AllowedSongHashes != null
+-                && !AllowedSongHashes.Contains(currentSongHash.Value);
++                && !IsAllowed(currentSongEntry);
+ 
+             if (selectedSongFilteredOut && ViewList.Count > 0)
+             {
+@@ -1466,4 +1527,4 @@ public static void ResetMainLibraryIndex()
+             _mainLibraryIndex = -1;
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/Assets/Script/Menu/MusicLibrary/RecommendedSongs.cs b/Assets/Script/Menu/MusicLibrary/RecommendedSongs.cs
+index ccc0c28fda..72946a4041 100644
+--- a/Assets/Script/Menu/MusicLibrary/RecommendedSongs.cs
++++ b/Assets/Script/Menu/MusicLibrary/RecommendedSongs.cs
+@@ -28,7 +28,7 @@ public static SongEntry[] GetRecommendedSongs(HashSet<HashWrapper>? allowedHashe
+                 allowedPool = new List<SongEntry>(allowedHashes.Count);
+                 foreach (var s in SongContainer.Songs)
+                 {
+-                    if (allowedHashes.Contains(s.Hash))
++                    if (MusicLibraryMenu.IsAllowed(s))
+                         allowedPool.Add(s);
+                 }
+                 targetCount = Math.Min(RECOMMEND_SONGS_COUNT, allowedPool.Count);
+@@ -51,7 +51,7 @@ private static void AddMostPlayedSongs(SongEntry[] songs, ref int index,
+             var mostPlayed = ScoreContainer.GetMostPlayedSongs(10);
+             if (allowedHashes != null)
+             {
+-                mostPlayed.RemoveAll(s => !allowedHashes.Contains(s.Hash));
++                mostPlayed.RemoveAll(s => !MusicLibraryMenu.IsAllowed(s));
+             }
+             if (mostPlayed.Count > 0)
+             {
+@@ -79,7 +79,7 @@ private static void AddRandomSongs(SongEntry[] songs, ref int index,
+             {
+                 var filtered = new List<SongEntry>(yargPool.Count);
+                 foreach (var s in yargPool)
+-                    if (allowedHashes.Contains(s.Hash)) filtered.Add(s);
++                    if (MusicLibraryMenu.IsAllowed(s)) filtered.Add(s);
+                 yargPool = filtered.Count > 0 ? filtered : null;
+             }
+ 
+@@ -138,7 +138,7 @@ private static void AddSongsFromTopPlayedArtists(SongEntry[] songs, ref int inde
+                 {
+                     var filtered = new List<SongEntry>(artistSongs.Count);
+                     foreach (var s in artistSongs)
+-                        if (allowedHashes.Contains(s.Hash)) filtered.Add(s);
++                        if (MusicLibraryMenu.IsAllowed(s)) filtered.Add(s);
+                     artistPool = filtered;
+                 }
+ 
+diff --git a/Assets/Script/Menu/MusicLibrary/ViewTypes/PlaylistViewType.cs b/Assets/Script/Menu/MusicLibrary/ViewTypes/PlaylistViewType.cs
+index 3a906597b2..4603498b75 100644
+--- a/Assets/Script/Menu/MusicLibrary/ViewTypes/PlaylistViewType.cs
++++ b/Assets/Script/Menu/MusicLibrary/ViewTypes/PlaylistViewType.cs
+@@ -52,10 +52,9 @@ public static SongEntry[] GetSongsFromPlaylist(Playlist playlist)
+             // but the playlist view rendered 0 -- looked like favorites failed
+             // to load. Falls through to "no filter" when AllowedSongHashes is
+             // null (the non-lobby callers).
+-            var allow = MusicLibraryMenu.AllowedSongHashes;
+             foreach (var hash in playlist.SongHashes)
+             {
+-                if (allow != null && !allow.Contains(hash)) continue;
++                if (!MusicLibraryMenu.IsAllowed(hash)) continue;
+                 if (SongContainer.SongsByHash.TryGetValue(hash, out var song))
+                 {
+                     songs[count++] = song[0];
+diff --git a/Assets/Script/Menu/MusicLibrary/ViewTypes/SongViewType.cs b/Assets/Script/Menu/MusicLibrary/ViewTypes/SongViewType.cs
+index 8c74fbbe35..ad30554cc8 100644
+--- a/Assets/Script/Menu/MusicLibrary/ViewTypes/SongViewType.cs
++++ b/Assets/Script/Menu/MusicLibrary/ViewTypes/SongViewType.cs
+@@ -158,7 +158,7 @@ public override void PrimaryButtonClick()
+                 var cb = MusicLibraryMenu.SongPickedCallback;
+                 MusicLibraryMenu.SongPickedCallback = null;
+                 MusicLibraryMenu.ExitFromPickerConfirm();
+-                cb?.Invoke(SongEntry.Hash);
++                cb?.Invoke(MusicLibraryMenu.ResolvePickerHash(SongEntry));
+                 return;
+             }
+ 
+@@ -250,4 +250,4 @@ private static void FetchHighScores(SongEntry songEntry, out PlayerScoreRecord p
+             }
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/Assets/Script/Menu/Online/LobbyViewMenu.cs b/Assets/Script/Menu/Online/LobbyViewMenu.cs
+index 1092b27d23..4799852b0a 100644
+--- a/Assets/Script/Menu/Online/LobbyViewMenu.cs
++++ b/Assets/Script/Menu/Online/LobbyViewMenu.cs
+@@ -183,11 +183,17 @@ private void RefreshTopSongPreview(LobbyRoomState lobby)
+             _previewSongSpeed = topSpeed;
+ 
+             SongEntry songToLock = null;
+-            if (!string.IsNullOrEmpty(topHash)
+-                && SongContainer.SongsByHash.TryGetValue(HashWrapper.FromString(topHash), out var entries)
+-                && entries.Count > 0)
++            if (!string.IsNullOrEmpty(topHash))
+             {
+-                songToLock = entries[0];
++                var topHashWrapper = HashWrapper.FromString(topHash);
++                if (SongContainer.SongsByHash.TryGetValue(topHashWrapper, out var entries) && entries.Count > 0)
++                {
++                    songToLock = entries[0];
++                }
++                else if (SongContainer.SongsByGameplayHash.TryGetValue(topHashWrapper, out var looseEntries) && looseEntries.Count > 0)
++                {
++                    songToLock = looseEntries[0];
++                }
+             }
+ 
+             MusicPlayer.SetLockedSong(songToLock, topSpeed);
+@@ -594,6 +600,7 @@ public void OnQueueSongClicked()
+             }
+ 
+             MusicLibraryMenu.AllowedSongHashes = BuildPlayableSongSet(lobby);
++            MusicLibraryMenu.NotifyAllowedSongsChanged();
+ 
+             MusicLibraryMenu.SongPickedCallback = OnSongPicked;
+             MenuManager.Instance.SetActiveMenuExclusive(MenuManager.Menu.MusicLibrary);
+@@ -620,12 +627,6 @@ internal static HashSet<HashWrapper> BuildPlayableSongSet(LobbyRoomState lobby)
+                 }
+             }
+ 
+-            if (requiredInstruments.Count == 0)
+-            {
+-                // No instruments known yet -- fall back to the raw lobby library.
+-                return lobby.LobbySongLibrary;
+-            }
+-
+             // Pre-resolve GameModes. Fully qualified to avoid conflict with the contract enum.
+             var memberGameModes = new YARG.Core.GameMode[requiredInstruments.Count];
+             for (int i = 0; i < requiredInstruments.Count; i++)
+@@ -633,15 +634,38 @@ internal static HashSet<HashWrapper> BuildPlayableSongSet(LobbyRoomState lobby)
+                 memberGameModes[i] = requiredInstruments[i].ToNativeGameMode();
+             }
+ 
+-            var playable = new HashSet<HashWrapper>();
++            // Resolve the shared-library hash set down to one entry per underlying song,
++            // not one per matching hash -- a song shared via BOTH its strict and gameplay
++            // hash would otherwise appear twice in the picker. Strict always wins when both
++            // are present: it's checked first, and once a song is claimed by its strict
++            // hash, a later gameplay-hash entry for the same song is skipped rather than
++            // overwriting it.
++            var resolvedByEntry = new Dictionary<SongEntry, HashWrapper>();
+             foreach (var hash in lobby.LobbySongLibrary)
+             {
+-                if (!SongContainer.SongsByHash.TryGetValue(hash, out var entries) || entries.Count == 0)
++                if (SongContainer.SongsByHash.TryGetValue(hash, out var strictEntries) && strictEntries.Count > 0)
+                 {
+-                    continue;
++                    resolvedByEntry[strictEntries[0]] = hash;
++                }
++                else if (SongContainer.SongsByGameplayHash.TryGetValue(hash, out var looseEntries)
++                    && looseEntries.Count > 0)
++                {
++                    if (!resolvedByEntry.ContainsKey(looseEntries[0]))
++                    {
++                        resolvedByEntry.Add(looseEntries[0], hash);
++                    }
+                 }
++            }
+ 
+-                var entry = entries[0];
++            if (requiredInstruments.Count == 0)
++            {
++                // No instruments known yet -- fall back to whichever hash resolved each song.
++                return new HashSet<HashWrapper>(resolvedByEntry.Values);
++            }
++
++            var playable = new HashSet<HashWrapper>();
++            foreach (var (entry, hash) in resolvedByEntry)
++            {
+                 bool playableForAll = true;
+                 for (int i = 0; i < memberGameModes.Length; i++)
+                 {
+@@ -667,6 +691,7 @@ internal static HashSet<HashWrapper> BuildPlayableSongSet(LobbyRoomState lobby)
+                     playable.Add(hash);
+                 }
+             }
++            YargLogger.LogInfo($"Library: {resolvedByEntry.Count}, Playable with instrument: {playable.Count}");
+             return playable;
+         }
+ 
+@@ -691,7 +716,27 @@ private async UniTaskVoid QueueSongAsync(HashWrapper hash)
+                 // PersistentState resets) so it travels with the queue entry and
+                 // applies for everyone at game start.
+                 float songSpeed = SongSpeedMenu.SongSpeedMultiplier;
+-                await session.QueueSongAsync(hash, songSpeed, CancellationToken.None);
++
++                var hashToSend = hash;
++                if (GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash))
++                {
++                    var gameplayHw = HashWrapper.FromString(gameplayHash);
++
++                    // Only use the gameplay hash if it already survived the lobby's
++                    // library intersection -- i.e. every member (including ones on
++                    // the unmodified client, which never pushes a gameplay hash)
++                    // has reported this exact value. Otherwise fall back to the
++                    // strict hash so their client can still resolve the song.
++                    if (session.CurrentLobby?.LobbySongLibrary.Contains(gameplayHw) == true)
++                    {
++                        hashToSend = gameplayHw;
++                    }
++                }
++
++                await session.QueueSongAsync(
++                    hashToSend,
++                    songSpeed,
++                    CancellationToken.None);
+             }
+             catch (Exception ex)
+             {
+diff --git a/Assets/Script/Menu/Online/LobbyViewType.cs b/Assets/Script/Menu/Online/LobbyViewType.cs
+index 0dfd2f477e..fd2a4bfbd8 100644
+--- a/Assets/Script/Menu/Online/LobbyViewType.cs
++++ b/Assets/Script/Menu/Online/LobbyViewType.cs
+@@ -56,6 +56,10 @@ public override Sprite GetIcon()
+             {
+                 return SongSources.SourceToIcon(entries[0].Source);
+             }
++            if (SongContainer.SongsByGameplayHash.TryGetValue(hash, out var looseEntries) && looseEntries.Count > 0)
++            {
++                return SongSources.SourceToIcon(looseEntries[0].Source);
++            }
+             return null;
+         }
+ 
+diff --git a/Assets/Script/Menu/Online/QueuedSong.cs b/Assets/Script/Menu/Online/QueuedSong.cs
+index cbad4308ff..50a9474eb8 100644
+--- a/Assets/Script/Menu/Online/QueuedSong.cs
++++ b/Assets/Script/Menu/Online/QueuedSong.cs
+@@ -55,7 +55,8 @@ public void Initialize(HashWrapper hash, bool isLocalHost, float songSpeed, Acti
+ 
+             SetSongSpeed(songSpeed);
+ 
+-            if (!SongContainer.SongsByHash.TryGetValue(hash, out var songs))
++            if (!SongContainer.SongsByHash.TryGetValue(hash, out var songs)
++                && !SongContainer.SongsByGameplayHash.TryGetValue(hash, out songs))
+             {
+                 _songName.text = hash.ToString();
+                 _songBackground.sprite = _placeholder;
+diff --git a/Assets/Script/Online/GameplayHashCache.cs b/Assets/Script/Online/GameplayHashCache.cs
+new file mode 100644
+index 0000000000..a079c4e944
+--- /dev/null
++++ b/Assets/Script/Online/GameplayHashCache.cs
+@@ -0,0 +1,119 @@
++using System.Collections.Generic;
++using System.IO;
++using Newtonsoft.Json;
++using YARG.Core.Song;
++using YARG.Helpers;
++
++namespace YARG.Online
++{
++/// <summary>
++    /// Persists the (expensive) mapping from a song's strict hash to its gameplay hash,
++    /// so it's only ever computed once per song, not once per session.
++    ///
++    /// Keyed by strict hash rather than file path on purpose: if the source file changes,
++    /// its strict hash changes too, so a stale entry is simply orphaned (and ignored).
++    ///
++    /// Cache file name is suffixed with <see cref="GameplayHasher.HASH_VERSION"/>; bumping
++    /// that version starts a fresh file, and stale versioned files are deleted automatically.
++    /// </summary>
++    internal static class GameplayHashCache
++    {
++        private static readonly string CachePath =
++            Path.Combine(PathHelper.PersistentDataPath, $"GameplayHashCache{GameplayHasher.HASH_VERSION}.json");
++
++        private static Dictionary<string, string> _map;
++        private static bool _dirty;
++       private static bool _staleFilesDeleted;
++
++        private static void DeleteStaleCacheFiles()
++        {
++            if (_staleFilesDeleted) return;
++            _staleFilesDeleted = true;
++
++            try
++            {
++                var dir = Path.GetDirectoryName(CachePath);
++                var currentFile = Path.GetFileName(CachePath);
++                foreach (var file in Directory.EnumerateFiles(dir, "GameplayHashCache*.json"))
++                {
++                    if (Path.GetFileName(file) != currentFile)
++                    {
++                        File.Delete(file);
++                    }
++                }
++
++                // Pre-versioning legacy filename -- doesn't match the glob above :(
++                var legacyFile = Path.Combine(dir, "gameplay_hash_cache.json");
++                if (File.Exists(legacyFile))
++                {
++                    File.Delete(legacyFile);
++                }
++            }
++            catch
++            {
++                // Best-effort cleanup. A leftover file just wastes a little disk space :)
++            }
++        }
++
++        private static Dictionary<string, string> Map
++        {
++            get
++            {
++                if (_map != null)
++                {
++                    return _map;
++                }
++                DeleteStaleCacheFiles();
++
++
++                if (File.Exists(CachePath))
++                {
++                    try
++                    {
++                        var text = File.ReadAllText(CachePath);
++                        _map = JsonConvert.DeserializeObject<Dictionary<string, string>>(text)
++                            ?? new Dictionary<string, string>();
++                    }
++                    catch
++                    {
++                        // Corrupt/partial file (e.g. crash mid-write) -- start clean rather
++                        // than block startup. Everything here is re-derivable from the
++                        // player's own song library, so there's nothing to lose.
++                        _map = new Dictionary<string, string>();
++                    }
++                }
++                else
++                {
++                    _map = new Dictionary<string, string>();
++                }
++
++                return _map;
++            }
++        }
++
++        public static bool TryGet(string strictHash, out string gameplayHash) =>
++            Map.TryGetValue(strictHash, out gameplayHash);
++
++        public static void Set(string strictHash, string gameplayHash)
++        {
++            Map[strictHash] = gameplayHash;
++            _dirty = true;
++        }
++
++        /// <summary>
++        /// Writes pending changes to disk. Call after a batch of <see cref="Set"/> calls,
++        /// not after every single one -- this is a background-thread-friendly cache, not
++        /// a transactional store.
++        /// </summary>
++        public static void Flush()
++        {
++            if (!_dirty && File.Exists(CachePath))
++            {
++                return;
++            }
++            var text = JsonConvert.SerializeObject(Map);
++            File.WriteAllText(CachePath, text);
++            _dirty = false;
++        }
++    }
++}
+diff --git a/Assets/Script/Online/LobbyGameOrchestrator.cs b/Assets/Script/Online/LobbyGameOrchestrator.cs
+index 6a550123e8..cf6a894061 100644
+--- a/Assets/Script/Online/LobbyGameOrchestrator.cs
++++ b/Assets/Script/Online/LobbyGameOrchestrator.cs
+@@ -70,7 +70,12 @@ public static UniTask<LobbyGameOrchestrator> InitializeAsync(LobbyHubSession lob
+ 
+             var queued = lobby.SongQueue[0];
+             var hash = HashWrapper.FromString(queued.SongHash);
+-            if (!SongContainer.SongsByHash.TryGetValue(hash, out var songs) || songs.Count == 0)
++            bool found = SongContainer.SongsByHash.TryGetValue(hash, out var songs) && songs.Count > 0;
++            if (!found)
++            {
++                found = SongContainer.SongsByGameplayHash.TryGetValue(hash, out songs) && songs.Count > 0;
++            }
++            if (!found)
+             {
+                 DialogManager.Instance.ShowMessage("Could not start game",
+                     "The queued song wasn't found in your local library.");
+diff --git a/Assets/Script/Online/LobbyHubSession.cs b/Assets/Script/Online/LobbyHubSession.cs
+index e69a2225e7..1374556dca 100644
+--- a/Assets/Script/Online/LobbyHubSession.cs
++++ b/Assets/Script/Online/LobbyHubSession.cs
+@@ -1,4 +1,5 @@
+ using System;
++using System.Linq;
+ using System.Collections.Generic;
+ using System.Runtime.CompilerServices;
+ using System.Text.Json;
+@@ -89,12 +90,14 @@ public static async UniTask ShutdownAsync()
+         private readonly CancellationTokenSource _lifetimeCts = new();
+         private int _disposing; // 0 = alive, 1 = disposing/disposed
+         private int _inflightHandlers; // Track() bodies in flight; DisposeAsync drains to zero
++        private void PushGameplayHashUpdate() => PushGameplayHashUpdateAsync().Forget();
+ 
+         private LobbyHubSession(OnlineAccessTokenProvider tokenProvider)
+         {
+             _tokenProvider = tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
+             _instanceId = Interlocked.Increment(ref _instanceCounter);
+             Application.quitting += OnApplicationQuitting;
++            LocalSongLibrary.BackfillBatchCompleted += PushGameplayHashUpdate;
+             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: created");
+         }
+ 
+@@ -266,6 +269,7 @@ public async UniTask DisposeAsync()
+             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: disposing");
+ 
+             Application.quitting -= OnApplicationQuitting;
++            LocalSongLibrary.BackfillBatchCompleted -= PushGameplayHashUpdate;
+ 
+             // Best-effort leave RPCs before cancel so server state cleans up promptly.
+             // Short timeout because this may run from Application.quitting.
+@@ -363,6 +367,8 @@ public async UniTask<CreateLobbyResult> CreateLobbyAsync(
+             await UniTask.SwitchToMainThread();
+             if (Volatile.Read(ref _disposing) != 0) return result;
+             _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
++            LocalSongLibrary.EnsureBackfillRunning();
++            DumpLibraryDiff(_currentLobby);
+             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby ok -- id={result.Lobby.Id}");
+             CurrentLobbyChanged?.Invoke();
+             return result;
+@@ -382,6 +388,8 @@ public async UniTask<EnterLobbyResult> EnterLobbyAsync(
+             await UniTask.SwitchToMainThread();
+             if (Volatile.Read(ref _disposing) != 0) return result;
+             _currentLobby = LobbyRoomState.FromEnter(result);
++            LocalSongLibrary.EnsureBackfillRunning();
++            DumpLibraryDiff(_currentLobby);
+             YargLogger.LogInfo(
+                 $"LobbyHubSession[#{_instanceId}]: EnterLobby ok -- id={result.Lobby.Id}, "
+                 + $"members={_currentLobby.Members.Count}, "
+@@ -417,13 +425,33 @@ public async UniTask LeaveLobbyAsync(CancellationToken ct = default)
+             }
+         }
+ 
++        private async UniTaskVoid PushGameplayHashUpdateAsync()
++        {
++            await UniTask.SwitchToMainThread();
++            if (Volatile.Read(ref _disposing) != 0 || _currentLobby == null)
++            {
++                return;
++            }
++
++            try
++            {
++                var hashes = LocalSongLibrary.SnapshotLocalHashes();
++                await UpdateLibraryAsync(hashes);
++            }
++            catch (Exception ex)
++            {
++                YargLogger.LogWarning(
++                    $"LobbyHubSession[#{_instanceId}]: gameplay-hash backfill push failed -- {ex.Message}");
++            }
++        }
++
+         /// <summary>Queue a song. State is mutated by the server's broadcast callback, not here.</summary>
+         public async UniTask<QueuedSongDto> QueueSongAsync(
+             HashWrapper hash, float songSpeed, CancellationToken ct = default)
+         {
+             var conn = RequireConnection();
+             var args = new QueueSongArgs(hash.ToString()) { SongSpeed = songSpeed };
+-            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong hash={args.SongHash} speed={songSpeed}");
++            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong hash={args.SongHash} Sent hash={hash.ToString()} speed={songSpeed}");
+             var result = await conn.InvokeAsync<QueuedSongDto>(
+                 nameof(ILobbyHub.QueueSong), args, ct);
+             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong ok -- sequence={result.Sequence}");
+@@ -661,12 +689,29 @@ private async Task OnLobbyStatusChangedAsync(LobbyStatusChangedEvent e)
+             }
+         }
+ 
++        public static void DumpLibraryDiff(LobbyRoomState lobby)
++        {
++            YargLogger.LogInfo($"[LibDiag] remote count={lobby.LobbySongLibrary.Count}");
++
++            foreach (var kv in SongContainer.SongsByHash)
++            {
++                var strict = kv.Key;
++                if (lobby.LobbySongLibrary.Contains(strict)) continue;
++
++                GameplayHashCache.TryGet(strict.ToString(), out var soft);
++                var softHw = soft != null ? (HashWrapper?)HashWrapper.FromString(soft) : null;
++                if (softHw.HasValue && lobby.LobbySongLibrary.Contains(softHw.Value)) continue;
++            }
++        }
++
+         private async Task OnLobbySongLibraryUpdatedAsync(LobbySongLibraryUpdatedEvent e)
+         {
+             try { await UniTask.SwitchToMainThread(_lifetimeCts.Token); }
+             catch (OperationCanceledException) { return; }
+             if (!IsForCurrentLobby(e.LobbyId)) return;
+ 
++            YargLogger.LogInfo(
++                $"Gameplay dictionary contains {SongContainer.SongsByGameplayHash.Count} hashes.");
+             var library = _currentLobby.LobbySongLibrary;
+             int removedCount = 0;
+             int addedCount = 0;
+@@ -683,8 +728,15 @@ private async Task OnLobbySongLibraryUpdatedAsync(LobbySongLibraryUpdatedEvent e
+                 foreach (var h in e.Added)
+                 {
+                     var hw = ToHashWrapper(h);
+-                    if (SongContainer.SongsByHash.ContainsKey(hw) && library.Add(hw))
++
++                    bool strict = SongContainer.SongsByHash.ContainsKey(hw);
++                    bool gameplay = SongContainer.SongsByGameplayHash.ContainsKey(hw);
++
++                    bool recognized = strict || gameplay;
++                    if (recognized && library.Add(hw))
++                    {
+                         addedCount++;
++                    }
+                 }
+             }
+ 
+@@ -735,9 +787,19 @@ private async Task OnSongQueuedAsync(SongQueuedEvent e)
+             if (e.Song.RequesterId != _tokenProvider.UserId)
+             {
+                 var hash = HashWrapper.FromString(e.Song.SongHash);
+-                string songLabel = SongContainer.SongsByHash.TryGetValue(hash, out var songs)
+-                    ? songs[0].Name
+-                    : e.Song.SongHash;
++                string songLabel;
++                if (SongContainer.SongsByHash.TryGetValue(hash, out var songs) && songs.Count > 0)
++                {
++                    songLabel = songs[0].Name;
++                }
++                else if (SongContainer.SongsByGameplayHash.TryGetValue(hash, out var looseSongs) && looseSongs.Count > 0)
++                {
++                    songLabel = looseSongs[0].Name;
++                }
++                else
++                {
++                    songLabel = e.Song.SongHash;
++                }
+                 string requesterName = _currentLobby.GetDisplayName(e.Song.RequesterId);
+                 LobbyChatterToast(Localize.KeyFormat("Menu.Online.Toast.SongQueued", requesterName, songLabel));
+             }
+@@ -753,9 +815,18 @@ private async Task OnSongRemovedFromQueueAsync(SongRemovedFromQueueEvent e)
+             if (idx >= 0)
+             {
+                 var hash = HashWrapper.FromString(_currentLobby.SongQueue[idx].SongHash);
+-                songLabel = SongContainer.SongsByHash.TryGetValue(hash, out var songs)
+-                    ? songs[0].Name
+-                    : _currentLobby.SongQueue[idx].SongHash;
++                if (SongContainer.SongsByHash.TryGetValue(hash, out var songs) && songs.Count > 0)
++                {
++                    songLabel = songs[0].Name;
++                }
++                else if (SongContainer.SongsByGameplayHash.TryGetValue(hash, out var looseSongs) && looseSongs.Count > 0)
++                {
++                    songLabel = looseSongs[0].Name;
++                }
++                else
++                {
++                    songLabel = _currentLobby.SongQueue[idx].SongHash;
++                }
+             }
+             _currentLobby.SongQueue.RemoveAll(q => q.Sequence == e.Sequence);
+             CurrentLobbyChanged?.Invoke();
+diff --git a/Assets/Script/Online/LobbyRoomState.cs b/Assets/Script/Online/LobbyRoomState.cs
+index 3e45d3c76e..ae87aea7bd 100644
+--- a/Assets/Script/Online/LobbyRoomState.cs
++++ b/Assets/Script/Online/LobbyRoomState.cs
+@@ -59,6 +59,12 @@ public bool AllMembersBackInLobby
+             }
+         }
+ 
++        private static IEnumerable<HashWrapper> AllLocalHashes()
++        {
++            foreach (var h in SongContainer.SongsByHash.Keys) yield return h;
++            foreach (var h in SongContainer.SongsByGameplayHash.Keys) yield return h;
++        }
++
+         public string GameServerEndpoint;
+         public string GameToken;
+         public DateTimeOffset GameTokenExpiresAt;
+@@ -84,7 +90,7 @@ public static LobbyRoomState FromCreate(LobbyDto lobby)
+                 }
+             }
+ 
+-            var localHashes = SongContainer.SongsByHash.Keys;
++            var localHashes = AllLocalHashes();
+             state.LobbySongLibrary = new HashSet<HashWrapper>();
+             foreach (var hash in localHashes)
+                 state.LobbySongLibrary.Add(hash);
+@@ -123,7 +129,7 @@ public static LobbyRoomState FromEnter(EnterLobbyResult result)
+                     removalSet.Add(HashWrapper.FromString(s.AsSpan()));
+             }
+ 
+-            var localHashes = SongContainer.SongsByHash.Keys;
++            var localHashes = AllLocalHashes();
+             state.LobbySongLibrary = new HashSet<HashWrapper>();
+             foreach (var hash in localHashes)
+             {
+diff --git a/Assets/Script/Online/LocalSongLibrary.cs b/Assets/Script/Online/LocalSongLibrary.cs
+index 980056079b..ab9e04d149 100644
+--- a/Assets/Script/Online/LocalSongLibrary.cs
++++ b/Assets/Script/Online/LocalSongLibrary.cs
+@@ -1,3 +1,11 @@
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using System.Threading;
++using Cysharp.Threading.Tasks;
++using UnityEngine;
++using YARG.Core.Song;
++using YARG.Menu.Persistent;
+ using YARG.Song;
+ 
+ namespace YARG.Online
+@@ -6,9 +14,83 @@ namespace YARG.Online
+     /// Snapshots the local player's installed song hashes. The snapshot is streamed to the
+     /// lobby hub (see <see cref="LobbyHubSession"/>) so the server can compute the lobby-wide
+     /// shared library (intersection of every member's library).
++    ///
++    /// Each song contributes BOTH its strict hash and its gameplay hash (when known) to the
++    /// same set. The server's intersection logic is untouched and untyped -- it just treats
++    /// these as opaque strings -- so two players end up "sharing" a song if either value
++    /// matches. Strict takes precedence automatically wherever it's checked downstream
++    /// (queueing prefers it when both are present in the synced shared library).
++    ///
++    /// Gameplay hashes require a full LoadChart() per song, so they can't be computed eagerly
++    /// for the whole library without hurting scan performance. Instead, this class backfills
++    /// them in the background, starting the moment a scan finishes (not when a lobby is
++    /// joined) so someone who scans in new songs and immediately hosts isn't starting from
++    /// zero, and prioritizing whatever was just added, since that's what they're most likely
++    /// about to try to play with someone else.
++    ///
++    /// Each song contributes BOTH its strict hash and its gameplay hash (when known) to the
++    /// same set. The server's intersection logic is untouched and untyped -- it just treats
++    /// these as opaque strings -- so two players end up "sharing" a song if either value
++    /// matches. Strict takes precedence automatically wherever it's checked downstream
++    /// (queueing prefers it when both are present in the synced shared library).
++    ///
++    /// Gameplay hashes require a full LoadChart() per song, so they can't be computed eagerly
++    /// for the whole library without hurting scan performance. Instead, this class backfills
++    /// them in the background, starting the moment a scan finishes (not when a lobby is
++    /// joined) so someone who scans in new songs and immediately hosts isn't starting from
++    /// zero, and prioritizing whatever was just added, since that's what they're most likely
++    /// about to try to play with someone else.
+     /// </summary>
+     internal static class LocalSongLibrary
+     {
++        private const int BACKFILL_BATCH_SIZE = 25;
++
++        // Gap between each song's LoadChart(), not just between batches -- this is real,
++        // back-to-back CPU + allocation work, and without a gap it would pin a thread-pool
++        // worker (and generate steady GC pressure) continuously for however long a large
++        // library takes to backfill.
++        private static readonly TimeSpan SongDelay = TimeSpan.FromMilliseconds(50);
++
++        // How often to re-check whether gameplay has ended while paused.
++        private static readonly TimeSpan GameplayPollDelay = TimeSpan.FromSeconds(2);
++
++        private static CancellationTokenSource _backfillCts;
++
++        /// <summary>
++        /// Fired on the calling (background) thread once a background gameplay-hash backfill
++        /// completes and discovers at least one new gameplay hash. <see cref="LobbyHubSession"/>
++        /// subscribes to this only while a lobby session is active, re-streaming the updated
++        /// snapshot in response. Since this fires off the main thread, subscribers that need
++        /// the main thread must marshal back themselves.
++        /// </summary>
++        public static event Action BackfillBatchCompleted;
++
++        [RuntimeInitializeOnLoadMethod]
++        private static void Initialize()
++        {
++            SongContainer.OnSongsRefreshed += RestartBackfill;
++        }
++
++        public static void EnsureBackfillRunning()
++        {
++            if (_backfillCts != null && !_backfillCts.IsCancellationRequested)
++            {
++                return;
++            }
++            RestartBackfill();
++        }
++
++        private static void RestartBackfill()
++        {
++            // A fresh scan (manual rescan, or one that was already running) always
++            // supersedes whatever the previous backfill pass was doing -- it may have
++            // found brand-new songs, so start over rather than let a stale pass keep
++            // running against a library that no longer matches SongContainer's state.
++            _backfillCts?.Cancel();
++            _backfillCts = new CancellationTokenSource();
++            BackfillAsync(_backfillCts.Token).Forget();
++        }
++
+         /// <summary>
+         /// Materialize every installed song hash on the calling thread. Must be called from
+         /// the main thread -- the resulting array is what gets chunked and streamed, so the
+@@ -17,13 +99,101 @@ internal static class LocalSongLibrary
+         public static string[] SnapshotLocalHashes()
+         {
+             var byHash = SongContainer.SongsByHash;
+-            var hashes = new string[byHash.Count];
+-            int i = 0;
++            var hashes = new List<string>(byHash.Count * 2);
++
+             foreach (var kv in byHash)
+             {
+-                hashes[i++] = kv.Key.ToString();
++                string strict = kv.Key.ToString();
++                hashes.Add(strict);
++
++                if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
++                {
++                    hashes.Add(cachedGameplayHash);
++                }
+             }
+-            return hashes;
++
++            return hashes.ToArray();
++        }
++
++        private static async UniTask BackfillAsync(CancellationToken ct)
++        {
++            // Run off the main thread, same as CacheHandler.RunScan -- LoadChart() does
++            // real file I/O and parsing work per song, not something the UI thread should
++            // be blocked on for however long a library takes to backfill.
++            await UniTask.SwitchToThreadPool();
++            GameplayHashCache.Flush(); // recreate file if it was deleted mid-session
++
++            // Snapshotted once, up front, rather than enumerated live: SongsByHash gets
++            // fully cleared and rebuilt by the next scan (possibly from the main thread
++            // while this is still running), which would otherwise risk a "collection was
++            // modified" exception or working against half-rebuilt state.
++            var librarySnapshot = SongContainer.SongsByHash.ToArray();
++
++            // Newest file first: someone who just scanned in new songs and jumps straight
++            // into a lobby cares about THOSE getting a gameplay hash before older songs
++            // that have likely already been backfilled in a previous session anyway.
++            Array.Sort(librarySnapshot, (a, b) =>
++                b.Value[0].GetLastWriteTime().CompareTo(a.Value[0].GetLastWriteTime()));
++
++            int sinceLastBatch = 0;
++            bool anyNewHashes = false;
++
++            foreach (var kv in librarySnapshot)
++            {
++                ct.ThrowIfCancellationRequested();
++
++                string strict = kv.Key.ToString();
++                if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
++                {
++                    SongContainer.RegisterGameplayHash(kv.Key, HashWrapper.FromString(cachedGameplayHash));
++                    anyNewHashes = true;
++                    continue; // already known, possibly from a previous session -- no
++                              // LoadChart() needed, so nothing to throttle or pause for
++                }
++
++                // Fully step aside while the player is actually playing. This is exactly
++                // the moment a GC pause or thread-pool contention would be most noticeable
++                // -- and nobody's about to join a lobby mid-song anyway, so there's no
++                // downside to letting this wait.
++                while (GlobalVariables.Instance.CurrentScene is SceneIndex.Gameplay)
++                {
++                    await UniTask.Delay(GameplayPollDelay, cancellationToken: ct);
++                }
++
++                // Every SongEntry filed under the same strict hash is byte-identical by
++                // definition, so a single representative is enough to hash for all of them.
++                var chart = kv.Value[0].LoadChart();
++                if (chart == null)
++                {
++                    continue;
++                }
++
++                var gameplayHash = GameplayHasher.Hash(chart);
++                GameplayHashCache.Set(strict, gameplayHash.ToString());
++                SongContainer.RegisterGameplayHash(kv.Key, gameplayHash);
++                sinceLastBatch++;
++                anyNewHashes = true;
++
++                await UniTask.Delay(SongDelay, cancellationToken: ct);
++
++                if (sinceLastBatch >= BACKFILL_BATCH_SIZE)
++                {
++                    GameplayHashCache.Flush();
++                    sinceLastBatch = 0;
++                }
++            }
++
++            if (sinceLastBatch > 0)
++            {
++                GameplayHashCache.Flush();
++            }
++
++            if (anyNewHashes)
++            {
++                BackfillBatchCompleted?.Invoke();
++            }
++
++            ToastManager.ToastSuccess("Background scan completed");
+         }
+     }
+ }
+diff --git a/Assets/Script/Song/SongContainer.cs b/Assets/Script/Song/SongContainer.cs
+index f55a1e6675..d2d226ed13 100644
+--- a/Assets/Script/Song/SongContainer.cs
++++ b/Assets/Script/Song/SongContainer.cs
+@@ -91,6 +91,7 @@ public static class SongContainer
+         private static SortedSongs _sortedSongs = new();
+         private static SongEntry[] _songs = Array.Empty<SongEntry>();
+         private static Dictionary<HashWrapper, List<SongEntry>> _songsByHash = new();
++        private static Dictionary<HashWrapper, List<SongEntry>> _songsByGameplayHash = new();
+ 
+         private static SongCategory[] _sortTitles = Array.Empty<SongCategory>();
+         private static SongCategory[] _sortArtists = Array.Empty<SongCategory>();
+@@ -131,6 +132,39 @@ public static class SongContainer
+         public static int Count => _songs.Length;
+         // public static IReadOnlyDictionary<HashWrapper, List<SongEntry>> SongsByHash => _songCache.Entries;
+         public static IReadOnlyDictionary<HashWrapper, List<SongEntry>> SongsByHash => _songsByHash;
++
++        public static IReadOnlyDictionary<HashWrapper, List<SongEntry>> SongsByGameplayHash => _songsByGameplayHash;
++
++        /// <summary>
++        /// Called from <see cref="YARG.Online.LocalSongLibrary"/> as gameplay hashes get
++        /// computed/loaded from its persistent cache. Deliberately NOT populated inside
++        /// SetAllSongs -- unlike the strict hash, this one requires a full LoadChart() per
++        /// song and can't be built eagerly for the whole library on every scan/sort.
++        /// </summary>
++        public static void RegisterGameplayHash(HashWrapper strictHash, HashWrapper gameplayHash)
++        {
++            if (!_songsByHash.TryGetValue(strictHash, out var entries))
++            {
++                return;
++            }
++
++            if (_songsByGameplayHash.TryGetValue(gameplayHash, out var list))
++            {
++                foreach (var e in entries)
++                    if (!list.Contains(e)) list.Add(e);
++            }
++            else
++            {
++                _songsByGameplayHash.Add(gameplayHash, new List<SongEntry>(entries));
++            }
++        }
++
++        /// <summary>
++        /// Fired at the end of <see cref="RunRefresh"/>. <see cref="YARG.Online.LocalSongLibrary"/>
++        /// uses this to start backfilling gameplay hashes the moment a scan completes, rather
++        /// than waiting for a lobby to be joined.
++        /// </summary>
++        public static event Action OnSongsRefreshed;
+         public static SongEntry[]                                       Songs       => _songs;
+ 
+         public static SongEntry[] UnfilteredSongs => _songCache.Entries.Values.SelectMany(e => e).ToArray();
+@@ -181,6 +215,7 @@ public static async UniTask RunRefresh(bool quick, LoadingContext? context = nul
+             }
+             SongSorting.SortEntries(_songCache, _sortedSongs);
+             FillContainers();
++            OnSongsRefreshed?.Invoke();
+             stopwatch.Stop();
+ 
+             YargLogger.LogFormatInfo("Scan time: {0}s", stopwatch.Elapsed.TotalSeconds);
+@@ -632,6 +667,7 @@ private static void FillContainers()
+             static SongEntry[] SetAllSongs(Dictionary<HashWrapper, List<SongEntry>> entries)
+             {
+                 _songsByHash.Clear();
++                _songsByGameplayHash.Clear();
+ 
+                 int songCount = 0;
+                 foreach (var node in entries)
+diff --git a/YARG.Core b/YARG.Core
+index d7784b5734..4c2346baf8 160000
+--- a/YARG.Core
++++ b/YARG.Core
+@@ -1 +1 @@
+-Subproject commit d7784b5734bdb869090614e9c2c241475754fab1
++Subproject commit 4c2346baf87d23c0f1c4383bea713a410fefc751

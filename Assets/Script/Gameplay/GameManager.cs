@@ -843,12 +843,12 @@ namespace YARG.Gameplay
                 // UseMedianForInSongCalibration is set to also cover the end-of-song save, in
                 // which case it's the median -- see GetWeightedOffset.
                 MeanAverageOffset = GetWeightedOffset(_players
-                    .Where(player => !player.Player.Profile.IsBot || player.Player.IsRemote)
+                    .Where(player => !(player.Player.Profile.IsBot || player.Player.IsRemote))
                     .SelectMany(player => player.BaseStats.GetOffsetSamples())
                     .ToList()) ?? 0,
 
                 MeanAverageOffsetStrumOnly = GetWeightedOffset(GetWeightedStrumOnlySamples(_players
-                    .Where(player => !player.Player.Profile.IsBot || player.Player.IsRemote))),
+                    .Where(player => !(player.Player.Profile.IsBot || player.Player.IsRemote)))),
 
                 ReplayInfo = replayInfo,
             };

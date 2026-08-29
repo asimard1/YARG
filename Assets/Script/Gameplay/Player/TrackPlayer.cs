@@ -1135,7 +1135,7 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnNoteHit(int index, TNote note)
         {
-            if (!Player.Profile.IsBot)
+            if (!(Player.Profile.IsBot || Player.IsRemote || Player.IsReplay))
             {
                 _autoCalibrator.RecordAccuracy(Engine.CurrentTime, note.Time, IsNoteStrum(note));
 
