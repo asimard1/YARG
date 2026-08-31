@@ -166,7 +166,7 @@ namespace YARG.Venue.Characters
         public int RngAtLastTransition;
         protected int  _rngHash;
 
-        public virtual void Initialize(CharacterManager characterManager)
+        public virtual void Initialize(CharacterManager characterManager, bool isCustom = false)
         {
             _characterManager = characterManager;
             _animator = GetComponent<Animator>();
@@ -845,6 +845,11 @@ namespace YARG.Venue.Characters
         public bool IsAnimating()
         {
             return _isAnimating;
+        }
+
+        public void TriggerEnd()
+        {
+            SetTrigger(CharacterStateType.End);
         }
 
         public void UpdateTempo(double secondsPerBeat)
