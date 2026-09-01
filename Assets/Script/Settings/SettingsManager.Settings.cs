@@ -205,6 +205,7 @@ namespace YARG.Settings
                 ShowMeanSongOffsetCalibrationMode.Always
             };
             public ToggleSetting UseSongOffsetCalibration { get; } = new(true);
+            public ToggleSetting ShowHitTimingDebug { get; } = new(false);
             public DropdownSetting<OffsetCalibrationFilter> UseStrumOnlyOffsetForCalibration { get; } = new(OffsetCalibrationFilter.Everything)
             {
                 OffsetCalibrationFilter.Everything,

@@ -139,8 +139,11 @@ namespace YARG.Gameplay.Player
 
             TrackView.ShowPlayerName(player);
 
-            _hitTimingDebug = gameObject.AddComponent<HitTimingDebug>();
-            _hitTimingDebug.Init(TrackView, HighwayIndex);
+            if (SettingsManager.Settings.ShowHitTimingDebug.Value)
+            {
+                _hitTimingDebug = gameObject.AddComponent<HitTimingDebug>();
+                _hitTimingDebug.Init(TrackView, HighwayIndex);
+            }
         }
 
         public override void HideHighway()
@@ -1147,10 +1150,13 @@ namespace YARG.Gameplay.Player
             {
                 _autoCalibrator.RecordAccuracy(Engine.CurrentTime, note.Time, IsNoteInOffsetFilterCategory(note));
 
-                var hitWindow = Engine.BaseParameters.HitWindow;
-                double frontEnd = Math.Abs(hitWindow.GetFrontEnd(hitWindow.MaxWindow));
-                double backEnd  = Math.Abs(hitWindow.GetBackEnd(hitWindow.MaxWindow));
-                _hitTimingDebug?.Show(Engine.CurrentTime - note.Time, frontEnd, backEnd);
+                if (SettingsManager.Settings.ShowHitTimingDebug.Value)
+                {
+                    var hitWindow = Engine.BaseParameters.HitWindow;
+                    double frontEnd = Math.Abs(hitWindow.GetFrontEnd(hitWindow.MaxWindow));
+                    double backEnd  = Math.Abs(hitWindow.GetBackEnd(hitWindow.MaxWindow));
+                    _hitTimingDebug?.Show(Engine.CurrentTime - note.Time, frontEnd, backEnd);
+                }
             }
 
             if (!GameManager.IsSeekingReplay)
@@ -1184,7 +1190,10 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnNoteMissed(int index, TNote note)
         {
-            _hitTimingDebug?.ShowMiss();
+            if (SettingsManager.Settings.ShowHitTimingDebug.Value)
+            {
+                _hitTimingDebug?.ShowMiss();
+            }
             if (IsFc)
             {
                 ComboMeter.SetFullCombo(false);

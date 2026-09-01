@@ -1912,6 +1912,10 @@
                     "AutoCalibrationAndEndOfSong": "Auto Calibration and End of Song"
                 }
             },
+            "ShowHitTimingDebug": {
+                "Name": "Show Hit Timing Text",
+                "Description": "Show if each input during a song is early, late or perfect."
+            },
             "VocalMonitoring": {
                 "Name": "Vocal Monitoring Volume",
                 "PauseName": "Monitoring",

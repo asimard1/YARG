@@ -59,6 +59,7 @@ namespace YARG.Settings
                 nameof(Settings.UseStrumOnlyOffsetForCalibration),
                 nameof(Settings.UseKickOnlyOffsetForCalibration),
                 nameof(Settings.UseMedianForInSongCalibration),
+                nameof(Settings.ShowHitTimingDebug),
 
                 new HeaderMetadata("Venues"),
                 new ButtonRowMetadata(nameof(Settings.OpenVenueFolder)),
