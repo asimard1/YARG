@@ -314,13 +314,15 @@ namespace YARG.Menu.MusicLibrary
             }
 
             SortAttribute nextSort;
-            if (SettingsManager.Settings.LibrarySort >= SortAttribute.Playable)
+            if (SettingsManager.Settings.LibrarySort >= SortAttribute.Random)
             {
                 nextSort = SortAttribute.Name;
             }
             else
             {
                 nextSort = (SortAttribute) ((int) SettingsManager.Settings.LibrarySort + 1);
+                if (nextSort == SortAttribute.Playable)
+                    nextSort = SortAttribute.Random;
             }
 
             ChangeSort(nextSort);
@@ -385,7 +387,7 @@ namespace YARG.Menu.MusicLibrary
                         MenuData.Colors.HeaderSecondary,
                         700);
                 }
-                else if (SettingsManager.Settings.LibrarySort < SortAttribute.Instrument)
+                else
                 {
                     var sortingBy = TextColorer.StyleString("SORTED BY ",
                         MenuData.Colors.HeaderTertiary,
@@ -396,18 +398,6 @@ namespace YARG.Menu.MusicLibrary
                         700);
 
                     _sortInfoHeaderPrimaryText.text = ZString.Concat(sortingBy, sortKey);
-                }
-                else
-                {
-                    var playableSongs = TextColorer.StyleString("PLAYABLE ON ",
-                        MenuData.Colors.HeaderTertiary,
-                        600);
-
-                    var sortKey = TextColorer.StyleString(SettingsManager.Settings.LibrarySort.ToLocalizedName(),
-                        MenuData.Colors.HeaderSecondary,
-                        700);
-
-                    _sortInfoHeaderPrimaryText.text = ZString.Concat(playableSongs, sortKey);
                 }
 
                 string countText;
