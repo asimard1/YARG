@@ -211,7 +211,7 @@ namespace YARG.Settings
                 OffsetCalibrationFilter.OnlySelected,
                 OffsetCalibrationFilter.ExcludeSelected
             };
-            public ToggleSetting UseMedianForEndOfSongCalibration { get; } = new(True);
+            public ToggleSetting UseMedianForEndOfSongCalibration { get; } = new(true);
 
             public ToggleSetting AccountForHardwareLatency { get; } = new(true);
 
