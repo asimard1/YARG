@@ -532,7 +532,7 @@ namespace YARG.Gameplay.Player
             lane.OffsetXPosition(_currentOffset);
         }
 
-        protected override void InitializeSpawnedLane(LaneElement lane, int index)
+        protected override void InitializeBRELane(LaneElement lane, int index)
         {
             int noteIndex = index % 12;
             int octaveIndex = index / 12;
@@ -659,7 +659,7 @@ namespace YARG.Gameplay.Player
 
                 var laneParameters = _breLaneParameters[i];
 
-                InitializeSpawnedLane(newLane, laneParameters.CenterKey);
+                InitializeBRELane(newLane, laneParameters.CenterKey);
                 newLane.MultiplyScale(laneParameters.Width);
                 newLane.MultiplyScale(0.95f);
                 newLane.EnableFromPool();

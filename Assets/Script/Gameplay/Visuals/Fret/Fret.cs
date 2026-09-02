@@ -207,7 +207,7 @@ namespace YARG.Gameplay.Visuals
             ThemeBind.HitEffect.Play();
         }
 
-        public void PlayOpenHitParticles()
+        public void PlayFullWidthHitParticles()
         {
             ThemeBind.OpenHitEffect.Play();
         }

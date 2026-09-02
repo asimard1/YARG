@@ -898,7 +898,7 @@ namespace YARG.Gameplay.Player
                 }
 
                 newLane.SetTimeRange(timeStart, timeEnd);
-                InitializeSpawnedLane(newLane, i);
+                InitializeBRELane(newLane, i);
                 newLane.EnableFromPool();
 
                 newLane.SetEmissionColor(0);
@@ -1124,7 +1124,7 @@ namespace YARG.Gameplay.Player
 
         protected abstract void InitializeSpawnedNote(IPoolable poolable, TNote note);
         protected abstract void InitializeSpawnedLane(LaneElement lane, TNote note);
-        protected abstract void InitializeSpawnedLane(LaneElement lane, int laneIndex);
+        protected abstract void InitializeBRELane(LaneElement lane, int laneIndex);
         protected virtual void ModifyLaneFromNote(LaneElement lane, TNote note) {}
 
         protected abstract void RescaleLanesForBRE();
