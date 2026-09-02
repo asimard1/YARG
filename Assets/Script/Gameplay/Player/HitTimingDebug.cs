@@ -74,6 +74,7 @@ namespace YARG.Gameplay.Player
         public void Show(double offset, double frontEnd, double backEnd)
         {
             double window = offset < 0 ? frontEnd : backEnd;
+            double middle = 0.005;
             double perfect = window * 1/3;
             double close = window * 2/3;
             double abs = System.Math.Abs(offset);
@@ -82,11 +83,17 @@ namespace YARG.Gameplay.Player
             Color color;
             float xOffsetFraction;
 
-            if (abs <= perfect)
+            if (abs <= middle)
             {
                 text = "Perfect";
                 color = Color.green;
                 xOffsetFraction = 0f;
+            }
+            else if (abs <= perfect)
+            {
+                text = offset < 0 ? "<   Perfect" : "Perfect   >";
+                color = Color.green;
+                xOffsetFraction = (offset < 0 ? -1f : 1f) * 0.15f;
             }
             else
             {
