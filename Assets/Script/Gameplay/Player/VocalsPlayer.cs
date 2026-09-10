@@ -456,10 +456,13 @@ namespace YARG.Gameplay.Player
                 fill /= (float) EngineParams.PhraseHitPercent;
             }
 
-            // In multiplayer, don't double the score multiplier in the strikeline element
-            // Otherwise, it looks like the band multiplier applies on top of the score multiplier
+            // When the shared band-multiplier system is active, don't double the score
+            // multiplier in the strikeline element -- otherwise it looks like the band
+            // multiplier applies on top of the score multiplier. BandFeaturesEnabled is
+            // false in Online mode, so this no longer fires just because TotalPlayers > 1
+            // (which also counts remote players).
             var engineStats = Engine.EngineStats;
-            int displayMultiplier = GameManager.TotalPlayers > 1 && engineStats.IsStarPowerActive
+            int displayMultiplier = GameManager.BandFeaturesEnabled && engineStats.IsStarPowerActive
                 ? engineStats.ScoreMultiplier / 2
                 : engineStats.ScoreMultiplier;
 

@@ -307,7 +307,7 @@ namespace YARG.Gameplay.Player
             var events = NoteTrack.TextEvents;
 
             Engine = CreateEngine();
-            base.ComboMeter.Initialize(player.EnginePreset, Engine.BaseParameters.MaxMultiplier, GameManager.Players.Count > 1);
+            base.ComboMeter.Initialize(player.EnginePreset, Engine.BaseParameters.MaxMultiplier, GameManager.BandFeaturesEnabled);
 
             Engine.OnComboIncrement += OnComboIncrement;
             Engine.OnComboReset += OnComboReset;
@@ -553,9 +553,12 @@ namespace YARG.Gameplay.Player
             TrackMaterial.GrooveMode = groove;
             TrackMaterial.StarpowerMode = stats.IsStarPowerActive;
 
-            // In multiplayer, don't double the score multiplier in the strikeline element
-            // Otherwise, it looks like the band multiplier applies on top of the score multiplier
-            int displayMultiplier = GameManager.TotalPlayers > 1 && stats.IsStarPowerActive
+            // When the shared band-multiplier system is active, don't double the score
+            // multiplier in the strikeline element -- otherwise it looks like the band
+            // multiplier applies on top of the score multiplier. BandFeaturesEnabled is
+            // false in Online mode, so this no longer fires just because TotalPlayers > 1
+            // (which also counts remote players).
+            int displayMultiplier = GameManager.BandFeaturesEnabled && stats.IsStarPowerActive
                 ? stats.ScoreMultiplier / 2
                 : stats.ScoreMultiplier;
 

@@ -88,6 +88,12 @@ namespace YARG.Gameplay
 
         public int TotalPlayers => _players.Count;
 
+        // Whether the shared band-multiplier system is active for this session.
+        // False in Online mode (see Awake()) -- individual multiplier displays
+        // should NOT be halved/capped on the assumption of a band-multiplier
+        // badge that isn't actually being applied.
+        public bool BandFeaturesEnabled => EngineManager.BandFeaturesEnabled;
+
         public bool IsSongReady { get; private set; } = false;
 
         public bool IsSongStarted { get; private set; } = false;

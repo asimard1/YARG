@@ -163,7 +163,7 @@ namespace YARG.Gameplay.HUD
             if (SettingsManager.Settings.ShowRemoteHighways.Value) return;
 
             int slotIndex = 0;
-            bool isBandPlay = GameManager.TotalPlayers > 1;
+            bool isBandPlay = GameManager.BandFeaturesEnabled;
             foreach (var player in GameManager.Players)
             {
                 if (player?.Player == null) continue;
