@@ -261,6 +261,7 @@ namespace YARG.Gameplay
             else
             {
                 YargPlayers = PlayerContainer.Players;
+                EngineManager.BandFeaturesEnabled = YargPlayers.Count > 1;
             }
 
             Song = GlobalVariables.State.CurrentSong;
