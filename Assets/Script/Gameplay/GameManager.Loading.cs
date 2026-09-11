@@ -13,7 +13,6 @@ using YARG.Gameplay.HUD;
 using YARG.Gameplay.Player;
 using YARG.Localization;
 using YARG.Menu;
-using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.Settings;
 using YARG.Online;
@@ -548,6 +547,7 @@ namespace YARG.Gameplay
                 foreach (var player in YargPlayers)
                 {
                     player.IsScoreValid = true;
+                    player.ResetParticipation();
 
                     if (!player.IsReplay && !player.IsRemote)
                     {

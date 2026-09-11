@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Threading.Tasks;
@@ -9,10 +9,13 @@ using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Chart;
 using YARG.Core.Engine;
+using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers;
+using YARG.Localization;
+using YARG.Menu.Persistent;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Settings;
@@ -31,9 +34,139 @@ namespace YARG.Gameplay.Player
 
         public static int HighwayCount = 1;
 
+        private const float START_HOLD_SECONDS = 0.5f;
+
         public double SpawnTimeOffset => (ZeroFadePosition + _spawnAheadDelay + -STRIKE_LINE_POS) / NoteSpeed;
 
         protected TrackView TrackView { get; private set; }
+
+        private readonly HoldTracker _startHold = new(
+            holdTime: START_HOLD_SECONDS,
+            cancelThreshold: START_HOLD_SECONDS);
+
+        public bool IsPlayerMenuOpen => TrackView.IsPlayerMenuOpen;
+
+        public void OpenPlayerMenu() => TrackView.OpenPlayerMenu(GetPlayerMenuItems());
+
+        public void ClosePlayerMenu()
+        {
+            _startHold.Cancel();
+            TrackView.ClosePlayerMenu();
+        }
+
+        public void RefreshPlayerMenu()
+        {
+            if (!CanOpenPlayerMenu)
+            {
+                ClosePlayerMenu();
+                return;
+            }
+
+            TrackView.RefreshPlayerMenu();
+        }
+
+        private void OnStartTapped() => GameManager.TogglePause();
+
+        protected void UpdateStartHold()
+        {
+            if (IsStartBlocked)
+            {
+                _startHold.Cancel();
+                return;
+            }
+
+            _startHold.Tick();
+        }
+
+        protected override void OnMenuInput(YargPlayer _, ref GameInput input)
+        {
+            if (input.Action != (int) MenuAction.Start)
+            {
+                return;
+            }
+
+            if (IsStartBlocked)
+            {
+                _startHold.Cancel();
+                return;
+            }
+
+            if (!CanOpenPlayerMenu)
+            {
+                if (input.Button)
+                {
+                    GameManager.TogglePause();
+                }
+
+                return;
+            }
+
+            if (input.Button)
+            {
+                _startHold.StartHolding();
+            }
+            else
+            {
+                _startHold.Tick();
+                _startHold.StopHolding();
+            }
+        }
+
+        private void OnStartHeld()
+        {
+            if (CanOpenPlayerMenu)
+            {
+                OpenPlayerMenu();
+                return;
+            }
+
+            GameManager.TogglePause();
+        }
+
+        private bool CanDropOut => GameManager.ActivePlayerCount > 1 &&
+            !GameManager.IsReplay &&
+            !GameManager.IsPractice &&
+            !GameManager.PlayingAShow;
+
+        private bool CanOpenPlayerMenu => GetPlayerMenuItems().HasUsable();
+
+        private bool IsStartBlocked => !IsActive || IsPlayerMenuOpen || !GameManager.CanPause;
+
+        public void DropOut()
+        {
+            if (!CanDropOut)
+            {
+                return;
+            }
+
+            IsFc = false;
+
+            Player.IsScoreValid = false;
+            Player.DropOut();
+            GameManager.EngineManager.Unregister(EngineContainer);
+
+            SetStemMuteState(muted: false);
+            ClosePlayerMenu();
+
+            GameManager.RefreshAllPlayerMenus();
+        }
+
+        protected override bool IsMenuOpen => IsPlayerMenuOpen;
+
+        private IReadOnlyList<PlayerMenuItem> GetPlayerMenuItems()
+        {
+            if (!CanDropOut)
+            {
+                return Array.Empty<PlayerMenuItem>();
+            }
+
+            return new[]
+            {
+                new PlayerMenuItem(
+                    label: Localize.Key("Menu.Pause.Generic.DropOut"),
+                    onConfirm: DropOut),
+            };
+        }
 
         [field: Header("Visuals")]
         [field: SerializeField]
@@ -157,6 +290,13 @@ namespace YARG.Gameplay.Player
             }
 
             base.HideHighway();
+            if (!player.IsReplay)
+            {
+                TrackView.CreatePlayerMenu(player);
+            }
+
+            _startHold.OnClick += OnStartTapped;
+            _startHold.OnHoldComplete += OnStartHeld;
         }
 
         protected override void ResetVisuals()
@@ -605,11 +745,11 @@ namespace YARG.Gameplay.Player
             }
 
             bool isSongEnd = visualTime > SongLength;
-            bool shouldLowerTrack = isSongEnd || GameManager.PlayerHasFailed;
+            bool shouldLowerTrack = isSongEnd || GameManager.PlayerHasFailed || !IsActive;
             if (!_didLowerTrack && shouldLowerTrack)
             {
                 _didLowerTrack = true;
-                CameraPositioner.Lower(isSongEnd);
+                CameraPositioner.Lower(isSongEnd || !IsActive);
             }
             else if (_didLowerTrack && !shouldLowerTrack)
             {
@@ -1356,6 +1496,7 @@ namespace YARG.Gameplay.Player
         public override void GameplayUpdate()
         {
             base.GameplayUpdate();
+            UpdateStartHold();
 
             if (HasLeftGame) return;
 
