@@ -1,0 +1,80 @@
+diff --git a/Assets/Script/Gameplay/GameManager.cs b/Assets/Script/Gameplay/GameManager.cs
+index 519608d..b327c02 100644
+--- a/Assets/Script/Gameplay/GameManager.cs
++++ b/Assets/Script/Gameplay/GameManager.cs
+@@ -88,6 +88,12 @@ namespace YARG.Gameplay
+ 
+         public int TotalPlayers => _players.Count;
+ 
++        // Whether the shared band-multiplier system is active for this session.
++        // False in Online mode (see Awake()) -- individual multiplier displays
++        // should NOT be halved/capped on the assumption of a band-multiplier
++        // badge that isn't actually being applied.
++        public bool BandFeaturesEnabled => EngineManager.BandFeaturesEnabled;
++
+         public bool IsSongReady { get; private set; } = false;
+ 
+         public bool IsSongStarted { get; private set; } = false;
+diff --git a/Assets/Script/Gameplay/HUD/ScoreBox/ScoreBox.cs b/Assets/Script/Gameplay/HUD/ScoreBox/ScoreBox.cs
+index 55f1182..0df2379 100644
+--- a/Assets/Script/Gameplay/HUD/ScoreBox/ScoreBox.cs
++++ b/Assets/Script/Gameplay/HUD/ScoreBox/ScoreBox.cs
+@@ -163,7 +163,7 @@ namespace YARG.Gameplay.HUD
+             if (SettingsManager.Settings.ShowRemoteHighways.Value) return;
+ 
+             int slotIndex = 0;
+-            bool isBandPlay = GameManager.TotalPlayers > 1;
++            bool isBandPlay = GameManager.BandFeaturesEnabled;
+             foreach (var player in GameManager.Players)
+             {
+                 if (player?.Player == null) continue;
+diff --git a/Assets/Script/Gameplay/Player/TrackPlayer.cs b/Assets/Script/Gameplay/Player/TrackPlayer.cs
+index bd5f6ef..24a14e2 100644
+--- a/Assets/Script/Gameplay/Player/TrackPlayer.cs
++++ b/Assets/Script/Gameplay/Player/TrackPlayer.cs
+@@ -307,7 +307,7 @@ namespace YARG.Gameplay.Player
+             var events = NoteTrack.TextEvents;
+ 
+             Engine = CreateEngine();
+-            base.ComboMeter.Initialize(player.EnginePreset, Engine.BaseParameters.MaxMultiplier, GameManager.Players.Count > 1);
++            base.ComboMeter.Initialize(player.EnginePreset, Engine.BaseParameters.MaxMultiplier, GameManager.BandFeaturesEnabled);
+ 
+             Engine.OnComboIncrement += OnComboIncrement;
+             Engine.OnComboReset += OnComboReset;
+@@ -553,9 +553,12 @@ namespace YARG.Gameplay.Player
+             TrackMaterial.GrooveMode = groove;
+             TrackMaterial.StarpowerMode = stats.IsStarPowerActive;
+ 
+-            // In multiplayer, don't double the score multiplier in the strikeline element
+-            // Otherwise, it looks like the band multiplier applies on top of the score multiplier
+-            int displayMultiplier = GameManager.TotalPlayers > 1 && stats.IsStarPowerActive
++            // When the shared band-multiplier system is active, don't double the score
++            // multiplier in the strikeline element -- otherwise it looks like the band
++            // multiplier applies on top of the score multiplier. BandFeaturesEnabled is
++            // false in Online mode, so this no longer fires just because TotalPlayers > 1
++            // (which also counts remote players).
++            int displayMultiplier = GameManager.BandFeaturesEnabled && stats.IsStarPowerActive
+                 ? stats.ScoreMultiplier / 2
+                 : stats.ScoreMultiplier;
+ 
+diff --git a/Assets/Script/Gameplay/Player/VocalsPlayer.cs b/Assets/Script/Gameplay/Player/VocalsPlayer.cs
+index 30e5560..a61a70d 100644
+--- a/Assets/Script/Gameplay/Player/VocalsPlayer.cs
++++ b/Assets/Script/Gameplay/Player/VocalsPlayer.cs
+@@ -456,10 +456,13 @@ namespace YARG.Gameplay.Player
+                 fill /= (float) EngineParams.PhraseHitPercent;
+             }
+ 
+-            // In multiplayer, don't double the score multiplier in the strikeline element
+-            // Otherwise, it looks like the band multiplier applies on top of the score multiplier
++            // When the shared band-multiplier system is active, don't double the score
++            // multiplier in the strikeline element -- otherwise it looks like the band
++            // multiplier applies on top of the score multiplier. BandFeaturesEnabled is
++            // false in Online mode, so this no longer fires just because TotalPlayers > 1
++            // (which also counts remote players).
+             var engineStats = Engine.EngineStats;
+-            int displayMultiplier = GameManager.TotalPlayers > 1 && engineStats.IsStarPowerActive
++            int displayMultiplier = GameManager.BandFeaturesEnabled && engineStats.IsStarPowerActive
+                 ? engineStats.ScoreMultiplier / 2
+                 : engineStats.ScoreMultiplier;
+ 
