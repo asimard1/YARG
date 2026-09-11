@@ -2,7 +2,6 @@
 using UnityEngine;
 using YARG.Helpers.Extensions;
 using YARG.Themes;
-using YARG.Venue;
 using Color = System.Drawing.Color;
 
 namespace YARG.Gameplay.Visuals
@@ -292,12 +291,12 @@ namespace YARG.Gameplay.Visuals
 
         public void PlayHitAnimation()
         {
-            ThemeBind.Animator.SafeSetTrigger(_hit);
+            ThemeBind.Animator.SetTrigger(_hit);
         }
 
         public void PlayCymbalHitAnimation()
         {
-            ThemeBind.Animator.SafeSetTrigger(_cymbalHit);
+            ThemeBind.Animator.SetTrigger(_cymbalHit);
         }
 
         public void PlayHitParticles()
@@ -312,7 +311,7 @@ namespace YARG.Gameplay.Visuals
 
         public void PlayMissAnimation()
         {
-            ThemeBind.Animator.SafeSetTrigger(_miss);
+            ThemeBind.Animator.SetTrigger(_miss);
         }
 
         public void PlayMissParticles()

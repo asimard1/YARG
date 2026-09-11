@@ -268,9 +268,6 @@ namespace YARG.Gameplay
                     return;
                 }
 
-                // Listen for menu inputs
-                Navigator.Instance.NavigationEvent += OnNavigationEvent;
-
                 // Debug info
                 InitializeDebug();
 #if UNITY_EDITOR

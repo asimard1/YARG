@@ -290,9 +290,9 @@ namespace YARG.Gameplay.Player
             }
 
             base.HideHighway();
-            if (!player.IsReplay)
+            if (!Player.IsReplay)
             {
-                TrackView.CreatePlayerMenu(player);
+                TrackView.CreatePlayerMenu(Player);
             }
 
             _startHold.OnClick += OnStartTapped;
