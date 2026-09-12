@@ -236,8 +236,7 @@ namespace YARG.Gameplay.HUD
         private IEnumerator ShowNextNotification(string notificationText)
         {
             _text.text = notificationText;
-            _currentAnimationSequence = BuildAnimationSequence();
-            yield return _currentAnimationSequence.WaitForCompletion();
+            yield return _animationSequence.WaitForCompletion();
 
             _text.text = string.Empty;
             _coroutine = null;
