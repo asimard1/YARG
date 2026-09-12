@@ -14,6 +14,8 @@ namespace YARG.Gameplay.HUD
 {
     public class PauseMenuManager : GameplayBehaviour
     {
+        protected override bool DisableUntilSongStarts => false;
+
         public enum Menu
         {
             None,

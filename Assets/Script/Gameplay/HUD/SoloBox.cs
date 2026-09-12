@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using Cysharp.Text;
 using DG.Tweening;
@@ -79,7 +79,7 @@ namespace YARG.Gameplay.HUD
             // Fade in the box
             yield return _soloBoxCanvasGroup
                 .DOFade(1f, 0.25f)
-                .SetLink(_soloBoxCanvasGroup.gameObject)
+                .SetLink(gameObject)
                 .WaitForCompletion();
         }
 
@@ -169,7 +169,7 @@ namespace YARG.Gameplay.HUD
             // Fade out the box
             yield return _soloBoxCanvasGroup
                 .DOFade(0f, 0.25f)
-                .SetLink(_soloBoxCanvasGroup.gameObject)
+                .SetLink(gameObject)
                 .WaitForCompletion();
 
             _soloBox.gameObject.SetActive(false);
@@ -186,6 +186,13 @@ namespace YARG.Gameplay.HUD
                 StopCoroutine(_currentCoroutine);
                 _currentCoroutine = null;
             }
+
+            _soloBoxCanvasGroup.DOKill();
+        }
+
+        private void OnDisable()
+        {
+            StopCurrentCoroutine();
         }
 
         public void PreviewForEditMode(bool on)

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using DG.Tweening;
 using TMPro;
@@ -91,7 +91,7 @@ namespace YARG.Gameplay.HUD
             // Fade in the box
             yield return _breBoxCanvasGroup
                 .DOFade(1f, 0.25f)
-                .SetLink(_breBoxCanvasGroup.gameObject)
+                .SetLink(gameObject)
                 .WaitForCompletion();
         }
 
@@ -173,10 +173,7 @@ namespace YARG.Gameplay.HUD
             }
 
             // Fade out the box
-            yield return _breBoxCanvasGroup
-                .DOFade(0f, 0.25f)
-                .SetLink(_breBoxCanvasGroup.gameObject)
-                .WaitForCompletion();
+            yield return _breBoxCanvasGroup.DOFade(0f, 0.25f).SetLink(gameObject).WaitForCompletion();
 
             _breBox.gameObject.SetActive(false);
             _currentCoroutine = null;
@@ -196,6 +193,13 @@ namespace YARG.Gameplay.HUD
                 StopCoroutine(_currentCoroutine);
                 _currentCoroutine = null;
             }
+
+            _breBoxCanvasGroup.DOKill();
+        }
+
+        private void OnDisable()
+        {
+            StopCurrentCoroutine();
         }
 
         public void PreviewForEditMode(bool on)

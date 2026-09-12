@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Threading.Tasks;
+using DG.Tweening;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using YARG.Core.Audio;
@@ -308,6 +309,8 @@ namespace YARG.Gameplay
             _metronomeScheduler?.Dispose();
             _crowdClapScheduler?.Dispose();
             _songRunner?.Dispose();
+
+            _volumeTween?.Kill();
 
             // Restore stem volumes to their original state while the mixer is still valid.
             foreach (var (stem, state) in _stemStates)

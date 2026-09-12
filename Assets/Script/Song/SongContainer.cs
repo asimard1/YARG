@@ -1,4 +1,4 @@
-﻿using Cysharp.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -1158,9 +1158,8 @@ namespace YARG.Song
 
             static SongCategory[] GetSongLengthSort()
             {
-                var songLengthLabels = SettingsManager.Settings.SongLengthLabels;
-
-                if (songLengthLabels == null || songLengthLabels.Value == SongLengthLabelMode.RangeLabels)
+                var labelMode = SettingsManager.Settings?.SongLengthLabels?.Value ?? SongLengthLabelMode.RangeLabels;
+                if (labelMode == SongLengthLabelMode.RangeLabels)
                 {
                     return Cast(_sortedSongs.SongLengths);
                 }
@@ -1248,6 +1247,11 @@ namespace YARG.Song
 
         public static void RequestContainerRefresh()
         {
+            if (_songs.Length == 0)
+            {
+                return;
+            }
+
             SongSorting.SortEntries(_songCache, _sortedSongs);
             FillContainers();
         }

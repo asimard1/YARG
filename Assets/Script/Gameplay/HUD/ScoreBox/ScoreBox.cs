@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using Cysharp.Text;
 using DG.Tweening;
@@ -254,6 +254,11 @@ namespace YARG.Gameplay.HUD
             {
                 _multiplierShowTweener.PlayBackwards();
             }
+        }
+
+        protected override void GameplayDestroy()
+        {
+            _multiplierShowTweener?.Kill();
         }
     }
 }

@@ -162,6 +162,9 @@ namespace YARG.Playback
         /// </summary>
         public double InputTimeOffset { get; private set; }
 
+        private double _anchorInputSystemTime;
+        private double _anchorInputTime;
+
         #endregion
 
         #region Other state
@@ -408,7 +411,7 @@ namespace YARG.Playback
         /// </summary>
         public double GetInputTime(double inputSystemTime)
         {
-            return (inputSystemTime - InputTimeOffset) * SongSpeed;
+            return _anchorInputTime + ((inputSystemTime - _anchorInputSystemTime) * SongSpeed);
         }
 
         /// <summary>
@@ -456,10 +459,12 @@ namespace YARG.Playback
             double previousSongTime = SongTime;
             double previousVisualTime = VisualTime;
 
+            _anchorInputSystemTime = inputSystemTime;
+            _anchorInputTime = inputTime;
             InputTimeOffset = inputSystemTime - (inputTime / SongSpeed);
             _inputSystemTimeFloor = Math.Max(_inputSystemTimeFloor, inputSystemTime);
 
-            InputTime = GetInputTime(inputSystemTime);
+            InputTime = inputTime;
             SongTime = InputTime + (AudioCalibration * SongSpeed);
             VisualTime = InputTime + (VideoCalibration * SongSpeed);
 

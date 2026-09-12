@@ -283,7 +283,7 @@ namespace YARG.Menu.ScoreScreen
             _horizontalScrollTween = null;
         }
 
-        private async void InitializeScrollRect()
+        private void InitializeScrollRect()
         {
             KillScrollTween();
             _cardScrollRect.horizontalNormalizedPosition = 0f;

@@ -44,13 +44,6 @@
       "dependencies": {},
       "hash": "e264f863ce29d7e3e081f81daf784a1fde02a661"
     },
-    "com.marijnzwemmer.unity-toolbar-extender": {
-      "version": "1.4.2",
-      "depth": 0,
-      "source": "registry",
-      "dependencies": {},
-      "url": "https://package.openupm.com"
-    },
     "com.nobi.roundedcorners": {
       "version": "https://github.com/kirevdokimov/Unity-UI-Rounded-Corners.git",
       "depth": 0,
