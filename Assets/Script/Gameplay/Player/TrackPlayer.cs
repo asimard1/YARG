@@ -272,6 +272,14 @@ namespace YARG.Gameplay.Player
 
             TrackView.ShowPlayerName(player);
 
+            if (!player.IsReplay)
+            {
+                TrackView.CreatePlayerMenu(player);
+            }
+
+            _startHold.OnClick += OnStartTapped;
+            _startHold.OnHoldComplete += OnStartHeld;
+
             if (SettingsManager.Settings.ShowHitTimingDebug.Value)
             {
                 _hitTimingDebug = gameObject.AddComponent<HitTimingDebug>();
@@ -290,13 +298,6 @@ namespace YARG.Gameplay.Player
             }
 
             base.HideHighway();
-            if (!Player.IsReplay)
-            {
-                TrackView.CreatePlayerMenu(Player);
-            }
-
-            _startHold.OnClick += OnStartTapped;
-            _startHold.OnHoldComplete += OnStartHeld;
         }
 
         protected override void ResetVisuals()

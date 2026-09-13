@@ -1274,7 +1274,7 @@ namespace YARG.Gameplay
                 !DialogManager.Instance.IsDialogShowing &&
                 !PlayerHasFailed)
             {
-                SetPaused(!_songRunner.Paused);
+                SetPaused(!_pauseMenu.IsOpen);
             }
         }
 
