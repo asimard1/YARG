@@ -185,6 +185,8 @@ namespace YARG.Gameplay
         public ReplayInfo ReplayInfo { get; private set; }
         public ReplayData ReplayData { get; private set; }
 
+        public bool ReplaySaveInhibited { get; set; }
+
         public List<PauseInfo> PauseInfo { get; } = new List<PauseInfo>();
 
         public IReadOnlyList<BasePlayer> Players => _players;
@@ -537,12 +539,12 @@ namespace YARG.Gameplay
             PauseCore(showMenu);
         }
 
-        private void PauseCore(bool showMenu)
+        private void PauseCore(bool showMenu, bool overridePause = false)
         {
-            CloseAllPlayerMenus();
-
             if (showMenu)
             {
+                CloseAllPlayerMenus();
+
                 if (!GlobalVariables.State.PlayingWithReplay && ReplayInfo != null)
                 {
                     _pauseMenu.PushMenu(PauseMenuManager.Menu.ReplayPause);
@@ -578,7 +580,7 @@ namespace YARG.Gameplay
 
             // This uses the raw input update time because it keeps running during the pause
             // allowing us to accurately calculate the length of the pause later
-            if (!Rewinding && !IsReplay && showMenu)
+            if (!Rewinding && !IsReplay && !overridePause)
             {
                 // Save state about the pause
                 _pauseTime = InputManager.InputUpdateTime;
@@ -740,7 +742,7 @@ namespace YARG.Gameplay
         public void OverridePause()
         {
             _songRunner.OverridePause();
-            PauseCore(showMenu: false);
+            PauseCore(showMenu: false, overridePause: true);
         }
 
         public bool OverrideResume()
@@ -1171,7 +1173,7 @@ namespace YARG.Gameplay
         public ReplayInfo? SaveReplay(double length, string directory)
 #nullable disable
         {
-            if (_isReplaySaved)
+            if (_isReplaySaved || ReplaySaveInhibited)
             {
                 return null;
             }
@@ -1467,6 +1469,12 @@ namespace YARG.Gameplay
         public void ResetCoda()
         {
             _breBox.ForceReset();
+        }
+
+        public void DifficultyChanged()
+        {
+            EngineManager.StarScoreThresholds = EngineManager.GetStarScoreCutoffs(_players.ConvertAll(p => p.BaseEngine.StarScoreThresholds));
+            EngineManager.ResetStars();
         }
     }
 }
