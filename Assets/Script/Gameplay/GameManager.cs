@@ -1276,7 +1276,15 @@ namespace YARG.Gameplay
                 !DialogManager.Instance.IsDialogShowing &&
                 !PlayerHasFailed)
             {
-                SetPaused(!_pauseMenu.IsOpen);
+                // _pauseMenu.IsOpen alone is not a reliable pause-state proxy: menu-less
+                // pauses (e.g. GameManager.OverridePause, used during background-video
+                // seek waits on every Resume()) leave IsOpen false while the song is
+                // still paused, which made the next Start/Escape press re-pause instead
+                // of resuming. Fall back to the real song-paused state offline, where
+                // Resume()'s _resumeInProgress guard protects against that race; online
+                // the song is never actually paused, so IsOpen is still needed there.
+                bool isPaused = IsOnline ? _pauseMenu.IsOpen : Paused;
+                SetPaused(!isPaused);
             }
         }
 
