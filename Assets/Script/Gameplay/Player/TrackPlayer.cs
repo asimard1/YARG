@@ -649,10 +649,11 @@ namespace YARG.Gameplay.Player
             // TODO: Calculate this properly rather than assuming a static window
             var hitWindow = HitWindow.MaxWindow;
             var spliceTime = GameManager.SongTime + hitWindow;
+            var spliceTick = SyncTrack.TimeToTick(spliceTime);
+            var oldNotes = Notes;
 
             Player.Profile.CurrentDifficulty = difficulty;
             var targetInstrumentDifficulty = GetNotes(Chart);
-
             Player.Profile.ApplyModifiers(targetInstrumentDifficulty, SyncTrack);
 
             var newInstrumentDifficulty = NoteTrack.Splice(targetInstrumentDifficulty, spliceTime);
@@ -666,6 +667,7 @@ namespace YARG.Gameplay.Player
             GameManager.ReplaySaveInhibited = true;
 
             EngineContainer.ResetHappiness();
+            EngineContainer.UnisonPhrases.UpdateNoteCount(oldNotes, Notes, newInstrumentDifficulty is InstrumentDifficulty<DrumNote>, spliceTick);
 
             ResetDifficulty(GameManager.VisualTime);
 
@@ -698,7 +700,7 @@ namespace YARG.Gameplay.Player
 
             UpdateVisuals(GameManager.VisualTime);
 
-            GameManager.DifficultyChanged();
+            GameManager.DifficultyChanged(this);
         }
 
         protected void ResetNoteCounters()
