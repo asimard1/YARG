@@ -598,8 +598,9 @@ namespace YARG.Song
 
             var profile = player.Profile;
             bool useBandScores = ScoreContainer.UseBandHighScoresForCurrentPlayers;
-            var cacheInstrument = profile.GameMode == GameMode.EliteDrums
-                ? Instrument.EliteDrums
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+            var cacheInstrument = drumInstruments != null
+                ? drumInstruments[0]
                 : profile.CurrentInstrument;
             if (_starsCacheValid &&
                 _starsCacheProfileId == profile.Id &&
@@ -624,9 +625,9 @@ namespace YARG.Song
             }
 
             Instrument instrument = player.Profile.CurrentInstrument;
-            bool useAggregateDrums = profile.GameMode == GameMode.EliteDrums;
+            bool useAggregateDrums = drumInstruments != null;
             IComparer<SongEntry> comparer = useAggregateDrums
-                ? new AggregateDrumsIntensityComparer()
+                ? new AggregateDrumsIntensityComparer(drumInstruments)
                 : new IntensityComparer(instrument);
 
             // Use Dictionary instead of array due to complex enum values
@@ -637,7 +638,7 @@ namespace YARG.Song
                 StarAmount key = StarAmount.NoPart;
                 if (useAggregateDrums)
                 {
-                    var preferredInstrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(song);
+                    var preferredInstrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(song, drumInstruments);
                     if (preferredInstrument.HasValue && song[preferredInstrument.Value].IsActive())
                     {
                         if (!_runtimeStars.TryGetValue(song, out key))
@@ -705,7 +706,10 @@ namespace YARG.Song
 
             YargProfile profile = player.Profile;
             Instrument instrument = profile.CurrentInstrument;
-            IntensityComparer comparer = new(instrument);
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+            IComparer<SongEntry> comparer = drumInstruments != null
+                ? new AggregateDrumsIntensityComparer(drumInstruments)
+                : new IntensityComparer(instrument);
             string[] bucketKeys =
             {
                 Localize.Key("Menu.MusicLibrary.Sort.Percentage.100"),
@@ -729,20 +733,30 @@ namespace YARG.Song
             // instrument, difficulty, and High Score History mode.
             if (_songs.Length > 0)
             {
-                ScoreContainer.GetBestPercentageScore(
-                    _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
+                if (drumInstruments != null)
+                    ScoreContainer.GetBestPercentageScoreForInstruments(
+                        _songs[0].Hash, profile.Id, drumInstruments, allowCacheUpdate: true);
+                else
+                    ScoreContainer.GetBestPercentageScore(
+                        _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
             }
 
             foreach (SongEntry song in _songs)
             {
-                if (!song[instrument].IsActive())
+                var preferredInstrument = drumInstruments != null
+                    ? MidiDrumkitHelper.GetPreferredInstrumentForSong(song, drumInstruments)
+                    : instrument;
+                if (!preferredInstrument.HasValue || !song[preferredInstrument.Value].IsActive())
                 {
                     InsertSorted(buckets[^1], song, comparer);
                     continue;
                 }
 
-                PlayerScoreRecord record = ScoreContainer.GetBestPercentageScore(
-                    song.Hash, profile.Id, instrument, allowCacheUpdate: false);
+                PlayerScoreRecord record = drumInstruments != null
+                    ? ScoreContainer.GetBestPercentageScoreForInstruments(
+                        song.Hash, profile.Id, drumInstruments, allowCacheUpdate: false)
+                    : ScoreContainer.GetBestPercentageScore(
+                        song.Hash, profile.Id, instrument, allowCacheUpdate: false);
                 if (record == null || record.GetPercent() <= 0f)
                 {
                     InsertSorted(buckets[^2], song, comparer);
@@ -801,7 +815,10 @@ namespace YARG.Song
 
             YargProfile profile = player.Profile;
             Instrument instrument = profile.CurrentInstrument;
-            IntensityComparer comparer = new(instrument);
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+            IComparer<SongEntry> comparer = drumInstruments != null
+                ? new AggregateDrumsIntensityComparer(drumInstruments)
+                : new IntensityComparer(instrument);
             int[] thresholds = { 500000, 400000, 300000, 200000, 150000, 100000, 75000, 50000, 30000, 10000, 1 };
             var categorySongs = new List<SongEntry>[thresholds.Length];
             for (int i = 0; i < categorySongs.Length; i++)
@@ -815,20 +832,30 @@ namespace YARG.Song
 
             if (_songs.Length > 0)
             {
-                ScoreContainer.GetHighScore(
-                    _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
+                if (drumInstruments != null)
+                    ScoreContainer.GetHighScoreForInstruments(
+                        _songs[0].Hash, profile.Id, drumInstruments, allowCacheUpdate: true);
+                else
+                    ScoreContainer.GetHighScore(
+                        _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
             }
 
             foreach (SongEntry song in _songs)
             {
-                if (!song[instrument].IsActive())
+                var preferredInstrument = drumInstruments != null
+                    ? MidiDrumkitHelper.GetPreferredInstrumentForSong(song, drumInstruments)
+                    : instrument;
+                if (!preferredInstrument.HasValue || !song[preferredInstrument.Value].IsActive())
                 {
                     InsertSorted(noPart, song, comparer);
                     continue;
                 }
 
-                PlayerScoreRecord record = ScoreContainer.GetHighScore(
-                    song.Hash, profile.Id, instrument, allowCacheUpdate: false);
+                PlayerScoreRecord record = drumInstruments != null
+                    ? ScoreContainer.GetHighScoreForInstruments(
+                        song.Hash, profile.Id, drumInstruments, allowCacheUpdate: false)
+                    : ScoreContainer.GetHighScore(
+                        song.Hash, profile.Id, instrument, allowCacheUpdate: false);
                 if (record == null || record.Score <= 0)
                 {
                     InsertSorted(unplayed, song, comparer);
@@ -902,7 +929,7 @@ namespace YARG.Song
             }
         }
 
-        private static void InsertSorted(List<SongEntry> songs, SongEntry song, IntensityComparer comparer)
+        private static void InsertSorted(List<SongEntry> songs, SongEntry song, IComparer<SongEntry> comparer)
         {
             int index = songs.BinarySearch(song, comparer);
             songs.Insert(~index, song);
@@ -993,7 +1020,7 @@ namespace YARG.Song
             }
 
             var noAggregateDrumsPart = _songs.Where(song => !MidiDrumkitHelper.HasAnyDrumPart(song)).ToList();
-            noAggregateDrumsPart.Sort(new AggregateDrumsIntensityComparer());
+            noAggregateDrumsPart.Sort(new AggregateDrumsIntensityComparer(MidiDrumkitHelper.Instruments));
             _sortAggregateDrums = new SongCategory[
                 _sortedSongs.AggregateDrums.Count + (noAggregateDrumsPart.Count > 0 ? 1 : 0)];
             {
@@ -1291,10 +1318,17 @@ namespace YARG.Song
 
         readonly struct AggregateDrumsIntensityComparer : IComparer<SongEntry>
         {
+            private readonly Instrument[] _instruments;
+
+            public AggregateDrumsIntensityComparer(Instrument[] instruments)
+            {
+                _instruments = instruments;
+            }
+
             public int Compare(SongEntry x, SongEntry y)
             {
-                int intensityX = GetPreferredIntensity(x);
-                int intensityY = GetPreferredIntensity(y);
+                int intensityX = GetPreferredIntensity(x, _instruments);
+                int intensityY = GetPreferredIntensity(y, _instruments);
 
                 if (intensityX == intensityY)
                 {
@@ -1312,9 +1346,9 @@ namespace YARG.Song
                 return intensityX.CompareTo(intensityY);
             }
 
-            private static int GetPreferredIntensity(SongEntry entry)
+            private static int GetPreferredIntensity(SongEntry entry, Instrument[] instruments)
             {
-                var instrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(entry);
+                var instrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(entry, instruments);
                 return instrument.HasValue ? entry[instrument.Value].Intensity : -1;
             }
         }

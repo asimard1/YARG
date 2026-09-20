@@ -108,6 +108,7 @@ namespace YARG.Settings
                 nameof(Settings.MaxSongRating),
                 nameof(Settings.CensorMatureContent),
                 nameof(Settings.ShowFavoriteButton),
+                nameof(Settings.SecondaryAlbumSort),
                 nameof(Settings.DifficultyRings),
                 nameof(Settings.HighScoreInfo),
                 new FieldMetadata(nameof(Settings.ShowPercentDecimals), isAdvanced: true),
@@ -149,6 +150,7 @@ namespace YARG.Settings
 
                 new HeaderMetadata("Gameplay"),
                 nameof(Settings.MuteOnMiss),
+                nameof(Settings.MuteOnlyWhenAllPlayersMiss),
                 nameof(Settings.UseStarpowerFx),
                 nameof(Settings.UseVenueSfx),
                 nameof(Settings.OverstrumAndOverhitSoundEffects),
