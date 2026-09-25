@@ -304,8 +304,6 @@ namespace YARG.Gameplay
                 {
                     EngineManager.OnSongFailed += OnSongFailed;
 
-                    EngineManager.InitializeHappiness(SettingsManager.Settings.NoFail.Value != NoFailMode.Off);
-
                 SettingsManager.Settings.NoFail.OnChange += OnNoFailModeChanged;
             }
 
@@ -320,14 +318,6 @@ namespace YARG.Gameplay
                 // Log constant values
                 YargLogger.LogFormatDebug("Audio calibration: {0}, video calibration: {1}, song offset: {2}",
                     _songRunner.AudioCalibration, _songRunner.VideoCalibration, _songRunner.SongOffset);
-
-                _metronomeScheduler = new MetronomeScheduler(_mixer);
-                _metronomeScheduler.Schedule(_songRunner, Chart.SyncTrack, SongLength);
-
-                _crowdClapScheduler = new CrowdClapScheduler(_mixer);
-                _crowdClapScheduler.Schedule(_songRunner, Chart.SyncTrack, Chart.CrowdEvents,
-                    FirstNoteTime, LastNoteTime, SongLength);
-                CrowdEventHandler.SetClapScheduler(_crowdClapScheduler);
 
                 IsSongReady = true;
                 _songReady?.Invoke();
