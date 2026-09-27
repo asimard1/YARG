@@ -671,7 +671,7 @@ namespace YARG.Gameplay.Player
             EngineContainer.ResetHappiness();
             EngineContainer.UnisonPhrases.UpdateNoteCount(oldNotes, Notes, newInstrumentDifficulty is InstrumentDifficulty<DrumNote>, spliceTick);
 
-            ResetDifficulty(GameManager.VisualTime);
+            ResetDifficulty(VisualTime);
 
             if (PlayerHasFailed)
             {
@@ -700,7 +700,7 @@ namespace YARG.Gameplay.Player
 
             ResetTrackEffectOverlay(time);
 
-            UpdateVisuals(GameManager.VisualTime);
+            UpdateVisuals(VisualTime);
 
             GameManager.DifficultyChanged(this);
         }
