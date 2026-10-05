@@ -1,9 +1,11 @@
 ﻿using System;
+using System.IO;
 using YARG.Core;
 using YARG.Core.Engine;
 using YARG.Core.Game;
 using YARG.Core.Input;
 using YARG.Core.Logging;
+using YARG.Core.IO;
 using YARG.Core.Replays;
 using YARG.Input;
 using YARG.Online.Game.Contracts.Packets;
@@ -231,6 +233,7 @@ namespace YARG.Player
         {
             DisableInputs();
             Bindings?.Dispose();
+            Profile.Avatar?.Dispose();
         }
     }
 }

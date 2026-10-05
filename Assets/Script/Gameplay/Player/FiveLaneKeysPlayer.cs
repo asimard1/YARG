@@ -619,6 +619,10 @@ namespace YARG.Assets.Script.Gameplay.Player
             {
                 _fretArray.SetSustained((int) GetFretIndex(note.FiveLaneKeysAction), false);
             }
+            else
+            {
+                StrikelineAnimator.SetSustaining(false);
+            }
 
             _sustainCount--;
 

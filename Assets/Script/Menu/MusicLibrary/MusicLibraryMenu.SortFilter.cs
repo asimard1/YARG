@@ -34,9 +34,14 @@ namespace YARG.Menu.MusicLibrary
         private TextMeshProUGUI _sortInfoHeaderStarCountText;
         [SerializeField]
         private Image _sortInfoHeaderStarIcon;
+        [SerializeField]
+        private Sprite _starGoldSprite;
+        [SerializeField]
+        private Sprite _starWhiteSprite;
         private int _totalSongCount = 0;
         private int _totalSongCountUnfiltered = 0;
         private int _totalStarCount = 0;
+        private bool _allVisibleSongsGold = false;
         private int _numPlaylists = 0;
 
         public bool HasSortHeaders { get; private set; }
@@ -112,8 +117,10 @@ namespace YARG.Menu.MusicLibrary
 
             if (SongContainer.Count > RecommendedSongs.RECOMMEND_SONGS_COUNT)
             {
-                _recommendedSongs = RecommendedSongs.GetRecommendedSongs(AllowedSongHashes);
-                if (_recommendedSongs.Length == 0) _recommendedSongs = null;
+                var recommendations = RecommendedSongs.GetRecommendedSongs(
+                    song => IsAllowed(song)
+                        && (FiltersMenu.ActiveFilterPredicate?.Invoke(song) ?? true));
+                _recommendedSongs = recommendations.Length > 0 ? recommendations : null;
             }
             else
             {
@@ -280,6 +287,13 @@ namespace YARG.Menu.MusicLibrary
                 return;
             }
 
+            // Playlists and Recommended entries are not subject to song filters, so a selection
+            // sitting on one of them is never invalidated by a filter change.
+            if (CurrentSelection is ButtonViewType)
+            {
+                return;
+            }
+
             if (SelectedIndex < 0 || SelectedIndex >= ViewList.Count ||
                 CurrentSelection is not SongViewType)
             {
@@ -434,6 +448,9 @@ namespace YARG.Menu.MusicLibrary
                     600);
 
                 _sortInfoHeaderStarCountText.text = ZString.Concat(obtainedStars, totalStars);
+                _sortInfoHeaderStarIcon.sprite = _allVisibleSongsGold && _totalSongCount > 0
+                    ? _starGoldSprite
+                    : _starWhiteSprite;
                 _sortInfoHeaderStarIcon.color = _sortInfoHeaderStarIcon.color.WithAlpha(1);
             }
             else if (MenuState == MenuState.PlaylistSelect)
@@ -483,6 +500,9 @@ namespace YARG.Menu.MusicLibrary
                     MenuData.Colors.HeaderTertiary,
                     600);
                 _sortInfoHeaderStarCountText.text = ZString.Concat(obtainedStars, totalStars);
+                _sortInfoHeaderStarIcon.sprite = _allVisibleSongsGold && _totalSongCount > 0
+                    ? _starGoldSprite
+                    : _starWhiteSprite;
                 _sortInfoHeaderStarIcon.color = _sortInfoHeaderStarIcon.color.WithAlpha(1);
             }
         }
@@ -514,7 +534,7 @@ namespace YARG.Menu.MusicLibrary
             UpdateSearch(true);
         }
 
-        private void OpenFilters()
+        public void OpenFilters()
         {
             // Stop any library preview audio so the Filters menu doesn't inherit it
             StopPreview();
