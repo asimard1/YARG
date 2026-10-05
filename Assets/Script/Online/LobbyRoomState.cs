@@ -59,10 +59,21 @@ namespace YARG.Online
             }
         }
 
-        private static IEnumerable<HashWrapper> AllLocalHashes()
+        // Built from the exact hashes streamed to the server, never from live SongContainer state:
+        // the server computes the shared library from what it received, and the backfill keeps
+        // registering gameplay hashes in the meantime, so live state would add songs the server
+        // never counted (and never sends a removal for).
+        private static HashSet<HashWrapper> ToHashSet(string[] sentHashes, HashSet<HashWrapper> exclude = null)
         {
-            foreach (var h in SongContainer.SongsByHash.Keys) yield return h;
-            foreach (var h in SongContainer.SongsByGameplayHash.Keys) yield return h;
+            var set = new HashSet<HashWrapper>();
+            if (sentHashes == null) return set;
+            foreach (var h in sentHashes)
+            {
+                var hw = HashWrapper.FromString(h.AsSpan());
+                if (exclude != null && exclude.Contains(hw)) continue;
+                set.Add(hw);
+            }
+            return set;
         }
 
         public string GameServerEndpoint;
@@ -74,7 +85,7 @@ namespace YARG.Online
         public string GetDisplayName(string userId) =>
             MemberNames.TryGetValue(userId, out var name) ? name : userId;
 
-        public static LobbyRoomState FromCreate(LobbyDto lobby)
+        public static LobbyRoomState FromCreate(LobbyDto lobby, string[] sentHashes)
         {
             var state = FromLobbyDto(lobby);
             var session = LobbyHubSession.Current;
@@ -90,15 +101,12 @@ namespace YARG.Online
                 }
             }
 
-            var localHashes = AllLocalHashes();
-            state.LobbySongLibrary = new HashSet<HashWrapper>();
-            foreach (var hash in localHashes)
-                state.LobbySongLibrary.Add(hash);
+            state.LobbySongLibrary = ToHashSet(sentHashes);
 
             return state;
         }
 
-        public static LobbyRoomState FromEnter(EnterLobbyResult result)
+        public static LobbyRoomState FromEnter(EnterLobbyResult result, string[] sentHashes)
         {
             var state = FromLobbyDto(result.Lobby);
             if (result.CurrentMembers != null)
@@ -129,13 +137,7 @@ namespace YARG.Online
                     removalSet.Add(HashWrapper.FromString(s.AsSpan()));
             }
 
-            var localHashes = AllLocalHashes();
-            state.LobbySongLibrary = new HashSet<HashWrapper>();
-            foreach (var hash in localHashes)
-            {
-                if (removalSet != null && removalSet.Contains(hash)) continue;
-                state.LobbySongLibrary.Add(hash);
-            }
+            state.LobbySongLibrary = ToHashSet(sentHashes, removalSet);
 
             return state;
         }

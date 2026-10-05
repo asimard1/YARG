@@ -366,7 +366,7 @@ namespace YARG.Online
                 nameof(ILobbyHub.CreateLobby), args, StreamHashes(libraryHashes, ct), ct);
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
-            _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
+            _currentLobby = LobbyRoomState.FromCreate(result.Lobby, libraryHashes);
             LocalSongLibrary.EnsureBackfillRunning();
             DumpLibraryDiff(_currentLobby);
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby ok -- id={result.Lobby.Id}");
@@ -387,7 +387,7 @@ namespace YARG.Online
                 nameof(ILobbyHub.EnterLobby), args, StreamHashes(libraryHashes, ct), ct);
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
-            _currentLobby = LobbyRoomState.FromEnter(result);
+            _currentLobby = LobbyRoomState.FromEnter(result, libraryHashes);
             LocalSongLibrary.EnsureBackfillRunning();
             DumpLibraryDiff(_currentLobby);
             YargLogger.LogInfo(
@@ -727,13 +727,10 @@ namespace YARG.Online
             {
                 foreach (var h in e.Added)
                 {
-                    var hw = ToHashWrapper(h);
-
-                    bool strict = SongContainer.SongsByHash.ContainsKey(hw);
-                    bool gameplay = SongContainer.SongsByGameplayHash.ContainsKey(hw);
-
-                    bool recognized = strict || gameplay;
-                    if (recognized && library.Add(hw))
+                    // Mirror the server's set exactly. Filtering to hashes recognized locally
+                    // dropped songs for good whenever the gameplay-hash registry was momentarily
+                    // incomplete (backfill/rescan), since the server never re-sends an Added.
+                    if (library.Add(ToHashWrapper(h)))
                     {
                         addedCount++;
                     }
