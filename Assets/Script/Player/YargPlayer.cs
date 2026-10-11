@@ -233,7 +233,6 @@ namespace YARG.Player
         {
             DisableInputs();
             Bindings?.Dispose();
-            Profile.Avatar?.Dispose();
         }
     }
 }
