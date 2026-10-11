@@ -444,6 +444,7 @@ namespace YARG.Menu.MusicLibrary
                         {
                             if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
                             {
+                                Navigator.Instance.CancelHold(ctx.Player, MenuAction.Orange);
                                 GoToPreviousSection();
                             }
                             else
@@ -457,6 +458,7 @@ namespace YARG.Menu.MusicLibrary
                         {
                             if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
                             {
+                                Navigator.Instance.CancelHold(ctx.Player, MenuAction.Orange);
                                 GoToNextSection();
                             }
                             else
@@ -478,8 +480,9 @@ namespace YARG.Menu.MusicLibrary
                             "Menu.MusicLibrary.SongSpeed",
                             Localize.Percent(SongSpeedMenu.SongSpeedMultiplier))),
                     new NavigationScheme.Entry(MenuAction.Blue,  "Menu.MusicLibrary.Filters", OpenFilters),
-                    new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
-                        OnOrangeHit, OnOrangeRelease),
+                    new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptionsAndGoToSection",
+                        () => _popupMenu.gameObject.SetActive(true), holdSeconds: MENU_HOLD_SECONDS,
+                        onHoldHandler: OpenGoToSection),
                 }, false));
                 return;
             }

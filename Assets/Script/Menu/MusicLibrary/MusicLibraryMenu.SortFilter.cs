@@ -10,6 +10,7 @@ using YARG.Helpers;
 using YARG.Helpers.Extensions;
 using YARG.Localization;
 using YARG.Menu.Data;
+using YARG.Menu.Filters;
 using YARG.Menu.Persistent;
 using YARG.Playlists;
 using YARG.Settings;
