@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -366,9 +365,8 @@ namespace YARG.Online
                 nameof(ILobbyHub.CreateLobby), args, StreamHashes(libraryHashes, ct), ct);
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
-            _currentLobby = LobbyRoomState.FromCreate(result.Lobby);
+            _currentLobby = LobbyRoomState.FromCreate(result.Lobby, libraryHashes);
             LocalSongLibrary.EnsureBackfillRunning();
-            DumpLibraryDiff(_currentLobby);
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: CreateLobby ok -- id={result.Lobby.Id}");
             CurrentLobbyChanged?.Invoke();
             return result;
@@ -387,9 +385,8 @@ namespace YARG.Online
                 nameof(ILobbyHub.EnterLobby), args, StreamHashes(libraryHashes, ct), ct);
             await UniTask.SwitchToMainThread();
             if (Volatile.Read(ref _disposing) != 0) return result;
-            _currentLobby = LobbyRoomState.FromEnter(result);
+            _currentLobby = LobbyRoomState.FromEnter(result, libraryHashes);
             LocalSongLibrary.EnsureBackfillRunning();
-            DumpLibraryDiff(_currentLobby);
             YargLogger.LogInfo(
                 $"LobbyHubSession[#{_instanceId}]: EnterLobby ok -- id={result.Lobby.Id}, "
                 + $"members={_currentLobby.Members.Count}, "
@@ -451,7 +448,7 @@ namespace YARG.Online
         {
             var conn = RequireConnection();
             var args = new QueueSongArgs(hash.ToString()) { SongSpeed = songSpeed };
-            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong hash={args.SongHash} Sent hash={hash.ToString()} speed={songSpeed}");
+            YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong hash={args.SongHash} speed={songSpeed}");
             var result = await conn.InvokeAsync<QueuedSongDto>(
                 nameof(ILobbyHub.QueueSong), args, ct);
             YargLogger.LogInfo($"LobbyHubSession[#{_instanceId}]: QueueSong ok -- sequence={result.Sequence}");
@@ -689,29 +686,12 @@ namespace YARG.Online
             }
         }
 
-        public static void DumpLibraryDiff(LobbyRoomState lobby)
-        {
-            YargLogger.LogInfo($"[LibDiag] remote count={lobby.LobbySongLibrary.Count}");
-
-            foreach (var kv in SongContainer.SongsByHash)
-            {
-                var strict = kv.Key;
-                if (lobby.LobbySongLibrary.Contains(strict)) continue;
-
-                GameplayHashCache.TryGet(strict.ToString(), out var soft);
-                var softHw = soft != null ? (HashWrapper?)HashWrapper.FromString(soft) : null;
-                if (softHw.HasValue && lobby.LobbySongLibrary.Contains(softHw.Value)) continue;
-            }
-        }
-
         private async Task OnLobbySongLibraryUpdatedAsync(LobbySongLibraryUpdatedEvent e)
         {
             try { await UniTask.SwitchToMainThread(_lifetimeCts.Token); }
             catch (OperationCanceledException) { return; }
             if (!IsForCurrentLobby(e.LobbyId)) return;
 
-            YargLogger.LogInfo(
-                $"Gameplay dictionary contains {SongContainer.SongsByGameplayHash.Count} hashes.");
             var library = _currentLobby.LobbySongLibrary;
             int removedCount = 0;
             int addedCount = 0;
@@ -727,13 +707,10 @@ namespace YARG.Online
             {
                 foreach (var h in e.Added)
                 {
-                    var hw = ToHashWrapper(h);
-
-                    bool strict = SongContainer.SongsByHash.ContainsKey(hw);
-                    bool gameplay = SongContainer.SongsByGameplayHash.ContainsKey(hw);
-
-                    bool recognized = strict || gameplay;
-                    if (recognized && library.Add(hw))
+                    // Mirror the server's set exactly. Filtering to hashes recognized locally
+                    // dropped songs for good whenever the gameplay-hash registry was momentarily
+                    // incomplete (backfill/rescan), since the server never re-sends an Added.
+                    if (library.Add(ToHashWrapper(h)))
                     {
                         addedCount++;
                     }

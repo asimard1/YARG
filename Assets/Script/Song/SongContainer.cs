@@ -140,6 +140,7 @@ namespace YARG.Song
         /// computed/loaded from its persistent cache. Deliberately NOT populated inside
         /// SetAllSongs -- unlike the strict hash, this one requires a full LoadChart() per
         /// song and can't be built eagerly for the whole library on every scan/sort.
+        /// Main thread only: the dictionary is read from the UI without locking.
         /// </summary>
         public static void RegisterGameplayHash(HashWrapper strictHash, HashWrapper gameplayHash)
         {

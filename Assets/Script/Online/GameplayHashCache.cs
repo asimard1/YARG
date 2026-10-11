@@ -1,12 +1,13 @@
 using System.Collections.Generic;
 using System.IO;
+using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using YARG.Core.Song;
 using YARG.Helpers;
 
 namespace YARG.Online
 {
-/// <summary>
+    /// <summary>
     /// Persists the (expensive) mapping from a song's strict hash to its gameplay hash,
     /// so it's only ever computed once per song, not once per session.
     ///
@@ -23,7 +24,8 @@ namespace YARG.Online
 
         private static Dictionary<string, string> _map;
         private static bool _dirty;
-       private static bool _staleFilesDeleted;
+        private static readonly object _writeLock = new();
+        private static bool _staleFilesDeleted;
 
         private static void DeleteStaleCacheFiles()
         {
@@ -64,7 +66,6 @@ namespace YARG.Online
                     return _map;
                 }
                 DeleteStaleCacheFiles();
-
 
                 if (File.Exists(CachePath))
                 {
@@ -112,8 +113,33 @@ namespace YARG.Online
                 return;
             }
             var text = JsonConvert.SerializeObject(Map);
-            File.WriteAllText(CachePath, text);
             _dirty = false;
+            WriteFile(text);
+        }
+
+        /// <summary>
+        /// Same as <see cref="Flush"/>, but only the file write leaves the calling thread.
+        /// The map itself is only ever read/written on the main thread (the UI reads it),
+        /// so serialization has to happen there too.
+        /// </summary>
+        public static async UniTask FlushAsync()
+        {
+            if (!_dirty && File.Exists(CachePath))
+            {
+                return;
+            }
+            var text = JsonConvert.SerializeObject(Map);
+            _dirty = false;
+            await UniTask.RunOnThreadPool(() => WriteFile(text));
+        }
+
+        // A restarted backfill can flush while the previous pass's write is still finishing.
+        private static void WriteFile(string text)
+        {
+            lock (_writeLock)
+            {
+                File.WriteAllText(CachePath, text);
+            }
         }
     }
 }

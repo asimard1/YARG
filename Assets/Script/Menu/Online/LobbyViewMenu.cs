@@ -691,7 +691,6 @@ namespace YARG.Menu.Online
                     playable.Add(hash);
                 }
             }
-            YargLogger.LogInfo($"Library: {resolvedByEntry.Count}, Playable with instrument: {playable.Count}");
             return playable;
         }
 
@@ -718,16 +717,18 @@ namespace YARG.Menu.Online
                 float songSpeed = SongSpeedMenu.SongSpeedMultiplier;
 
                 var hashToSend = hash;
-                if (GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash))
+                var lobbyLibrary = session.CurrentLobby?.LobbySongLibrary;
+
+                // Strict wins: if every member already has this exact hash, send it as-is.
+                // Only swap in the gameplay hash when the strict one isn't shared by everyone
+                // but the gameplay hash survived the lobby's library intersection -- i.e.
+                // every member (including ones on the unmodified client, which never pushes
+                // a gameplay hash) has reported this exact value.
+                if (lobbyLibrary?.Contains(hash) != true
+                    && GameplayHashCache.TryGet(hash.ToString(), out var gameplayHash))
                 {
                     var gameplayHw = HashWrapper.FromString(gameplayHash);
-
-                    // Only use the gameplay hash if it already survived the lobby's
-                    // library intersection -- i.e. every member (including ones on
-                    // the unmodified client, which never pushes a gameplay hash)
-                    // has reported this exact value. Otherwise fall back to the
-                    // strict hash so their client can still resolve the song.
-                    if (session.CurrentLobby?.LobbySongLibrary.Contains(gameplayHw) == true)
+                    if (lobbyLibrary?.Contains(gameplayHw) == true)
                     {
                         hashToSend = gameplayHw;
                     }

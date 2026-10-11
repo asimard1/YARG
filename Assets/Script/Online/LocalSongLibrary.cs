@@ -27,19 +27,6 @@ namespace YARG.Online
     /// joined) so someone who scans in new songs and immediately hosts isn't starting from
     /// zero, and prioritizing whatever was just added, since that's what they're most likely
     /// about to try to play with someone else.
-    ///
-    /// Each song contributes BOTH its strict hash and its gameplay hash (when known) to the
-    /// same set. The server's intersection logic is untouched and untyped -- it just treats
-    /// these as opaque strings -- so two players end up "sharing" a song if either value
-    /// matches. Strict takes precedence automatically wherever it's checked downstream
-    /// (queueing prefers it when both are present in the synced shared library).
-    ///
-    /// Gameplay hashes require a full LoadChart() per song, so they can't be computed eagerly
-    /// for the whole library without hurting scan performance. Instead, this class backfills
-    /// them in the background, starting the moment a scan finishes (not when a lobby is
-    /// joined) so someone who scans in new songs and immediately hosts isn't starting from
-    /// zero, and prioritizing whatever was just added, since that's what they're most likely
-    /// about to try to play with someone else.
     /// </summary>
     internal static class LocalSongLibrary
     {
@@ -57,11 +44,10 @@ namespace YARG.Online
         private static CancellationTokenSource _backfillCts;
 
         /// <summary>
-        /// Fired on the calling (background) thread once a background gameplay-hash backfill
-        /// completes and discovers at least one new gameplay hash. <see cref="LobbyHubSession"/>
+        /// Fired on the main thread once a background gameplay-hash backfill completes and
+        /// discovers at least one new gameplay hash. <see cref="LobbyHubSession"/>
         /// subscribes to this only while a lobby session is active, re-streaming the updated
-        /// snapshot in response. Since this fires off the main thread, subscribers that need
-        /// the main thread must marshal back themselves.
+        /// snapshot in response.
         /// </summary>
         public static event Action BackfillBatchCompleted;
 
@@ -117,39 +103,51 @@ namespace YARG.Online
 
         private static async UniTask BackfillAsync(CancellationToken ct)
         {
-            // Run off the main thread, same as CacheHandler.RunScan -- LoadChart() does
-            // real file I/O and parsing work per song, not something the UI thread should
-            // be blocked on for however long a library takes to backfill.
-            await UniTask.SwitchToThreadPool();
+            // Always called from the main thread. SongsByHash is rebuilt by scans, and
+            // SongsByGameplayHash / GameplayHashCache are plain dictionaries read from the UI,
+            // so every read of the library and every write to those maps stays on the main
+            // thread. Only the expensive LoadChart() + hash runs on the thread pool, below.
             GameplayHashCache.Flush(); // recreate file if it was deleted mid-session
 
             // Snapshotted once, up front, rather than enumerated live: SongsByHash gets
-            // fully cleared and rebuilt by the next scan (possibly from the main thread
-            // while this is still running), which would otherwise risk a "collection was
-            // modified" exception or working against half-rebuilt state.
+            // fully cleared and rebuilt by the next scan, which would otherwise risk a
+            // "collection was modified" exception or working against half-rebuilt state.
             var librarySnapshot = SongContainer.SongsByHash.ToArray();
+
+            // Pass 1: register every hash that is already cached, immediately and before any
+            // throttled hashing. These were already streamed to the lobby (SnapshotLocalHashes
+            // reads the same cache), so they must resolve locally right away -- otherwise a
+            // cached song sitting behind hundreds of uncached ones is shared with the lobby
+            // but can't be resolved by this client until the slow pass reaches it.
+            bool anyNewHashes = false;
+            var uncached = new List<KeyValuePair<HashWrapper, List<SongEntry>>>();
+            foreach (var kv in librarySnapshot)
+            {
+                if (GameplayHashCache.TryGet(kv.Key.ToString(), out var cachedGameplayHash))
+                {
+                    SongContainer.RegisterGameplayHash(kv.Key, HashWrapper.FromString(cachedGameplayHash));
+                    anyNewHashes = true;
+                }
+                else
+                {
+                    uncached.Add(kv);
+                }
+            }
 
             // Newest file first: someone who just scanned in new songs and jumps straight
             // into a lobby cares about THOSE getting a gameplay hash before older songs
             // that have likely already been backfilled in a previous session anyway.
-            Array.Sort(librarySnapshot, (a, b) =>
+            uncached.Sort((a, b) =>
                 b.Value[0].GetLastWriteTime().CompareTo(a.Value[0].GetLastWriteTime()));
 
             int sinceLastBatch = 0;
-            bool anyNewHashes = false;
 
-            foreach (var kv in librarySnapshot)
+            // Pass 2: compute the rest.
+            foreach (var kv in uncached)
             {
                 ct.ThrowIfCancellationRequested();
 
                 string strict = kv.Key.ToString();
-                if (GameplayHashCache.TryGet(strict, out var cachedGameplayHash))
-                {
-                    SongContainer.RegisterGameplayHash(kv.Key, HashWrapper.FromString(cachedGameplayHash));
-                    anyNewHashes = true;
-                    continue; // already known, possibly from a previous session -- no
-                              // LoadChart() needed, so nothing to throttle or pause for
-                }
 
                 // Fully step aside while the player is actually playing. This is exactly
                 // the moment a GC pause or thread-pool contention would be most noticeable
@@ -162,13 +160,20 @@ namespace YARG.Online
 
                 // Every SongEntry filed under the same strict hash is byte-identical by
                 // definition, so a single representative is enough to hash for all of them.
-                var chart = kv.Value[0].LoadChart();
-                if (chart == null)
+                // LoadChart() does real file I/O and parsing, so it runs on the thread pool;
+                // the continuation (cache + registry writes) resumes on the main thread.
+                var representative = kv.Value[0];
+                HashWrapper? hashed = await UniTask.RunOnThreadPool(() =>
+                {
+                    var chart = representative.LoadChart();
+                    return chart == null ? (HashWrapper?) null : GameplayHasher.Hash(chart);
+                }, cancellationToken: ct);
+                if (hashed == null)
                 {
                     continue;
                 }
 
-                var gameplayHash = GameplayHasher.Hash(chart);
+                var gameplayHash = hashed.Value;
                 GameplayHashCache.Set(strict, gameplayHash.ToString());
                 SongContainer.RegisterGameplayHash(kv.Key, gameplayHash);
                 sinceLastBatch++;
@@ -178,14 +183,14 @@ namespace YARG.Online
 
                 if (sinceLastBatch >= BACKFILL_BATCH_SIZE)
                 {
-                    GameplayHashCache.Flush();
+                    await GameplayHashCache.FlushAsync();
                     sinceLastBatch = 0;
                 }
             }
 
             if (sinceLastBatch > 0)
             {
-                GameplayHashCache.Flush();
+                await GameplayHashCache.FlushAsync();
             }
 
             if (anyNewHashes)

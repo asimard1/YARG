@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -265,7 +265,6 @@ namespace YARG.Menu.MusicLibrary
             }
             else
             {
-                YargLogger.LogInfo("_currentSong is null, but update still");
                 UpdateSearch(true);
             }
 
