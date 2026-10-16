@@ -21,6 +21,9 @@ namespace YARG.Menu
             Online,
             CreateLobby,
             LobbyView,
+            CareerList,
+            Career,
+            GameModes,
         }
 
         /// <summary>
@@ -33,6 +36,7 @@ namespace YARG.Menu
             Menu.History,
             Menu.Content,
             Menu.LobbyView,
+            Menu.Career,
         };
 
         /// <summary>

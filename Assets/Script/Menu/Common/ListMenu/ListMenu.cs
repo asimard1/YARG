@@ -79,6 +79,9 @@ namespace YARG.Menu.ListMenu
         protected virtual bool CanScroll => true;
         private float _scrollTimer;
 
+        private float _viewObjectHeight;
+        private float _parentHeight;
+
         private int FindSelectableIndex(int startIndex, int direction)
         {
             if (_viewList.Count == 0 || _viewList[startIndex].IsSelectable)
@@ -124,6 +127,10 @@ namespace YARG.Menu.ListMenu
 
         protected virtual void OnEnable()
         {
+            _viewObjectHeight = _viewObjectPrefab.GetComponent<RectTransform>().rect.size.y;
+            _parentHeight = _viewObjectParent.GetComponent<RectTransform>().rect.size.y;
+
+            UpdateScrollbar();
         }
 
         protected virtual void OnDisable()
@@ -249,16 +256,14 @@ namespace YARG.Menu.ListMenu
                 return;
             }
 
-            // Scale the handle size to the visible-rows fraction so long
-            // lists get a thin handle and short lists get a fat one. The
-            // prefab's Scrollbar component doesn't drive this on its own
-            // (only ScrollRects do auto-size, and this menu uses a bare
-            // Scrollbar to navigate the SelectedIndex). visibleRows is
-            // ExtraListViewPadding * 2 + 1 (selected row plus N above and
-            // N below). 0.05 floor keeps the handle grabbable on huge
-            // lists.
-            int visibleRows = ExtraListViewPadding * 2 + 1;
-            _scrollbar.size = Mathf.Clamp((float) visibleRows / _viewList.Count, 0.05f, 1f);
+            var totalHeight = _viewList.Count * _viewObjectHeight;
+            // Make sure handle doesn't become useless when there are multiple songs
+            var clampMax = _viewList.Count < 2 ? 1.0f : 0.9f;
+            var scrollRatio = totalHeight > 0
+                ? Mathf.Clamp(_parentHeight / totalHeight, 0.1f, clampMax)
+                : 1f;
+
+            _scrollbar.size = scrollRatio;
 
             _scrollbar.SetValueWithoutNotify((float) SelectedIndex / _viewList.Count);
         }
@@ -395,13 +400,16 @@ namespace YARG.Menu.ListMenu
             if (SelectedIndex < ExtraListViewPadding)
             {
                 int firstVisibleObject = ExtraListViewPadding - SelectedIndex;
-                var firstRect = _viewObjects[firstVisibleObject].GetComponent<RectTransform>();
-                var bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(viewportRect, firstRect);
-                float offset = viewportRect.rect.yMax - bounds.max.y;
-                if (offset > 0f)
+                if (firstVisibleObject >= 0 && firstVisibleObject < _viewObjects.Count)
                 {
-                    parentRect.anchoredPosition += Vector2.up * offset;
-                    clampedToTop = true;
+                    var firstRect = _viewObjects[firstVisibleObject].GetComponent<RectTransform>();
+                    var bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(viewportRect, firstRect);
+                    float offset = viewportRect.rect.yMax - bounds.max.y;
+                    if (offset > 0f)
+                    {
+                        parentRect.anchoredPosition += Vector2.up * offset;
+                        clampedToTop = true;
+                    }
                 }
             }
 
@@ -411,12 +419,15 @@ namespace YARG.Menu.ListMenu
             if (!clampedToTop && _viewList.Count - 1 - SelectedIndex < ExtraListViewPadding)
             {
                 int lastVisibleObject = ExtraListViewPadding + (_viewList.Count - 1 - SelectedIndex);
-                var lastRect = _viewObjects[lastVisibleObject].GetComponent<RectTransform>();
-                var bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(viewportRect, lastRect);
-                float offset = viewportRect.rect.yMin - bounds.min.y;
-                if (offset < 0f)
+                if (lastVisibleObject >= 0 && lastVisibleObject < _viewObjects.Count)
                 {
-                    parentRect.anchoredPosition += Vector2.up * offset;
+                    var lastRect = _viewObjects[lastVisibleObject].GetComponent<RectTransform>();
+                    var bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(viewportRect, lastRect);
+                    float offset = viewportRect.rect.yMin - bounds.min.y;
+                    if (offset < 0f)
+                    {
+                        parentRect.anchoredPosition += Vector2.up * offset;
+                    }
                 }
             }
         }
