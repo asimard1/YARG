@@ -14,11 +14,10 @@ namespace YARG.Menu.MusicLibrary
 {
     public static class RecommendedSongs
     {
-        public const int RECOMMEND_SONGS_COUNT = 10;
-
         private static readonly HashSet<HashWrapper> _recommendedThisSession = new();
 
-        public static SongEntry[] GetRecommendedSongs(System.Func<SongEntry, bool> predicate)
+        public static SongEntry[] GetRecommendedSongs(System.Func<SongEntry, bool> predicate,
+            int recommendationCount)
         {
             List<SongEntry> eligibleSongs = new(SongContainer.Count);
             foreach (SongEntry song in SongContainer.Songs)
@@ -28,7 +27,9 @@ namespace YARG.Menu.MusicLibrary
                     eligibleSongs.Add(song);
                 }
             }
-            if (eligibleSongs.Count == 0)
+            // Recommendations provide no value when the complete filtered result set is already
+            // small enough to display, and would only duplicate those songs above the main list.
+            if (recommendationCount <= 0 || eligibleSongs.Count <= recommendationCount)
                 return System.Array.Empty<SongEntry>();
 
             List<SongEntry> newEligibleSongs = new(eligibleSongs.Count);
@@ -41,7 +42,7 @@ namespace YARG.Menu.MusicLibrary
             }
 
             HashSet<SongEntry> newEligibleSet = new(newEligibleSongs);
-            SongEntry[] songs = new SongEntry[RECOMMEND_SONGS_COUNT];
+            SongEntry[] songs = new SongEntry[recommendationCount];
             int index = 0;
             AddMostPlayedSongs(songs, ref index, newEligibleSet);
             AddFavoriteSongs(songs, ref index, newEligibleSet);
@@ -49,7 +50,7 @@ namespace YARG.Menu.MusicLibrary
 
             // If the unseen pool is exhausted, allow songs recommended earlier this session
             // rather than returning fewer recommendations than the filtered library permits.
-            if (index < RECOMMEND_SONGS_COUNT)
+            if (index < recommendationCount)
                 AddRandomSongs(songs, ref index, eligibleSongs);
 
             SongEntry[] recommendations = songs[..index];
@@ -63,17 +64,19 @@ namespace YARG.Menu.MusicLibrary
 
         private static void AddMostPlayedSongs(SongEntry[] songs, ref int index, HashSet<SongEntry> eligibleSongs)
         {
-            const float RNG_PER_SONG = .05f;
+            int categoryLimit = Mathf.Max(1, songs.Length / 10);
+            int mostPlayedCount = Random.Range(0, categoryLimit + 1);
 
-            List<SongEntry> mostPlayed = ScoreContainer.GetMostPlayedSongs(10, eligibleSongs.Contains);
+            List<SongEntry> mostPlayed = ScoreContainer.GetMostPlayedSongs(
+                Mathf.Max(10, categoryLimit), eligibleSongs.Contains);
             if (mostPlayed.Count > 0)
             {
-                float rng = mostPlayed.Count * RNG_PER_SONG;
-                if (Random.value < rng)
-                {
-                    AddSongFromMostPlayed(songs, ref index, mostPlayed);
-                }
-                AddSongsFromTopPlayedArtists(songs, ref index, mostPlayed, eligibleSongs);
+                List<SongEntry> directCandidates = new(mostPlayed);
+                while (mostPlayedCount-- > 0 && directCandidates.Count > 0 && index < songs.Length)
+                    AddSongFromMostPlayed(songs, ref index, directCandidates);
+
+                if (index < songs.Length)
+                    AddSongsFromTopPlayedArtists(songs, ref index, mostPlayed, eligibleSongs, categoryLimit);
             }
         }
 
@@ -81,7 +84,8 @@ namespace YARG.Menu.MusicLibrary
 
         private static void AddFavoriteSongs(SongEntry[] songs, ref int index, HashSet<SongEntry> eligibleSongs)
         {
-            int count = Mathf.Min(Random.Range(0, 3), RECOMMEND_SONGS_COUNT - index);
+            int maxCount = Mathf.Max(2, songs.Length / 5);
+            int count = Mathf.Min(Random.Range(0, maxCount + 1), songs.Length - index);
             HashSet<HashWrapper> favoriteHashes = new(PlaylistContainer.FavoritesPlaylist.SongHashes);
             List<SongEntry> favorites = new();
             foreach (SongEntry song in eligibleSongs)
@@ -128,7 +132,7 @@ namespace YARG.Menu.MusicLibrary
             }
 
             float yargSongRNG = eligibleYargSongs is { Count: > 0 } ? STARTING_RNG : 0;
-            while (index < RECOMMEND_SONGS_COUNT && eligibleSongs.Count > 0)
+            while (index < songs.Length && eligibleSongs.Count > 0)
             {
                 SongEntry song;
                 if (eligibleYargSongs is { Count: > 0 } && Random.value <= yargSongRNG)
@@ -157,9 +161,9 @@ namespace YARG.Menu.MusicLibrary
         }
 
         private static void AddSongsFromTopPlayedArtists(SongEntry[] songs, ref int index,
-            List<SongEntry> mostPlayed, HashSet<SongEntry> eligibleSongs)
+            List<SongEntry> mostPlayed, HashSet<SongEntry> eligibleSongs, int count)
         {
-            while (mostPlayed.Count > 0)
+            while (count > 0 && mostPlayed.Count > 0 && index < songs.Length)
             {
                 int songIndex = Random.Range(0, mostPlayed.Count);
                 List<SongEntry> songsByArtist = SongContainer.Artists[mostPlayed[songIndex].Artist];
@@ -177,8 +181,9 @@ namespace YARG.Menu.MusicLibrary
                 if (artistSongs.Count > 0)
                 {
                     songs[index++] = artistSongs.Pick();
-                    break;
+                    count--;
                 }
+
                 mostPlayed.RemoveAt(songIndex);
             }
         }
