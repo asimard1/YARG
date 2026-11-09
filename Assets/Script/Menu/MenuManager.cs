@@ -18,12 +18,14 @@ namespace YARG.Menu
             ProfileInfo,
             History,
             Content,
-            Online,
-            CreateLobby,
-            LobbyView,
             CareerList,
             Career,
             GameModes,
+            // Fork-only entries: keep at the END so serialized values of
+            // upstream prefabs (CareerList=9, Career=10, GameModes=11) stay valid.
+            Online,
+            CreateLobby,
+            LobbyView,
         }
 
         /// <summary>
