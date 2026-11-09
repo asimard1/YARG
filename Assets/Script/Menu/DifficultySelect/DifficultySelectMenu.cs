@@ -22,6 +22,7 @@ using YARG.Menu.Filters;
 using YARG.Online;
 using YARG.Menu.MusicLibrary;
 using YARG.Player;
+using YARG.Playlists;
 using YARG.Song;
 
 namespace YARG.Menu.DifficultySelect
@@ -264,9 +265,9 @@ namespace YARG.Menu.DifficultySelect
             _artistText.text = GlobalVariables.State.CurrentSong.Artist;
             UpdateSongSpeedLabel();
 
-            if (GlobalVariables.State.PlayingAShow)
+            if (Setlist.IsPlaying)
             {
-                _songList = GlobalVariables.State.ShowSongs;
+                _songList = Setlist.ResolveSongs();
             }
             else
             {
@@ -1263,7 +1264,7 @@ namespace YARG.Menu.DifficultySelect
 
             // Get the possible harmonies for this show
             _maxHarmonyIndex = song.VocalsCount;
-            foreach (var showsong in GlobalVariables.State.ShowSongs)
+            foreach (var showsong in _songList)
             {
                 _maxHarmonyIndex = Mathf.Min(_maxHarmonyIndex, showsong.VocalsCount);
             }

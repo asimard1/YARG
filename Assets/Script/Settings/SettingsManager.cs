@@ -123,6 +123,7 @@ namespace YARG.Settings
                 nameof(Settings.SecondarySourceSort),
                 nameof(Settings.SecondaryIntensitySort),
                 nameof(Settings.SongLengthLabels),
+                nameof(Settings.DateAddedSort),
                 new HeaderMetadata("PlayAShow"),
                 nameof(Settings.EnablePlayAShow),
                 nameof(Settings.PlayAShowTimeout),
@@ -290,6 +291,7 @@ namespace YARG.Settings
                 nameof(Settings.RB3EBroadcastIP),
 
             },
+            new ToastHistoryTab("ToastHistory", icon: "History"),
             new MetadataTab("Debug", icon: "Debug")
             {
                 nameof(Settings.InputDeviceLogging),
