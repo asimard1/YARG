@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using YARG.Core;
 using YARG.Core.Chart;
+using YARG.Core.Game;
 using YARG.Core.Engine.Guitar;
 using YARG.Gameplay.Player;
 using YARG.Helpers.Extensions;
